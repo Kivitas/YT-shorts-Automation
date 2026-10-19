@@ -1,0 +1,68 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.ruff_cache/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.env
+!.env.example
+token.json
+client_secret*.json
+credentials*.json
+
+# Runtime Data & Storage
+data/
+work/
+output/
+inbox/
+logs/
+*.log
+
+# Models & Weights
+*.gguf
+*.bin
+data/models/
+
+# Playwright Profiles & Cache
+edge_profile/
+data/edge_profile/
+
+# Media Assets (User-supplied audio, video, sfx)
+assets/backgrounds/*
+assets/music/*
+assets/sfx/*
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.aac
+*.flac
+
+# Keep asset directory structure tracked
+!assets/backgrounds/.gitkeep
+!assets/music/.gitkeep
+!assets/sfx/.gitkeep
+!assets/fonts/.gitkeep
+
+# IDE & OS Files
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
+.DS_Store
