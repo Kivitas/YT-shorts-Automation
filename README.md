@@ -43,6 +43,68 @@ For the exhaustive engineering specification and architecture, see **[PLAN.md](P
   - First-3s hook title card, dynamic top progress bar, and dialogue volume normalization (`loudnorm`).
 - **Interactive Local Dashboard & Headless CLI**:
   - FastAPI web UI running on `http://localhost:8765` with HTML5 video preview player, queue management, quota meter, and scheduler controls.
+  - 9-stage progress stepper tracking each job's lifecycle from ingestion to final cleanup.
+  - Real-time Server-Sent Events (SSE) log streaming from the orchestrator.
+  - Automatic transactional post-upload intermediate cleanup via path-guarded `SafetyCleaner`.
+
+---
+
+## Quick Start (Windows One-Click Launcher)
+
+1. **One-Click Launch**:
+   - Double-click **`start.bat`** in the repository root.
+   - It automatically activates `.venv\Scripts\python.exe` (or falls back to `uv run python` / system `python`), starts the local web server, and launches the dashboard in Microsoft Edge at **`http://localhost:8765`**.
+
+2. **One-Time YouTube Studio Browser Sign-In**:
+   - For zero-quota browser automation uploads (`upload.mode: studio`), run:
+     ```bash
+     python run.py edge-login
+     ```
+     (or click **"Sign In with Edge"** in the web dashboard header).
+   - This opens an isolated Microsoft Edge session with user profile persistence in `data/edge_profile`. Once signed into YouTube Studio, sessions persist across system reboots.
+
+---
+
+## Upload Modes
+
+AutoShorts supports three interchangeable upload targets (`upload.mode` in `config/config.yaml` or overridden on job submission):
+1. **`api`** (Default): YouTube Data API v3 resumable chunked upload with dual-bucket quota tracking (`videos.insert` dedicated upload bucket).
+2. **`studio`**: Playwright browser automation with Microsoft Edge (`msedge` channel) and persistent profile. Consumes **0 API quota units**, ideal for restricted or exhausted API projects.
+3. **`local`**: Offline export of master MP4s and subtitle files directly to `output/` without contacting YouTube.
+
+---
+
+## Web Dashboard & Real-Time Monitoring
+
+- **9-Stage Progress Stepper**: Live visual progress tracking through:
+  `QUEUED` &rarr; `METADATA_FETCHED` &rarr; `TRANSCRIPT_FETCHED` &rarr; `WINDOWS_SLICED` &rarr; `CLIPS_SELECTED` &rarr; `EDL_GENERATED` &rarr; `SUBTITLES_GENERATED` &rarr; `COMPOSITING` &rarr; `READY_FOR_REVIEW` (then `SCHEDULED` / `UPLOADING` &rarr; `COMPLETED` / `CLEANED`).
+- **Live SSE Log Streaming**: Real-time console log viewer with Server-Sent Events (`/api/logs/stream`), log pause/resume, search filter, and buffer clear.
+- **Quota & Schedule Meters**: Real-time Pacific Time daily upload meter, hourly rolling limiter gauge, and pause/resume toggles.
+- **Transactional Post-Upload Cleanup**: Automatically purges raw downloads, extracted WAVs, and intermediate clips upon verified upload completion via path-guarded recycle-bin deletion (`send2trash`).
+
+---
+
+## CLI Reference
+
+```bash
+# Launch web dashboard in Microsoft Edge (default)
+python run.py
+
+# Process links directly from command line
+python run.py run --links "https://www.youtube.com/watch?v=..." --auto-upload
+
+# One-time Edge authentication for YouTube Studio upload mode
+python run.py edge-login
+
+# Run upload scheduler tick
+python run.py scheduler --once
+
+# Inspect current daily quota allocation and rolling limits
+python run.py quota
+
+# Clean up stale temporary files older than 24 hours
+python run.py clean --older-than 24
+```
 
 ---
 

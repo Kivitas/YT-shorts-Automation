@@ -4,12 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 
 from autoshorts.core.models import JobStatus
 from autoshorts.core.state_manager import StateManager
 from autoshorts.integrations.spark.inbox_watcher import (
-    SparkClipHint,
     SparkInboxWatcher,
     generate_spark_skill_prompt,
     parse_spark_import,

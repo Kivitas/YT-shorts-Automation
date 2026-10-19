@@ -287,6 +287,7 @@ function renderJobs(jobs) {
     if (job.status === "FAILED") {
       actions += `<button class="btn btn-secondary btn-sm" onclick="retryJob('${job.id}')">🔄 Retry</button>`;
     }
+    actions += `<button class="btn btn-danger btn-sm" onclick="cleanJobFiles('${job.id}')" title="Safely purge intermediate work files">🗑️ Clean Files</button>`;
 
     // 2. Copy Toolbar (SEO Title, Description, Hashtags)
     let copyToolbar = "";
@@ -676,6 +677,64 @@ async function retryJob(jobId) {
     }
   } catch (err) {
     alert("Failed to retry job: " + err);
+  }
+}
+
+async function cleanJobFiles(jobId) {
+  if (!confirm(`Safely purge intermediate work files for job #${jobId}?`)) return;
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const err = await res.json();
+      alert("Cleanup failed: " + (err.detail || "Server error"));
+      return;
+    }
+    const data = await res.json();
+    refreshJobs();
+    showToast(`Cleaned ${data.count || 0} file(s) for #${jobId}!`);
+  } catch (err) {
+    alert("Network error: " + err);
+  }
+}
+
+async function triggerEdgeLogin() {
+  const btn = document.getElementById("edge-login-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Launching Edge...";
+  }
+  showToast("Launching Microsoft Edge sign-in session...");
+  try {
+    const res = await fetch("/api/auth/edge-login", { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json();
+      alert("Failed to launch Edge login: " + (err.detail || "Server error"));
+      return;
+    }
+    const data = await res.json();
+    showToast(data.message || "Edge sign-in session opened!");
+  } catch (err) {
+    alert("Network error: " + err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔑 Edge Sign-In";
+    }
+  }
+}
+
+async function copySparkPrompt() {
+  try {
+    const res = await fetch("/api/spark/prompts");
+    if (!res.ok) {
+      showToast("Failed to fetch Spark prompt template");
+      return;
+    }
+    const data = await res.json();
+    await copyToClipboard(data.prompt);
+    showToast("Copied Spark Skill prompt to clipboard!");
+  } catch (err) {
+    showToast("Error copying prompt: " + err);
   }
 }
 

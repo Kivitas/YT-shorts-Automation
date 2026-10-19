@@ -87,7 +87,9 @@ class YouTubeApiUploader:
         self.max_retries = max_retries
 
         data_dir = get_data_dir()
-        self.client_secret_path = Path(client_secret_path) if client_secret_path else (data_dir / "client_secret.json")
+        self.client_secret_path = (
+            Path(client_secret_path) if client_secret_path else (data_dir / "client_secret.json")
+        )
         self.token_path = Path(token_path) if token_path else (data_dir / "token.json")
 
         self._service = youtube_service
@@ -103,7 +105,7 @@ class YouTubeApiUploader:
         if self.token_path.is_file():
             try:
                 creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"Failed to read existing token file: {e}")
 
         if creds and creds.expired and creds.refresh_token:
@@ -115,7 +117,7 @@ class YouTubeApiUploader:
                 with open(self.token_path, "w", encoding="utf-8") as f:
                     f.write(creds.to_json())
                 logger.info("Successfully refreshed and saved OAuth token.")
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.error(f"Failed to refresh OAuth token: {e}")
                 creds = None
 
@@ -193,7 +195,9 @@ class YouTubeApiUploader:
             media_body=media,
         )
 
-        logger.info(f"Initiating resumable upload for '{final_title}' ({target_path.stat().st_size} bytes)...")
+        logger.info(
+            f"Initiating resumable upload for '{final_title}' ({target_path.stat().st_size} bytes)..."
+        )
 
         response = None
         retry_count = 0
@@ -211,7 +215,7 @@ class YouTubeApiUploader:
                     logger.error(f"Upload failed after {self.max_retries} chunk retries: {ex}")
                     raise UploadFailedError(f"Upload failed permanently: {ex}") from ex
 
-                backoff_sec = min(60.0, (2 ** retry_count) + random.uniform(0.1, 1.0))
+                backoff_sec = min(60.0, (2**retry_count) + random.uniform(0.1, 1.0))
                 logger.warning(
                     f"Upload chunk error ({ex}); retrying in {backoff_sec:.1f}s (attempt {retry_count}/{self.max_retries})..."
                 )
@@ -291,7 +295,9 @@ class YouTubeApiUploader:
                 return False
 
             if upload_status == "uploaded" and processing_status == "succeeded":
-                logger.info(f"Video {video_id} verified: uploadStatus=uploaded, processingStatus=succeeded.")
+                logger.info(
+                    f"Video {video_id} verified: uploadStatus=uploaded, processingStatus=succeeded."
+                )
                 return True
 
             logger.info(
@@ -299,6 +305,6 @@ class YouTubeApiUploader:
                 f"processingStatus={processing_status}. Needs retry."
             )
             return False
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"Failed to verify video {video_id}: {e}")
             return False

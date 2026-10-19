@@ -38,42 +38,110 @@ def build_parser() -> argparse.ArgumentParser:
         description="AutoShorts v3.2: URL-Driven SemIf Video Clipping Orchestrator",
     )
     parser.add_argument("--config", type=str, default=None, help="Path to custom config.yaml")
-    parser.add_argument("--log-level", type=str, default="INFO", help="Logging level (DEBUG, INFO, WARNING)")
+    parser.add_argument(
+        "--log-level", type=str, default="INFO", help="Logging level (DEBUG, INFO, WARNING)"
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # 1. run command
-    run_parser = subparsers.add_parser("run", help="Process one or more video links through the pipeline")
-    run_parser.add_argument("--links", "-l", type=str, required=True, help="YouTube URL, file path, or multiline links string")
-    run_parser.add_argument("--bg", "--background", type=str, default=None, help="Background theme (minecraft, subway, auto)")
-    run_parser.add_argument("--preset", "--dopamine", type=str, default="medium", choices=["low", "medium", "high"], help="Dopamine editing preset")
-    run_parser.add_argument("--upload", "-u", action="store_true", help="Trigger immediate upload after rendering")
-    run_parser.add_argument("--auto-upload", action="store_true", help="Enqueue rendered shorts into scheduler")
-    run_parser.add_argument("--instructions", "-i", type=str, default=None, help="Custom operator clipping instructions")
+    run_parser = subparsers.add_parser(
+        "run", help="Process one or more video links through the pipeline"
+    )
+    run_parser.add_argument(
+        "--links",
+        "-l",
+        type=str,
+        required=True,
+        help="YouTube URL, file path, or multiline links string",
+    )
+    run_parser.add_argument(
+        "--bg",
+        "--background",
+        type=str,
+        default=None,
+        help="Background theme (minecraft, subway, auto)",
+    )
+    run_parser.add_argument(
+        "--preset",
+        "--dopamine",
+        type=str,
+        default="medium",
+        choices=["low", "medium", "high"],
+        help="Dopamine editing preset",
+    )
+    run_parser.add_argument(
+        "--upload", "-u", action="store_true", help="Trigger immediate upload after rendering"
+    )
+    run_parser.add_argument(
+        "--auto-upload", action="store_true", help="Enqueue rendered shorts into scheduler"
+    )
+    run_parser.add_argument(
+        "--instructions", "-i", type=str, default=None, help="Custom operator clipping instructions"
+    )
 
     # 2. dashboard command
     dash_parser = subparsers.add_parser("dashboard", help="Launch the local FastAPI web dashboard")
-    dash_parser.add_argument("--port", "-p", type=int, default=8765, help="Port to bind dashboard server (default 8765)")
-    dash_parser.add_argument("--host", type=str, default="127.0.0.1", help="Host interface (default 127.0.0.1)")
-    dash_parser.add_argument("--open-edge", action="store_true", default=True, help="Launch browser in Microsoft Edge on Windows")
-    dash_parser.add_argument("--no-browser", action="store_true", help="Do not automatically launch browser tab")
+    dash_parser.add_argument(
+        "--port", "-p", type=int, default=8765, help="Port to bind dashboard server (default 8765)"
+    )
+    dash_parser.add_argument(
+        "--host", type=str, default="127.0.0.1", help="Host interface (default 127.0.0.1)"
+    )
+    dash_parser.add_argument(
+        "--open-edge",
+        action="store_true",
+        default=True,
+        help="Launch browser in Microsoft Edge on Windows",
+    )
+    dash_parser.add_argument(
+        "--no-browser", action="store_true", help="Do not automatically launch browser tab"
+    )
 
     # 3. scheduler command
-    sched_parser = subparsers.add_parser("scheduler", help="Run the YouTube upload spread scheduler")
-    sched_parser.add_argument("--daemon", "-d", action="store_true", help="Run indefinitely in background polling loop")
-    sched_parser.add_argument("--interval", type=int, default=30, help="Poll interval in seconds for daemon mode")
-    sched_parser.add_argument("--once", action="store_true", help="Run a single scheduler dispatch tick and exit")
+    sched_parser = subparsers.add_parser(
+        "scheduler", help="Run the YouTube upload spread scheduler"
+    )
+    sched_parser.add_argument(
+        "--daemon", "-d", action="store_true", help="Run indefinitely in background polling loop"
+    )
+    sched_parser.add_argument(
+        "--interval", type=int, default=30, help="Poll interval in seconds for daemon mode"
+    )
+    sched_parser.add_argument(
+        "--once", action="store_true", help="Run a single scheduler dispatch tick and exit"
+    )
 
     # 4. quota command
-    quota_parser = subparsers.add_parser("quota", help="Inspect current Pacific-Time daily API quota status")
+    quota_parser = subparsers.add_parser(
+        "quota", help="Inspect current Pacific-Time daily API quota status"
+    )
     quota_parser.add_argument("--json", action="store_true", help="Output raw JSON format")
 
     # 5. clean command
-    clean_parser = subparsers.add_parser("clean", help="Safely purge intermediate work files to Recycle Bin")
-    clean_parser.add_argument("--days", type=int, default=1, help="Purge output master MP4s older than N days (default 1)")
-    clean_parser.add_argument("--dry-run", action="store_true", help="Simulate cleanup without deleting files")
-    clean_parser.add_argument("--job-id", type=str, default=None, help="Purge files strictly for a specific job ID")
-    clean_parser.add_argument("--force", action="store_true", help="Bypass upload verification safety requirement")
+    clean_parser = subparsers.add_parser(
+        "clean", help="Safely purge intermediate work files to Recycle Bin"
+    )
+    clean_parser.add_argument(
+        "--days", type=int, default=1, help="Purge output master MP4s older than N days (default 1)"
+    )
+    clean_parser.add_argument(
+        "--dry-run", action="store_true", help="Simulate cleanup without deleting files"
+    )
+    clean_parser.add_argument(
+        "--job-id", type=str, default=None, help="Purge files strictly for a specific job ID"
+    )
+    clean_parser.add_argument(
+        "--force", action="store_true", help="Bypass upload verification safety requirement"
+    )
+
+    # 6. edge-login command
+    login_parser = subparsers.add_parser(
+        "edge-login", help="Launch MS Edge browser to sign into YouTube Studio"
+    )
+    login_parser.add_argument(
+        "--timeout", type=int, default=300, help="Login timeout in seconds (default 300)"
+    )
 
     return parser
 
@@ -131,6 +199,17 @@ def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: Sta
 
     if config.upload.mode == "local":
         uploader = LocalExportUploader(export_dir=get_output_dir())
+    elif config.upload.mode == "studio":
+        try:
+            from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+            uploader = PlaywrightStudioUploader(config=config)
+        except Exception as e:
+            logger.warning(
+                "Playwright Studio uploader initialization failed: %s. Using LocalExportUploader fallback.",
+                e,
+            )
+            uploader = LocalExportUploader(export_dir=get_output_dir())
     else:
         try:
             uploader = YouTubeApiUploader(
@@ -160,7 +239,10 @@ def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: Sta
             print("No slots due or dispatch conditions not met.")
         return 0
 
-    logger.info("Starting AutoShorts scheduler daemon (interval=%ds)... Press Ctrl+C to stop.", args.interval)
+    logger.info(
+        "Starting AutoShorts scheduler daemon (interval=%ds)... Press Ctrl+C to stop.",
+        args.interval,
+    )
     try:
         while True:
             try:
@@ -194,10 +276,18 @@ def cmd_quota(args: argparse.Namespace, config: Settings, state_manager: StateMa
     print("YOUTUBE DATA API v3 QUOTA STATUS (PACIFIC TIME)")
     print("=" * 50)
     print(f"Quota Date (PT):      {status.get('date_pt')}")
-    print(f"Upload Bucket (100):  {upload_b.get('spent', 0)} spent / {upload_b.get('remaining', 100)} remaining")
-    print(f"General Bucket:       {general_b.get('spent', 0)} spent / {general_b.get('daily_allocation', 10000)} pool ({general_b.get('remaining', 10000)} remaining)")
-    print(f"Completed Today:      {daily_c.get('completed', 0)} / {daily_c.get('cap', 50)} shorts cap")
-    print(f"Can Upload Now:       {'YES' if upload_b.get('can_upload_fresh', True) else 'NO (Throttled or Exhausted)'}")
+    print(
+        f"Upload Bucket (100):  {upload_b.get('spent', 0)} spent / {upload_b.get('remaining', 100)} remaining"
+    )
+    print(
+        f"General Bucket:       {general_b.get('spent', 0)} spent / {general_b.get('daily_allocation', 10000)} pool ({general_b.get('remaining', 10000)} remaining)"
+    )
+    print(
+        f"Completed Today:      {daily_c.get('completed', 0)} / {daily_c.get('cap', 50)} shorts cap"
+    )
+    print(
+        f"Can Upload Now:       {'YES' if upload_b.get('can_upload_fresh', True) else 'NO (Throttled or Exhausted)'}"
+    )
     print("=" * 50)
     return 0
 
@@ -220,7 +310,9 @@ def cmd_clean(args: argparse.Namespace, config: Settings, state_manager: StateMa
             keep_final_days=args.days,
         )
         total_deleted = len(paths)
-        print(f"Job {args.job_id}: {'Would delete' if args.dry_run else 'Deleted'} {len(paths)} items.")
+        print(
+            f"Job {args.job_id}: {'Would delete' if args.dry_run else 'Deleted'} {len(paths)} items."
+        )
     else:
         # Purge all completed or cleaned jobs
         jobs = state_manager.list_jobs(limit=500)
@@ -241,6 +333,21 @@ def cmd_clean(args: argparse.Namespace, config: Settings, state_manager: StateMa
         print(f"Cleanup summary: {action} {total_deleted} items across completed jobs.")
 
     return 0
+
+
+def cmd_edge_login(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
+    """Launch MS Edge browser session for YouTube Studio sign-in."""
+    from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+    uploader = PlaywrightStudioUploader(config=config, headless=False)
+    timeout = getattr(args, "timeout", 300)
+    logger.info("Opening MS Edge login session (timeout=%ds)...", timeout)
+    success = uploader.open_login_session(timeout_sec=float(timeout))
+    if success:
+        print("\n✅ Sign-in detected successfully! Edge profile updated.")
+        return 0
+    print("\n❌ Sign-in session closed or timed out.")
+    return 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -270,6 +377,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_quota(args, config, state_manager)
     elif args.command == "clean":
         return cmd_clean(args, config, state_manager)
+    elif args.command == "edge-login":
+        return cmd_edge_login(args, config, state_manager)
 
     parser.print_help()
     return 0

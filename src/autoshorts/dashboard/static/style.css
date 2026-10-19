@@ -392,6 +392,23 @@ input:checked + .slider:before {
   background-color: #30363d;
 }
 
+.btn-danger {
+  background-color: rgba(248, 81, 73, 0.15);
+  color: var(--accent-red);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.btn-danger:hover {
+  background-color: rgba(248, 81, 73, 0.28);
+  border-color: var(--accent-red);
+}
+
+.spark-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
 .btn-sm {
   padding: 0.35rem 0.75rem;
   font-size: 0.75rem;

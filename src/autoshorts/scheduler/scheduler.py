@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from autoshorts.core.config import SchedulerConfig, Settings
-from autoshorts.core.contracts import Uploader
+from autoshorts.core.contracts import Cleaner, Uploader
 from autoshorts.core.exceptions import AutoShortsError
 from autoshorts.core.models import JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
@@ -51,6 +51,7 @@ class SpreadScheduler:
         clock: Callable[[], datetime] | None = None,
         rng: random.Random | None = None,
         state_mgr: StateManager | None = None,
+        cleaner: Cleaner | None = None,
     ) -> None:
         """Initialize SpreadScheduler.
 
@@ -63,6 +64,7 @@ class SpreadScheduler:
             clock: Injectable clock returning datetime (defaults to UTC now).
             rng: Injectable random.Random instance for deterministic jitter.
             state_mgr: Alias for state_manager.
+            cleaner: Optional transactional cleaner for post-upload deletion.
         """
         resolved_mgr = state_manager or state_mgr
         if resolved_mgr is None:
@@ -72,6 +74,7 @@ class SpreadScheduler:
             raise ValueError("quota_tracker must be provided to SpreadScheduler")
         self.quota_tracker = quota_tracker
         self.uploader = uploader
+        self.cleaner = cleaner
         self.clock = clock or (lambda: datetime.now(UTC))
         self.rng = rng or random.Random()
 
@@ -397,6 +400,22 @@ class SpreadScheduler:
             elif job and job.status != JobStatus.COMPLETED:
                 job.status = JobStatus.COMPLETED
                 self.state_manager.save_job(job)
+
+            # Post-upload cleanup: delete video files from PC once verified
+            if verified and self.cleaner:
+                try:
+                    self.cleaner.cleanup_job(job_id, verified=True, upload_result=result)
+                    job = self.state_manager.get_job(job_id)
+                    if job and job.status == JobStatus.COMPLETED:
+                        self.state_manager.update_job_status(job_id, JobStatus.CLEANED)
+                    elif job and job.status != JobStatus.CLEANED:
+                        job.status = JobStatus.CLEANED
+                        self.state_manager.save_job(job)
+                    logger.info(f"Post-upload cleanup completed for job {job_id}.")
+                except Exception as c_err:
+                    logger.warning(
+                        f"Post-upload cleanup encountered error for job {job_id}: {c_err}"
+                    )
 
             logger.info(f"Successfully uploaded and verified job {job_id} as {result.video_id}.")
             return result

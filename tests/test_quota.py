@@ -100,6 +100,7 @@ def test_daily_upload_cap_respected(state_mgr: StateManager):
 
     # Queue and complete 5 jobs
     from autoshorts.core.models import Job
+
     for i in range(5):
         job_id = f"job_{i}"
         state_mgr.save_job(Job(id=job_id, source_url="https://youtube.com/watch?v=xyz"))

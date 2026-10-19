@@ -9,7 +9,8 @@ redacted logging, and backoff retries.
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import httpx
 
@@ -97,8 +98,7 @@ class GeminiProvider(BaseLLMProvider):
                 methods = m.get("supportedGenerationMethods", [])
                 if "generateContent" in methods:
                     name = m.get("name", "")
-                    if name.startswith("models/"):
-                        name = name[len("models/"):]
+                    name = name.removeprefix("models/")
                     if name:
                         valid_models.append(name)
             return valid_models
@@ -227,9 +227,12 @@ class GeminiProvider(BaseLLMProvider):
     ) -> dict[str, float]:
         """Perform constrained single-letter voting with temperature 0 and majority tallying."""
         allowed_keys = list(options.keys())
-        options_prompt = prompt + "\n\nAllowed Choices:\n" + "\n".join(
-            f"{k}: {v}" for k, v in options.items()
-        ) + f"\nRespond strictly with one of: {', '.join(allowed_keys)}"
+        options_prompt = (
+            prompt
+            + "\n\nAllowed Choices:\n"
+            + "\n".join(f"{k}: {v}" for k, v in options.items())
+            + f"\nRespond strictly with one of: {', '.join(allowed_keys)}"
+        )
 
         fallback_payload: dict[str, Any] = {
             "contents": [{"parts": [{"text": options_prompt}]}],

@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
+import zoneinfo
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-import zoneinfo
 
 from autoshorts.core.exceptions import StateError
-from autoshorts.core.models import Job, JobStatus, VideoMetadata
+from autoshorts.core.models import Job, JobStatus
 from autoshorts.core.paths import get_data_dir
 
 
@@ -26,7 +26,7 @@ def get_pt_timezone() -> timezone:
     except Exception:
         # Fallback to standard US Pacific Time (UTC-7 PDT / UTC-8 PST heuristic)
         # 2nd Sun in Mar to 1st Sun in Nov is PDT (UTC-7), else PST (UTC-8)
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         month = now_utc.month
         offset_hours = -7 if (3 < month < 11) else -8
         return timezone(timedelta(hours=offset_hours))
@@ -40,7 +40,7 @@ def get_current_pt_date(dt: datetime | None = None) -> str:
     else:
         if dt.tzinfo is None:
             # Assume UTC if naive
-            target = dt.replace(tzinfo=timezone.utc).astimezone(pt_tz)
+            target = dt.replace(tzinfo=UTC).astimezone(pt_tz)
         else:
             target = dt.astimezone(pt_tz)
     return target.strftime("%Y-%m-%d")
@@ -186,7 +186,7 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 payload = job.model_dump_json()
                 conn.execute(
                     """
@@ -269,6 +269,78 @@ class StateManager:
                 job.error_message = error_message
             self.save_job(job)
 
+    def reconcile_stranded_jobs(self) -> int:
+        """Find jobs left in active transient states from a prior process and transition them to FAILED.
+
+        Transient states:
+            FETCHING_METADATA, EXTRACTING_TRANSCRIPT, SCORING_WINDOWS, DOWNLOADING_SECTION,
+            PLANNING_EDITS, GENERATING_SUBTITLES, COMPOSITING, UPLOADING, VERIFYING.
+
+        Returns:
+            Count of jobs transitioned to FAILED.
+        """
+        transient_states = (
+            "FETCHING_METADATA",
+            "EXTRACTING_TRANSCRIPT",
+            "SCORING_WINDOWS",
+            "DOWNLOADING_SECTION",
+            "PLANNING_EDITS",
+            "GENERATING_SUBTITLES",
+            "COMPOSITING",
+            "UPLOADING",
+            "VERIFYING",
+        )
+        placeholders = ",".join("?" for _ in transient_states)
+        err_msg = "Interrupted by application restart; ready for retry"
+        now_str = datetime.now(UTC).isoformat()
+        reconciled = 0
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                rows = conn.execute(
+                    f"SELECT id, payload_json FROM jobs WHERE status IN ({placeholders});",
+                    transient_states,
+                ).fetchall()
+
+                for row in rows:
+                    job_id = row["id"]
+                    try:
+                        job = Job.model_validate_json(row["payload_json"])
+                        job.status = JobStatus.FAILED
+                        job.error_message = err_msg
+                        payload = job.model_dump_json()
+                    except Exception:
+                        try:
+                            data = json.loads(row["payload_json"])
+                            data["status"] = "FAILED"
+                            data["error_message"] = err_msg
+                            payload = json.dumps(data)
+                        except Exception:
+                            payload = row["payload_json"]
+
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET status = 'FAILED',
+                            error_message = ?,
+                            payload_json = ?,
+                            updated_at = ?
+                        WHERE id = ?;
+                        """,
+                        (err_msg, payload, now_str, job_id),
+                    )
+                    reconciled += 1
+
+                conn.execute("COMMIT;")
+                return reconciled
+            except Exception as e:
+                conn.execute("ROLLBACK;")
+                raise StateError(f"Failed to reconcile stranded jobs: {e}") from e
+            finally:
+                conn.close()
+
     # -------------------------------------------------------------------------
     # Stage & Artifact Tracking
     # -------------------------------------------------------------------------
@@ -278,7 +350,7 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -304,7 +376,7 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 artifacts_json = json.dumps(artifacts) if artifacts else None
                 conn.execute(
                     """
@@ -315,7 +387,9 @@ class StateManager:
                     (status, now_str, artifacts_json, stage_id),
                 )
             except Exception as e:
-                raise StateError(f"Failed to record stage completion for stage {stage_id}: {e}") from e
+                raise StateError(
+                    f"Failed to record stage completion for stage {stage_id}: {e}"
+                ) from e
             finally:
                 conn.close()
 
@@ -357,9 +431,9 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 sched_str = (
-                    scheduled_time.astimezone(timezone.utc).isoformat()
+                    scheduled_time.astimezone(UTC).isoformat()
                     if scheduled_time.tzinfo
                     else scheduled_time.isoformat()
                 )
@@ -427,7 +501,7 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 conn.execute(
                     """
                     UPDATE scheduler_queue
@@ -449,11 +523,7 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                since_str = (
-                    since.astimezone(timezone.utc).isoformat()
-                    if since.tzinfo
-                    else since.isoformat()
-                )
+                since_str = since.astimezone(UTC).isoformat() if since.tzinfo else since.isoformat()
                 row = conn.execute(
                     """
                     SELECT COUNT(*) as count FROM scheduler_queue
@@ -476,8 +546,8 @@ class StateManager:
         pt_start = datetime(year, month, day, 0, 0, 0, tzinfo=pt_tz)
         pt_end = pt_start + timedelta(days=1)
 
-        utc_start = pt_start.astimezone(timezone.utc).isoformat()
-        utc_end = pt_end.astimezone(timezone.utc).isoformat()
+        utc_start = pt_start.astimezone(UTC).isoformat()
+        utc_end = pt_end.astimezone(UTC).isoformat()
 
         with self._lock:
             conn = self._get_connection()
@@ -512,7 +582,7 @@ class StateManager:
         with self._lock:
             conn = self._get_connection()
             try:
-                now_str = datetime.now(timezone.utc).isoformat()
+                now_str = datetime.now(UTC).isoformat()
                 val = "1" if paused else "0"
                 conn.execute(
                     """
@@ -546,7 +616,7 @@ class StateManager:
             The new cumulative units spent for this bucket on that Pacific Time date.
         """
         date_pt = get_current_pt_date(when)
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
 
         with self._lock:
             conn = self._get_connection()

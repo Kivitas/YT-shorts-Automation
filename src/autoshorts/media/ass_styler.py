@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from autoshorts.core.config import SubtitlesConfig
+from autoshorts.core.models import JumpCut
 from autoshorts.core.paths import atomic_write
 
 
@@ -89,6 +90,55 @@ EMOJI_REGEX = re.compile(
     r"[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\ud83c-\ud83e][\ud000-\udfff]",
     flags=re.UNICODE,
 )
+
+# 3 Distinct Caption Style Presets per PLAN.md & visual polish specification
+CAPTION_PRESETS: dict[str, dict[str, Any]] = {
+    "neon": {
+        "active_color": "&H0000E6FF",  # Yellow #FFE600 (BGR)
+        "emphasis_color": "&H00FFF000",  # Cyan #00F0FF (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": "&H00000000",  # Heavy black outline
+        "back_color": "&H80000000",
+        "border_style": 1,
+        "outline": 8,  # Heavy black outline
+        "shadow": 4,
+    },
+    "minimal": {
+        "active_color": "&H0066FF00",  # Emerald #00FF66 (BGR)
+        "emphasis_color": "&H0066FF00",  # Emerald #00FF66 (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": "&H00000000",
+        "back_color": "&H40000000",
+        "border_style": 1,
+        "outline": 2,  # Subtle outline
+        "shadow": 2,  # Subtle shadow
+    },
+    "pill": {
+        "active_color": "&H0000E6FF",  # Yellow #FFE600 (BGR)
+        "emphasis_color": "&H00FFF000",  # Cyan #00F0FF (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": "&HA0000000",  # Opaque dark translucent backing box
+        "back_color": "&HA0000000",
+        "border_style": 3,  # BorderStyle=3 opaque backing box behind words
+        "outline": 6,  # Box padding
+        "shadow": 0,
+    },
+}
+
+
+def format_emojis_for_ass(text: str, base_font: str = "Montserrat ExtraBold") -> str:
+    """Safely format raw Unicode emojis by wrapping with inline Segoe UI Emoji font override on Windows.
+
+    Prevents raw emojis from rendering as missing glyph tofu boxes in standard TTF fonts.
+    """
+    if not EMOJI_REGEX.search(text):
+        return text
+
+    def _replace_emoji(match: re.Match[str]) -> str:
+        emoji_str = match.group(0)
+        return f"{{\\fnSegoe UI Emoji}}{emoji_str}{{\\fn{base_font}}}"
+
+    return EMOJI_REGEX.sub(_replace_emoji, text)
 
 
 def format_ass_timestamp(seconds: float) -> str:
@@ -230,6 +280,88 @@ def offset_words_for_hook(
     return offset_words
 
 
+def remap_words_for_jump_cuts(
+    words: Sequence[TimedWord | dict[str, Any]],
+    jump_cuts: Sequence[JumpCut] | None = None,
+) -> list[TimedWord]:
+    """Remap word timestamps when jump cuts excise dead air intervals.
+
+    Removes words that fall inside a jump cut ([cut_start, cut_end]).
+    Shifts all subsequent word timestamps earlier by the cumulative duration of preceding jump cuts.
+
+    Args:
+        words: Sequence of TimedWord objects or dictionaries.
+        jump_cuts: Sequence of JumpCut objects specifying intervals excised from media.
+
+    Returns:
+        List of TimedWord instances with adjusted timestamps and excised words removed.
+    """
+    if not words:
+        return []
+    if not jump_cuts:
+        res: list[TimedWord] = []
+        for w in words:
+            if isinstance(w, TimedWord):
+                res.append(w)
+            else:
+                res.append(TimedWord.from_dict(w))
+        return res
+
+    # Filter and sort cuts chronologically
+    sorted_cuts = sorted(
+        [c for c in jump_cuts if c.cut_end > c.cut_start >= 0],
+        key=lambda c: c.cut_start,
+    )
+    if not sorted_cuts:
+        return [w if isinstance(w, TimedWord) else TimedWord.from_dict(w) for w in words]
+
+    remapped: list[TimedWord] = []
+    for item in words:
+        w = item if isinstance(item, TimedWord) else TimedWord.from_dict(item)
+
+        # Check if word falls inside any jump cut
+        # A word falls inside a cut if its midpoint is within [cut_start, cut_end]
+        # or if it is strictly contained within [cut_start, cut_end]
+        midpoint = (w.start + w.end) / 2.0
+        inside_cut = any(
+            (c.cut_start <= midpoint <= c.cut_end)
+            or (w.start >= c.cut_start and w.end <= c.cut_end)
+            for c in sorted_cuts
+        )
+        if inside_cut:
+            continue
+
+        # Calculate cumulative shift: sum of durations of all cuts occurring before this word
+        cum_shift = 0.0
+        w_start = w.start
+        w_end = w.end
+        for c in sorted_cuts:
+            cut_dur = max(0.0, c.cut_end - c.cut_start)
+            if c.cut_end <= w_start:
+                cum_shift += cut_dur
+            elif c.cut_start < w_start < c.cut_end:
+                # Partial overlap on start boundary
+                cum_shift += w_start - c.cut_start
+                w_start = c.cut_end
+            elif c.cut_start < w_end < c.cut_end:
+                # Partial overlap on end boundary
+                w_end = c.cut_start
+
+        new_start = max(0.0, w_start - cum_shift)
+        new_end = max(new_start + 0.05, w_end - cum_shift)
+
+        remapped.append(
+            TimedWord(
+                word=w.word,
+                start=round(new_start, 3),
+                end=round(new_end, 3),
+                probability=w.probability,
+            )
+        )
+
+    return remapped
+
+
 def build_ass_script(
     words: Sequence[TimedWord | dict[str, Any]],
     hook_title: str | None = None,
@@ -239,16 +371,23 @@ def build_ass_script(
     total_duration_sec: float | None = None,
     active_color_override: str | None = None,
     hook_in_sec: float = 0.0,
+    jump_cuts: Sequence[JumpCut] | None = None,
+    style_preset: str = "neon",
 ) -> str:
     """Generate complete SubStation Alpha (.ass) file contents for a 1080x1920 Short.
 
     Includes:
     - [Script Info] for 1080x1920
-    - [V4+ Styles] with DopamineYellow, HookCard, and Watermark
+    - [V4+ Styles] supporting presets ('neon', 'minimal', 'pill')
     - [Events] with active-word pop animation, safe-zone positioning, and hook card
     """
     if config is None:
         config = SubtitlesConfig()
+
+    preset_name = (
+        (style_preset or getattr(config, "style_preset", "neon") or "neon").strip().lower()
+    )
+    preset = CAPTION_PRESETS.get(preset_name, CAPTION_PRESETS["neon"])
 
     font_name = config.font_name
     font_size = config.font_size
@@ -256,13 +395,38 @@ def build_ass_script(
     margin_v = max(350, config.safe_zone_margin_v)
     margin_r = 150
     margin_l = 80
-    primary_color = config.primary_color
-    active_color = active_color_override or config.active_color
-    outline_color = config.outline_color
+
+    if active_color_override:
+        active_color = active_color_override
+    elif config.active_color != "&H0000FFFF":
+        active_color = config.active_color
+    else:
+        active_color = preset["active_color"]
+
+    emphasis_color = preset["emphasis_color"]
+    primary_color = (
+        config.primary_color if config.primary_color != "&H00FFFFFF" else preset["primary_color"]
+    )
+    outline_color = (
+        config.outline_color if config.outline_color != "&H00000000" else preset["outline_color"]
+    )
+    back_color = preset["back_color"]
+    border_style = preset["border_style"]
+    outline = preset["outline"]
+    shadow = preset["shadow"]
 
     # If hook_in trimming was applied, offset word timestamps
     if hook_in_sec > 0:
         words = offset_words_for_hook(words, hook_in_sec)
+
+    # If jump cuts exist, remap word timestamps to close excised dead-air gaps
+    if jump_cuts:
+        words = remap_words_for_jump_cuts(words, jump_cuts)
+        if total_duration_sec is not None:
+            total_cut_dur = sum(
+                max(0.0, c.cut_end - c.cut_start) for c in jump_cuts if c.cut_end > c.cut_start >= 0
+            )
+            total_duration_sec = max(1.0, total_duration_sec - total_cut_dur)
 
     # Clean and chunk the words
     chunks = chunk_words(
@@ -292,7 +456,7 @@ def build_ass_script(
         ),
         (
             f"Style: DopamineYellow,{font_name},{font_size},{primary_color},{active_color},"
-            f"{outline_color},&H80000000,-1,0,0,0,100,100,2,0,1,8,4,2,{margin_l},{margin_r},{margin_v},1"
+            f"{outline_color},{back_color},-1,0,0,0,100,100,2,0,{border_style},{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
         ),
         (
             f"Style: HookCard,Montserrat Black,64,{active_color},{primary_color},"
@@ -313,9 +477,10 @@ def build_ass_script(
         hook_end = min(hook_duration_sec, 3.0)
         hook_start_str = format_ass_timestamp(0.0)
         hook_end_str = format_ass_timestamp(hook_end)
+        formatted_hook = format_emojis_for_ass(clean_hook, base_font="Montserrat Black")
         lines.append(
             f"Dialogue: 1,{hook_start_str},{hook_end_str},HookCard,,0,0,0,,"
-            f"{{\\fad(200,300)}}{clean_hook}"
+            f"{{\\fad(200,300)}}{formatted_hook}"
         )
 
     # Word-level karaoke dialogue events (Layer 0)
@@ -340,19 +505,21 @@ def build_ass_script(
             rendered_words: list[str] = []
             for j, w in enumerate(chunk.words):
                 w_text = w.word.strip().upper()
+                w_formatted = format_emojis_for_ass(w_text, base_font=font_name)
                 if j == idx:
-                    # Active word: pop animation + active color highlight
-                    # If high-emphasis keyword, use special emphasis scale/color
+                    # Active word: pop animation + micro-tilt bounce + active color highlight
                     emphasis = is_emphasis_word(w_text)
-                    scale_max = 125 if emphasis else 115
-                    color_tag = active_color
+                    scale_max = 125 if emphasis else 118
+                    color_tag = (
+                        emphasis_color if (emphasis and preset_name == "neon") else active_color
+                    )
                     word_line = (
-                        f"{{\\t(0,80,\\fscx{scale_max}\\fscy{scale_max})"
-                        f"\\t(80,160,\\fscx100\\fscy100)\\c{color_tag}&}}{w_text}"
+                        f"{{\\frz-2\\t(0,80,\\fscx{scale_max}\\fscy{scale_max})"
+                        f"\\t(80,160,\\fscx100\\fscy100)\\t(80,160,\\frz0)\\c{color_tag}&}}{w_formatted}"
                     )
                 else:
                     # Inactive word in this chunk
-                    word_line = f"{{\\c{primary_color}&}}{w_text}"
+                    word_line = f"{{\\c{primary_color}&}}{w_formatted}"
                 rendered_words.append(word_line)
 
             dialogue_text = " ".join(rendered_words)
@@ -383,6 +550,8 @@ def write_ass_file(
     onscreen_credit: str | None = None,
     total_duration_sec: float | None = None,
     hook_in_sec: float = 0.0,
+    jump_cuts: Sequence[JumpCut] | None = None,
+    style_preset: str = "neon",
 ) -> Path:
     """Generate and atomically write an ASS subtitle file to disk."""
     dest = Path(output_path).resolve()
@@ -394,5 +563,7 @@ def write_ass_file(
         onscreen_credit=onscreen_credit,
         total_duration_sec=total_duration_sec,
         hook_in_sec=hook_in_sec,
+        jump_cuts=jump_cuts,
+        style_preset=style_preset,
     )
     return atomic_write(dest, content, mode="w", encoding="utf-8")

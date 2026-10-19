@@ -81,8 +81,16 @@ def test_pipeline_e2e_mocked_success(test_env: dict[str, Any], monkeypatch: pyte
     mock_transcript_fetcher = MagicMock()
     mock_transcript_fetcher.fetch_or_signal.return_value = (
         [
-            TranscriptSegment(start=10.0, duration=15.0, text="This revolutionary discovery will transform everything we know about computing."),
-            TranscriptSegment(start=25.0, duration=20.0, text="The implications are absolutely massive and nobody saw it coming."),
+            TranscriptSegment(
+                start=10.0,
+                duration=15.0,
+                text="This revolutionary discovery will transform everything we know about computing.",
+            ),
+            TranscriptSegment(
+                start=25.0,
+                duration=20.0,
+                text="The implications are absolutely massive and nobody saw it coming.",
+            ),
         ],
         None,
     )
@@ -97,7 +105,12 @@ def test_pipeline_e2e_mocked_success(test_env: dict[str, Any], monkeypatch: pyte
 
     # 4. Mock Decider
     mock_decider = MagicMock()
-    cand = ClipCandidate(start=10.0, end=45.0, text="This revolutionary discovery will transform everything.", score=0.92)
+    cand = ClipCandidate(
+        start=10.0,
+        end=45.0,
+        text="This revolutionary discovery will transform everything.",
+        score=0.92,
+    )
     mock_decider.score_candidates.return_value = [cand]
     mock_decider.select_clips.return_value = [
         ClipSelection(
@@ -122,7 +135,9 @@ def test_pipeline_e2e_mocked_success(test_env: dict[str, Any], monkeypatch: pyte
     # 6. Mock Compositor
     mock_compositor = MagicMock()
 
-    def fake_compose(job_id, source_clip, edl, background_path, subtitles_path, output_path, **kwargs):
+    def fake_compose(
+        job_id, source_clip, edl, background_path, subtitles_path, output_path, **kwargs
+    ):
         p = Path(output_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b"\x00\x00\x00 fake rendered master short")
@@ -203,7 +218,9 @@ def test_pipeline_e2e_mocked_success(test_env: dict[str, Any], monkeypatch: pyte
         assert s["status"] == "COMPLETED"
 
 
-def test_pipeline_whisper_fallback_when_no_captions(test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch):
+def test_pipeline_whisper_fallback_when_no_captions(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """Verify that when captions are missing, pipeline falls back to FasterWhisper audio transcription."""
     state_mgr = test_env["state_mgr"]
     work_dir = test_env["work_dir"]
@@ -235,7 +252,11 @@ def test_pipeline_whisper_fallback_when_no_captions(test_env: dict[str, Any], mo
 
     mock_transcriber = MagicMock()
     mock_transcriber.transcribe.return_value = [
-        {"start": 5.0, "end": 40.0, "text": "This audio was extracted and transcribed purely via local Whisper fallback."}
+        {
+            "start": 5.0,
+            "end": 40.0,
+            "text": "This audio was extracted and transcribed purely via local Whisper fallback.",
+        }
     ]
 
     pipeline = ShortsPipeline(
@@ -263,7 +284,9 @@ def test_pipeline_whisper_fallback_when_no_captions(test_env: dict[str, Any], mo
     assert "local Whisper fallback" in cached_segments[0]["text"]
 
 
-def test_pipeline_schedule_mode_instead_of_immediate(test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch):
+def test_pipeline_schedule_mode_instead_of_immediate(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """Verify that auto_upload=True enqueues job into SpreadScheduler."""
     state_mgr = test_env["state_mgr"]
     quota_tracker = test_env["quota_tracker"]
@@ -292,13 +315,19 @@ def test_pipeline_schedule_mode_instead_of_immediate(test_env: dict[str, Any], m
 
     mock_transcript_fetcher = MagicMock()
     mock_transcript_fetcher.fetch_or_signal.return_value = (
-        [TranscriptSegment(start=0.0, duration=40.0, text="Scheduled video excerpt transcript text.")],
+        [
+            TranscriptSegment(
+                start=0.0, duration=40.0, text="Scheduled video excerpt transcript text."
+            )
+        ],
         None,
     )
 
     mock_compositor = MagicMock()
 
-    def fake_compose(job_id, source_clip, edl, background_path, subtitles_path, output_path, **kwargs):
+    def fake_compose(
+        job_id, source_clip, edl, background_path, subtitles_path, output_path, **kwargs
+    ):
         p = Path(output_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b"master short")
@@ -455,6 +484,7 @@ def test_pipeline_batch_processing(test_env: dict[str, Any], monkeypatch: pytest
         video_url=url,
         duration=100.0,
     )
+
     def fake_dl(url, start_sec, end_sec, output_path):
         p = Path(output_path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -500,3 +530,42 @@ def test_pipeline_concurrency_throttling(test_env: dict[str, Any]):
     assert pipeline._render_lock.acquire(blocking=False) is False
     pipeline._render_lock.release()
 
+
+def test_pipeline_startup_reconciles_stranded_jobs_and_wires_cleaner(test_env: dict[str, Any]):
+    """Verify that ShortsPipeline initialization reconciles stranded jobs and wires cleaner into scheduler."""
+    state_mgr = test_env["state_mgr"]
+
+    # Pre-populate a stranded job from an interrupted previous run
+    stranded = Job(
+        id="stranded_compositing_job",
+        source_url="https://youtube.com/watch?v=stranded1",
+        status=JobStatus.COMPOSITING,
+    )
+    state_mgr.save_job(stranded)
+
+    # Initialize pipeline
+    pipeline = ShortsPipeline(state_manager=state_mgr)
+
+    # 1. Cleaner wired into scheduler
+    assert pipeline.scheduler.cleaner is not None
+    assert pipeline.scheduler.cleaner is pipeline.cleaner
+
+    # 2. Stranded job was transitioned to FAILED
+    reloaded = state_mgr.get_job("stranded_compositing_job")
+    assert reloaded is not None
+    assert reloaded.status == JobStatus.FAILED
+    assert reloaded.error_message == "Interrupted by application restart; ready for retry"
+
+
+def test_pipeline_instantiates_studio_uploader_when_configured(test_env: dict[str, Any]):
+    """Verify ShortsPipeline instantiates PlaywrightStudioUploader when upload.mode is studio."""
+    from autoshorts.core.config import Settings
+    from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+    state_mgr = test_env["state_mgr"]
+    config = Settings()
+    config.upload.mode = "studio"
+
+    pipeline = ShortsPipeline(config=config, state_manager=state_mgr)
+    assert isinstance(pipeline.uploader, PlaywrightStudioUploader)
+    assert pipeline.scheduler.uploader is pipeline.uploader

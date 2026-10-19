@@ -13,9 +13,10 @@ import logging
 import os
 import shutil
 import time
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from send2trash import send2trash
 
@@ -27,7 +28,6 @@ from autoshorts.core.paths import (
     ALLOWED_CLEANUP_ROOTS,
     FORBIDDEN_PROTECTED_PATHS,
     PROJECT_ROOT,
-    assert_safe_to_delete as core_assert_safe_to_delete,
     get_output_dir,
     get_work_dir,
 )
@@ -120,12 +120,16 @@ class SafetyCleaner(Cleaner):
                         f"Path-guard violation: Symlink target '{resolved_link}' escapes allowed cleanup roots."
                     )
             except (OSError, RuntimeError) as e:
-                raise PathSecurityError(f"Path-guard violation on unresolvable symlink '{raw_path}': {e}") from e
+                raise PathSecurityError(
+                    f"Path-guard violation on unresolvable symlink '{raw_path}': {e}"
+                ) from e
 
         # Rule 1: Cannot delete allowed roots or project root itself
         for root_dir in self.allowed_roots + [PROJECT_ROOT.resolve()]:
             if abs_target == root_dir:
-                raise PathSecurityError(f"CRITICAL: Attempted deletion of root directory: {abs_target}")
+                raise PathSecurityError(
+                    f"CRITICAL: Attempted deletion of root directory: {abs_target}"
+                )
 
         # Rule 2: Must be strictly inside an allowed cleanup root
         is_allowed = any(
@@ -182,16 +186,20 @@ class SafetyCleaner(Cleaner):
         """
         # Verification check
         is_verified = False
-        if verified is True:
-            is_verified = True
-        elif upload_result is not None and getattr(upload_result, "verified", False):
+        if (
+            verified is True
+            or upload_result is not None
+            and getattr(upload_result, "verified", False)
+        ):
             is_verified = True
         elif self.state_manager is not None:
             job = self.state_manager.get_job(job_id)
             if job is not None:
-                if job.status in (JobStatus.COMPLETED, JobStatus.CLEANED):
-                    is_verified = True
-                elif job.upload_result is not None and job.upload_result.verified:
+                if (
+                    job.status in (JobStatus.COMPLETED, JobStatus.CLEANED)
+                    or job.upload_result is not None
+                    and job.upload_result.verified
+                ):
                     is_verified = True
 
         if not is_verified and not force:
@@ -258,8 +266,7 @@ class SafetyCleaner(Cleaner):
                                 try:
                                     mtime = item.stat().st_mtime
                                     age_days = (
-                                        datetime.now(timezone.utc)
-                                        - datetime.fromtimestamp(mtime, tz=timezone.utc)
+                                        datetime.now(UTC) - datetime.fromtimestamp(mtime, tz=UTC)
                                     ).total_seconds() / 86400.0
                                     if age_days >= eff_keep_days:
                                         should_delete = True
@@ -275,7 +282,9 @@ class SafetyCleaner(Cleaner):
 
         # In dry run mode, return the list of targets that would be removed
         if eff_dry_run:
-            logger.info("Dry run cleanup for job %s: would delete %d items", job_id, len(files_to_delete))
+            logger.info(
+                "Dry run cleanup for job %s: would delete %d items", job_id, len(files_to_delete)
+            )
             return files_to_delete
 
         # Execute deletions with Windows backoff/retries

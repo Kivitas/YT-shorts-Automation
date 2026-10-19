@@ -11,7 +11,8 @@ import logging
 import math
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Mapping, Sequence, TypeVar
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, TypeVar
 
 from autoshorts.core.contracts import LLMProvider
 from autoshorts.core.exceptions import ModelNotFoundError, ProviderError, ProviderRateLimitError

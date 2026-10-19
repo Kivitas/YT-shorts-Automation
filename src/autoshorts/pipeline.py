@@ -52,18 +52,19 @@ from autoshorts.discovery.url_validator import ParsedLink, parse_links_input
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
 from autoshorts.media.ass_styler import write_ass_file
-from autoshorts.media.dopamine_effects import pick_background_asset
 from autoshorts.media.compositor import (
     FasterWhisperTranscriber,
     FFmpegCompositor,
     extract_16khz_mono_wav,
 )
+from autoshorts.media.dopamine_effects import pick_background_asset
 from autoshorts.media.downloader import Downloader as MediaDownloader
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
 from autoshorts.transcript.fetcher import TranscriptFetcher
 from autoshorts.uploader.description_builder import build_short_description, build_short_title
 from autoshorts.uploader.local_exporter import LocalExportUploader
+from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
 from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
 logger = logging.getLogger("autoshorts.pipeline")
@@ -140,6 +141,8 @@ class ShortsPipeline:
             self.uploader = uploader
         elif self.config.upload.mode == "local":
             self.uploader = LocalExportUploader(export_dir=get_output_dir())
+        elif self.config.upload.mode == "studio":
+            self.uploader = PlaywrightStudioUploader(config=self.config)
         else:
             try:
                 self.uploader = YouTubeApiUploader(
@@ -165,7 +168,18 @@ class ShortsPipeline:
             quota_tracker=self.quota_tracker,
             uploader=self.uploader,
             config=self.config,
+            cleaner=self.cleaner,
         )
+
+        # Reconcile stranded jobs from prior interrupted processes
+        try:
+            reconciled = self.state_manager.reconcile_stranded_jobs()
+            if reconciled > 0:
+                logger.info(
+                    "Reconciled %d stranded job(s) from prior session to FAILED.", reconciled
+                )
+        except Exception as r_err:
+            logger.warning("Failed to reconcile stranded jobs on startup: %s", r_err)
 
     # -------------------------------------------------------------------------
     # Public Ingestion API
@@ -287,7 +301,7 @@ class ShortsPipeline:
                 return job
 
             except Exception as e:
-                logger.exception("Job %s failed during pipeline execution: %s", job.id, e)
+                logger.exception("Job %s failed during pipeline execution", job.id)
                 job.transition_to(JobStatus.FAILED)
                 job.error_message = str(e)
                 self.state_manager.save_job(job)
@@ -385,9 +399,13 @@ class ShortsPipeline:
                 },
             )
             self.state_manager.save_job(job)
-            logger.info("Job %s: Metadata extracted: '%s' by %s", job.id, metadata.title, metadata.channel)
+            logger.info(
+                "Job %s: Metadata extracted: '%s' by %s", job.id, metadata.title, metadata.channel
+            )
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise MetadataFetchError(f"Failed to fetch metadata for {job.source_url}: {e}") from e
 
     def _run_transcript_stage(self, job: Job) -> None:
@@ -414,11 +432,16 @@ class ShortsPipeline:
                             for s in segs
                         ]
                 except Exception as ex:
-                    logger.debug("Transcript fetcher returned error: %s; falling back to Whisper", ex)
+                    logger.debug(
+                        "Transcript fetcher returned error: %s; falling back to Whisper", ex
+                    )
 
             # 2. If no captions or fetch failed, fallback to local FasterWhisper
             if not segments:
-                logger.info("Job %s: No online captions available. Falling back to Whisper audio transcription.", job.id)
+                logger.info(
+                    "Job %s: No online captions available. Falling back to Whisper audio transcription.",
+                    job.id,
+                )
                 audio_path = work_dir / f"{job.id}_audio.m4a"
                 self.downloader.download_audio_only(job.source_url, audio_path)
                 whisper_segs = self.transcriber.transcribe(audio_path)
@@ -433,7 +456,9 @@ class ShortsPipeline:
                 ]
 
             if not segments:
-                raise TranscriptNotFoundError(f"No speech transcript could be extracted for {job.source_url}")
+                raise TranscriptNotFoundError(
+                    f"No speech transcript could be extracted for {job.source_url}"
+                )
 
             # Cache transcript to disk
             with open(transcript_cache, "w", encoding="utf-8") as f:
@@ -443,12 +468,17 @@ class ShortsPipeline:
             self.state_manager.record_stage_complete(
                 stage_id,
                 status="COMPLETED",
-                artifacts={"transcript_path": str(transcript_cache), "segment_count": len(segments)},
+                artifacts={
+                    "transcript_path": str(transcript_cache),
+                    "segment_count": len(segments),
+                },
             )
             self.state_manager.save_job(job)
             logger.info("Job %s: Transcribed %d segments.", job.id, len(segments))
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise
 
     def _load_transcript_segments(self, job: Job) -> list[dict[str, Any]]:
@@ -464,7 +494,9 @@ class ShortsPipeline:
         try:
             segments = self._load_transcript_segments(job)
             if not segments:
-                raise AutoShortsError(f"Cannot slice windows: No cached transcript found for job {job.id}")
+                raise AutoShortsError(
+                    f"Cannot slice windows: No cached transcript found for job {job.id}"
+                )
 
             candidates = slice_transcript_windows(
                 transcript=segments,
@@ -475,7 +507,9 @@ class ShortsPipeline:
             )
 
             if not candidates:
-                raise AutoShortsError(f"No valid candidate windows could be sliced for job {job.id}")
+                raise AutoShortsError(
+                    f"No valid candidate windows could be sliced for job {job.id}"
+                )
 
             job.candidate_windows = candidates
             job.transition_to(JobStatus.WINDOWS_SLICED)
@@ -487,7 +521,9 @@ class ShortsPipeline:
             self.state_manager.save_job(job)
             logger.info("Job %s: Sliced %d candidate windows.", job.id, len(candidates))
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise
 
     def _run_semif_stage(self, job: Job, background_category: str | None = None) -> None:
@@ -521,9 +557,16 @@ class ShortsPipeline:
                 },
             )
             self.state_manager.save_job(job)
-            logger.info("Job %s: SemIf selected %d clip(s). Top score: %.3f", job.id, len(clips), clips[0].candidate.score)
+            logger.info(
+                "Job %s: SemIf selected %d clip(s). Top score: %.3f",
+                job.id,
+                len(clips),
+                clips[0].candidate.score,
+            )
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise
 
     def _run_download_stage(self, job: Job) -> None:
@@ -552,7 +595,9 @@ class ShortsPipeline:
             self.state_manager.save_job(job)
             logger.info("Job %s: Precision cut saved to %s", job.id, raw_cut_path)
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise DownloadError(f"Precision cut download failed for job {job.id}: {e}") from e
 
     def _run_edl_stage(self, job: Job) -> None:
@@ -583,12 +628,20 @@ class ShortsPipeline:
                 artifacts={"edl": json.loads(edl.model_dump_json())},
             )
             self.state_manager.save_job(job)
-            logger.info("Job %s: Multimodal EDL planned with %d jump cut(s) and %d punch-in(s).",
-                        job.id, len(edl.jump_cuts), len(edl.zoom_punch_ins))
+            logger.info(
+                "Job %s: Multimodal EDL planned with %d jump cut(s) and %d punch-in(s).",
+                job.id,
+                len(edl.jump_cuts),
+                len(edl.zoom_punch_ins),
+            )
         except Exception as e:
-            logger.warning("Edit planning failed for job %s: %s; falling back to clean EDL", job.id, e)
+            logger.warning(
+                "Edit planning failed for job %s: %s; falling back to clean EDL", job.id, e
+            )
             job.edl = create_empty_edl()
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
 
     def _run_subtitles_stage(self, job: Job) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "subtitles_generation")
@@ -624,7 +677,11 @@ class ShortsPipeline:
             channel_credit = job.video_metadata.channel if job.video_metadata else None
             hook = sel.hook_text or (job.edl.recommended_hook if job.edl else "") or None
             hook_in = job.edl.hook_in_sec if (job.edl and job.edl.hook_in_sec > 0) else 0.0
-            total_dur = max(1.0, sel.candidate.duration - hook_in) if sel.candidate.duration else None
+            total_dur = (
+                max(1.0, sel.candidate.duration - hook_in) if sel.candidate.duration else None
+            )
+            jump_cuts = job.edl.jump_cuts if (job.edl and job.edl.jump_cuts) else None
+            style_preset = getattr(self.config.subtitles, "style_preset", "neon")
 
             write_ass_file(
                 output_path=ass_path,
@@ -634,6 +691,8 @@ class ShortsPipeline:
                 onscreen_credit=channel_credit,
                 total_duration_sec=total_dur,
                 hook_in_sec=hook_in,
+                jump_cuts=jump_cuts,
+                style_preset=style_preset,
             )
 
             job.subtitles_path = str(ass_path)
@@ -646,7 +705,9 @@ class ShortsPipeline:
             self.state_manager.save_job(job)
             logger.info("Job %s: Generated ASS subtitles (%d words).", job.id, len(words))
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise
 
     def _run_compositing_stage(
@@ -666,7 +727,11 @@ class ShortsPipeline:
             master_path = output_dir / f"{job.id}_master.mp4"
 
             dopamine = dopamine_level or self.config.job_defaults.dopamine_level
-            bg_style = background_category or sel.background_style or self.config.job_defaults.background_category
+            bg_style = (
+                background_category
+                or sel.background_style
+                or self.config.job_defaults.background_category
+            )
             bg_file, _ = pick_background_asset(category=bg_style)
 
             # Run FFmpeg master compositing
@@ -685,7 +750,9 @@ class ShortsPipeline:
             if self.config.media.generate_lowres_preview:
                 preview_path = output_dir / f"{job.id}_preview.mp4"
                 try:
-                    self.compositor.generate_preview(source_clip=master_path, output_path=preview_path)
+                    self.compositor.generate_preview(
+                        source_clip=master_path, output_path=preview_path
+                    )
                     job.preview_video_path = str(preview_path)
                 except Exception as p_err:
                     logger.warning("Job %s: Low-res preview generation failed: %s", job.id, p_err)
@@ -694,12 +761,17 @@ class ShortsPipeline:
             self.state_manager.record_stage_complete(
                 stage_id,
                 status="COMPLETED",
-                artifacts={"master_video": str(master_path), "preview_video": job.preview_video_path},
+                artifacts={
+                    "master_video": str(master_path),
+                    "preview_video": job.preview_video_path,
+                },
             )
             self.state_manager.save_job(job)
             logger.info("Job %s: Composited master Short at %s", job.id, master_path)
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise
 
     def _prepare_upload_metadata(self, job: Job) -> tuple[str, str]:
@@ -764,21 +836,27 @@ class ShortsPipeline:
                 artifacts=json.loads(result.model_dump_json()),
             )
             self.state_manager.save_job(job)
-            logger.info("Job %s: Uploaded and verified as %s (%s)", job.id, result.video_id, result.url)
+            logger.info(
+                "Job %s: Uploaded and verified as %s (%s)", job.id, result.video_id, result.url
+            )
 
             # Post-upload transactional cleanup
-            if self.cleaner and self.config.cleanup.enabled:
+            if self.cleaner and getattr(getattr(self.config, "cleanup", None), "enabled", True):
                 try:
-                    self.cleaner.cleanup_job(job.id, verified=True)
+                    self.cleaner.cleanup_job(job.id, verified=True, upload_result=result)
                     job.transition_to(JobStatus.CLEANED)
                     self.state_manager.save_job(job)
                     logger.info("Job %s: Post-upload cleanup completed.", job.id)
                 except Exception as c_err:
-                    logger.warning("Job %s: Post-upload cleanup encountered error: %s", job.id, c_err)
+                    logger.warning(
+                        "Job %s: Post-upload cleanup encountered error: %s", job.id, c_err
+                    )
 
             return result
         except Exception as e:
-            self.state_manager.record_stage_complete(stage_id, status="FAILED", artifacts={"error": str(e)})
+            self.state_manager.record_stage_complete(
+                stage_id, status="FAILED", artifacts={"error": str(e)}
+            )
             raise
 
     def _run_schedule_upload(self, job: Job) -> None:

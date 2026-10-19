@@ -15,8 +15,8 @@ from autoshorts.edit_planner.multimodal_planner import (
 
 __all__ = [
     "EDL_JSON_SCHEMA",
-    "MultimodalEditPlanner",
     "PRIVACY_NOTICE",
+    "MultimodalEditPlanner",
     "build_edl_prompt",
     "clamp_edl",
     "create_empty_edl",

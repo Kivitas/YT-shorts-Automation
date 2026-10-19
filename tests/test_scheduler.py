@@ -6,12 +6,12 @@ import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from autoshorts.core.config import ActiveWindowConfig
-from autoshorts.core.models import Job, UploadResult
+from autoshorts.core.models import Job, JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.power_management import allow_system_sleep, prevent_system_sleep
@@ -39,13 +39,15 @@ class FakeUploader:
         privacy: str = "unlisted",
     ) -> UploadResult:
         vid_id = f"mock_{len(self.upload_calls)}"
-        self.upload_calls.append({
-            "path": path,
-            "title": title,
-            "description": description,
-            "tags": tags,
-            "privacy": privacy,
-        })
+        self.upload_calls.append(
+            {
+                "path": path,
+                "title": title,
+                "description": description,
+                "tags": tags,
+                "privacy": privacy,
+            }
+        )
         return UploadResult(
             video_id=vid_id,
             url=f"https://youtube.com/shorts/{vid_id}",
@@ -324,3 +326,114 @@ def test_power_management_win32_calls():
     with patch("sys.platform", "linux"):
         assert prevent_system_sleep() is False
         assert allow_system_sleep() is False
+
+
+def test_scheduler_verified_upload_triggers_cleaner(state_mgr: StateManager):
+    """Verify that SpreadScheduler calls cleaner.cleanup_job upon verified upload and transitions to CLEANED."""
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(state_mgr, clock=lambda: now)
+    uploader = FakeUploader(verify_result=True)
+    mock_cleaner = MagicMock()
+
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=uploader,
+        cleaner=mock_cleaner,
+        clock=lambda: now,
+    )
+
+    job_id = "job_clean_test_1"
+    job = Job(
+        id=job_id, source_url="https://youtube.com/watch?v=clean1", status=JobStatus.SCHEDULED
+    )
+    state_mgr.save_job(job)
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path="output/master.mp4",
+        title="Clean Title",
+        description="Clean Desc",
+        target_time=now,
+    )
+
+    res = scheduler.upload_now(job_id)
+    assert res.verified is True
+    mock_cleaner.cleanup_job.assert_called_once_with(job_id, verified=True, upload_result=res)
+
+    updated_job = state_mgr.get_job(job_id)
+    assert updated_job is not None
+    assert updated_job.status == JobStatus.CLEANED
+
+
+def test_scheduler_unverified_upload_skips_cleaner(state_mgr: StateManager):
+    """Verify that cleaner is not called if upload verification fails."""
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(state_mgr, clock=lambda: now)
+    uploader = FakeUploader(verify_result=False)
+    mock_cleaner = MagicMock()
+
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=uploader,
+        cleaner=mock_cleaner,
+        clock=lambda: now,
+    )
+
+    job_id = "job_unverified_clean"
+    job = Job(
+        id=job_id, source_url="https://youtube.com/watch?v=unver1", status=JobStatus.SCHEDULED
+    )
+    state_mgr.save_job(job)
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path="output/master.mp4",
+        title="Unverified Title",
+        description="Unverified Desc",
+        target_time=now,
+    )
+
+    res = scheduler.upload_now(job_id)
+    assert res.verified is False
+    mock_cleaner.cleanup_job.assert_not_called()
+
+    updated_job = state_mgr.get_job(job_id)
+    assert updated_job is not None
+    assert updated_job.status == JobStatus.COMPLETED
+
+
+def test_scheduler_cleaner_failure_tolerated(state_mgr: StateManager):
+    """Verify that cleanup errors do not fail the upload dispatch result."""
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(state_mgr, clock=lambda: now)
+    uploader = FakeUploader(verify_result=True)
+    mock_cleaner = MagicMock()
+    mock_cleaner.cleanup_job.side_effect = RuntimeError("Disk locked")
+
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=uploader,
+        cleaner=mock_cleaner,
+        clock=lambda: now,
+    )
+
+    job_id = "job_clean_error"
+    job = Job(
+        id=job_id, source_url="https://youtube.com/watch?v=cleanerr", status=JobStatus.SCHEDULED
+    )
+    state_mgr.save_job(job)
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path="output/master.mp4",
+        title="Error Title",
+        description="Error Desc",
+        target_time=now,
+    )
+
+    res = scheduler.upload_now(job_id)
+    assert res.verified is True
+    # Still completed despite cleanup error
+    updated_job = state_mgr.get_job(job_id)
+    assert updated_job is not None
+    assert updated_job.status == JobStatus.COMPLETED

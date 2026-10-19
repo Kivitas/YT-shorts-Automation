@@ -105,7 +105,9 @@ class EncoderProbeError(MediaError):
 class QuotaExhaustedError(AutoShortsError):
     """Raised when a YouTube Data API quota bucket is exhausted."""
 
-    def __init__(self, bucket: str, spent: int, limit: int, reset_time_pt: str | None = None) -> None:
+    def __init__(
+        self, bucket: str, spent: int, limit: int, reset_time_pt: str | None = None
+    ) -> None:
         msg = f"YouTube API quota bucket '{bucket}' exhausted: {spent}/{limit} calls used"
         if reset_time_pt:
             msg += f" (resets at {reset_time_pt} PT)"

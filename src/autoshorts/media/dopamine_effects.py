@@ -80,22 +80,31 @@ def build_zoom_punch_filter(
     zoom_punch_ins: Sequence[ZoomPunchIn],
     input_label: str = "top_scaled",
     output_label: str = "top",
+    ramp_duration_sec: float = 0.15,
 ) -> tuple[str, str]:
     """Generate dynamic zoom punch-in crop expressions for the top video stream.
 
-    Applies a centered crop (scaled back to 1080x960) during specified intervals.
+    Applies a centered crop (scaled back to 1080x960) with smooth ease-in / ease-out ramps
+    during specified intervals.
     """
     if not zoom_punch_ins:
         # Pass through unchanged
         return f"[{input_label}]copy[{output_label}]", output_label
 
-    # Build scale multiplier expression: 1.0 + sum((scale - 1.0) * between(t, start, end))
+    # Build scale multiplier expression with smooth ease-in/ease-out ramp:
+    # 1.0 + sum((scale - 1.0) * between(t, start, end) * min(min((t - start) / ramp, (end - t) / ramp), 1.0))
     terms = ["1.0"]
     for punch in zoom_punch_ins:
         start_t = punch.timestamp
         end_t = punch.timestamp + punch.duration
         scale_delta = punch.scale - 1.0
-        terms.append(f"({scale_delta:.2f}*between(t,{start_t:.2f},{end_t:.2f}))")
+        dur = max(0.01, punch.duration)
+        ramp = min(ramp_duration_sec, dur / 2.0)
+        if ramp > 0.001:
+            ramp_factor = f"min(min((t-{start_t:.2f})/{ramp:.2f},({end_t:.2f}-t)/{ramp:.2f}),1.0)"
+            terms.append(f"({scale_delta:.2f}*between(t,{start_t:.2f},{end_t:.2f})*{ramp_factor})")
+        else:
+            terms.append(f"({scale_delta:.2f}*between(t,{start_t:.2f},{end_t:.2f}))")
 
     scale_expr = "+".join(terms)
     # iw/scale_expr, ih/scale_expr centered
@@ -261,9 +270,13 @@ def build_complex_filtergraph(
                 top_final = top_cut
                 current_a = audio_cut
             else:
-                drop_conditions = [f"between(t,{cut.cut_start:.2f},{cut.cut_end:.2f})" for cut in valid_cuts]
+                drop_conditions = [
+                    f"between(t,{cut.cut_start:.2f},{cut.cut_end:.2f})" for cut in valid_cuts
+                ]
                 cond_str = "+".join(drop_conditions)
-                filter_stages.append(f"[{top_final}]select='not({cond_str})',setpts=N/FRAME_RATE/TB[top_cut]")
+                filter_stages.append(
+                    f"[{top_final}]select='not({cond_str})',setpts=N/FRAME_RATE/TB[top_cut]"
+                )
                 top_final = "top_cut"
 
     # 4. Bottom video (background): Scale & crop to 1080x960, 30fps

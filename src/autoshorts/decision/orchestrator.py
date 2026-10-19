@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.contracts import Decider, LLMProvider
@@ -90,7 +91,12 @@ class SemIfDecider(Decider):
                     score = float(probs.get("A", 0.0))
                     reason = f"SemIf binary score: P(Accept)={score:.3f}"
                 except Exception as e:
-                    logger.warning("Provider scoring failed for window [%.1f-%.1f]: %s", cand.start, cand.end, e)
+                    logger.warning(
+                        "Provider scoring failed for window [%.1f-%.1f]: %s",
+                        cand.start,
+                        cand.end,
+                        e,
+                    )
                     score = evaluate_heuristic(cand.text, cand.duration)
                     reason = f"Heuristic fallback: {score:.3f}"
             else:
@@ -208,7 +214,9 @@ class SemIfDecider(Decider):
                 ClipSelection(
                     candidate=cand,
                     clip_index=i,
-                    target_duration=min(cand.duration, float(self.settings.job_defaults.max_duration_seconds)),
+                    target_duration=min(
+                        cand.duration, float(self.settings.job_defaults.max_duration_seconds)
+                    ),
                     background_style=bg_style,
                     hook_text=hook_text,
                     title=title,
@@ -250,7 +258,9 @@ class SemIfDecider(Decider):
 
         # Execute action handler to map choice to pipeline string
         result_action = action_fn(chosen_letter, context)
-        logger.info("Decider action '%s' -> choice '%s' => '%s'", action_key, chosen_letter, result_action)
+        logger.info(
+            "Decider action '%s' -> choice '%s' => '%s'", action_key, chosen_letter, result_action
+        )
         return str(result_action)
 
     def _heuristic_action_fallback(

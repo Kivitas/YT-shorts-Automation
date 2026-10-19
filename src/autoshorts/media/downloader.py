@@ -17,10 +17,8 @@ from typing import Any
 from uuid import uuid4
 
 from autoshorts.core.config import Settings, load_config
-from autoshorts.core.contracts import Downloader as DownloaderProtocol
 from autoshorts.core.exceptions import DownloadError
 from autoshorts.core.models import VideoMetadata
-from autoshorts.core.paths import get_work_dir
 from autoshorts.discovery.metadata_fetcher import MetadataFetcher
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
 
@@ -123,13 +121,13 @@ def run_command_with_cleanup(
         if retcode != 0:
             terminate_process_tree(proc.pid)
         return subprocess.CompletedProcess(cmd, retcode, stdout, stderr)
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
         terminate_process_tree(proc.pid)
         try:
             proc.communicate(timeout=0.5)
         except Exception:
             pass
-        raise exc
+        raise
     except Exception:
         terminate_process_tree(proc.pid)
         raise
@@ -174,7 +172,9 @@ class Downloader:
         resolved_cookies = cookies_from_browser
         if not resolved_cookies:
             # Check environment variables
-            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get("COOKIES_FROM_BROWSER")
+            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get(
+                "COOKIES_FROM_BROWSER"
+            )
         if not resolved_cookies and hasattr(self.settings, "media"):
             resolved_cookies = getattr(self.settings.media, "cookies_from_browser", None)
         self.cookies_from_browser = resolved_cookies
@@ -227,11 +227,15 @@ class Downloader:
             self.yt_dlp_binary,
             "--no-playlist",
             "--no-warnings",
-            "--download-sections", section_arg,
+            "--download-sections",
+            section_arg,
             "--force-keyframes-at-cuts",
-            "-f", self.format_spec,
-            "--merge-output-format", "mp4",
-            "-o", str(temp_template),
+            "-f",
+            self.format_spec,
+            "--merge-output-format",
+            "mp4",
+            "-o",
+            str(temp_template),
             canonical_url,
         ]
 
@@ -240,7 +244,11 @@ class Downloader:
 
         logger.info(
             "Downloading section %s for %s (%s to %s) -> %s",
-            section_arg, vid, start_sec, end_sec, dest
+            section_arg,
+            vid,
+            start_sec,
+            end_sec,
+            dest,
         )
 
         last_error: Exception | None = None
@@ -263,7 +271,9 @@ class Downloader:
                     # If temp file wasn't found under pattern, check if destination was directly written
                     if dest.is_file():
                         return dest
-                    raise DownloadError(f"yt-dlp exited with 0 but output file matching {pattern} was not found")
+                    raise DownloadError(
+                        f"yt-dlp exited with 0 but output file matching {pattern} was not found"
+                    )
 
                 err_msg = (proc.stderr or proc.stdout or "").strip()
                 raise DownloadError(f"yt-dlp exited with code {proc.returncode}: {err_msg}")
@@ -272,7 +282,9 @@ class Downloader:
                 last_error = exc
                 logger.warning(
                     "yt-dlp download section attempt %d/%d failed: %s",
-                    attempt, self.max_retries, exc
+                    attempt,
+                    self.max_retries,
+                    exc,
                 )
                 # Cleanup any leftover partial temp files
                 for f in dest.parent.glob(f".tmp_{unique_token}_*"):
@@ -317,9 +329,11 @@ class Downloader:
             self.yt_dlp_binary,
             "--no-playlist",
             "--no-warnings",
-            "-f", "bestaudio/best",
+            "-f",
+            "bestaudio/best",
             "-x",
-            "-o", str(temp_template),
+            "-o",
+            str(temp_template),
             canonical_url,
         ]
 
@@ -344,16 +358,19 @@ class Downloader:
                         return dest
                     if dest.is_file():
                         return dest
-                    raise DownloadError("Audio file was not found after successful yt-dlp execution")
+                    raise DownloadError(
+                        "Audio file was not found after successful yt-dlp execution"
+                    )
 
                 err_msg = (proc.stderr or proc.stdout or "").strip()
-                raise DownloadError(f"yt-dlp audio download failed with code {proc.returncode}: {err_msg}")
+                raise DownloadError(
+                    f"yt-dlp audio download failed with code {proc.returncode}: {err_msg}"
+                )
 
             except Exception as exc:
                 last_error = exc
                 logger.warning(
-                    "yt-dlp audio download attempt %d/%d failed: %s",
-                    attempt, self.max_retries, exc
+                    "yt-dlp audio download attempt %d/%d failed: %s", attempt, self.max_retries, exc
                 )
                 for f in dest.parent.glob(f".tmp_audio_{unique_token}_*"):
                     try:

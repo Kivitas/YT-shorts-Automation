@@ -7,10 +7,7 @@ Zero network access.
 
 from __future__ import annotations
 
-import pytest
-
 from autoshorts.uploader.description_builder import (
-    DEFAULT_ATTRIBUTION_DISCLAIMER,
     DescriptionBuilder,
     build_short_description,
     build_short_title,
@@ -76,7 +73,10 @@ def test_build_title_standard():
 def test_build_title_length_limit():
     """Verify long titles are strictly capped to <= 100 characters and preserve #Shorts."""
     builder = DescriptionBuilder()
-    huge_hook = "This is an extraordinarily long hook statement designed specifically to test the hard upper bound of title lengths" * 2
+    huge_hook = (
+        "This is an extraordinarily long hook statement designed specifically to test the hard upper bound of title lengths"
+        * 2
+    )
     channel = "The Long Channel Name Podcast"
 
     title = builder.build_title(
@@ -134,7 +134,10 @@ def test_build_description_standard():
 def test_build_description_byte_length_limit():
     """Verify descriptions exceeding 5000 bytes are truncated without exceeding byte limit."""
     builder = DescriptionBuilder()
-    huge_hook = "Paragraph of filler text repeating for several thousand words to trigger 5000 byte cap. " * 300
+    huge_hook = (
+        "Paragraph of filler text repeating for several thousand words to trigger 5000 byte cap. "
+        * 300
+    )
 
     desc = builder.build_description(
         title="Source Video Title",

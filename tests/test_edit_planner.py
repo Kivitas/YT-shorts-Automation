@@ -19,7 +19,6 @@ from autoshorts.edit_planner.edl_schema import (
 from autoshorts.edit_planner.multimodal_planner import (
     PRIVACY_NOTICE,
     MultimodalEditPlanner,
-    build_edl_prompt,
 )
 
 
@@ -141,9 +140,7 @@ def test_edl_clamping_to_clip_duration():
         hook_in_sec=0.0,
         hook_out_sec=60.0,  # Exceeds clip duration
         jump_cuts=[],
-        zoom_punch_ins=[
-            ZoomPunchIn(timestamp=50.0, scale=1.1, duration=0.8, emphasis_word="out")
-        ],
+        zoom_punch_ins=[ZoomPunchIn(timestamp=50.0, scale=1.1, duration=0.8, emphasis_word="out")],
         caption_corrections=[],
         recommended_thumbnail_timestamp=55.0,  # Exceeds clip duration
         recommended_title="Clamping Test #Shorts",
@@ -288,7 +285,9 @@ def test_transcript_only_fallback(tmp_path: Path):
     assert edl.background_style_recommendation == "subway"
 
 
-def test_privacy_warning_logged_when_video_leaves_device(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+def test_privacy_warning_logged_when_video_leaves_device(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     """Verify privacy warning is logged whenever video leaves the device."""
     video_path = tmp_path / "clip.mp4"
     video_path.write_text("fake video")

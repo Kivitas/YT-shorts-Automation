@@ -12,16 +12,40 @@ from __future__ import annotations
 import logging
 import math
 import re
-from typing import Any, Callable, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 logger = logging.getLogger("autoshorts.decision.semif")
 
 # High-curiosity / retention keywords for rule-based heuristic scoring
 HOOK_KEYWORDS = {
-    "secret", "never", "why", "how", "must", "truth", "crazy", "warning",
-    "revealed", "insane", "stop", "best", "worst", "mistake", "always",
-    "hidden", "shocking", "finally", "nobody", "everyone", "weird",
-    "impossible", "hack", "trick", "discover", "proof", "exposed",
+    "secret",
+    "never",
+    "why",
+    "how",
+    "must",
+    "truth",
+    "crazy",
+    "warning",
+    "revealed",
+    "insane",
+    "stop",
+    "best",
+    "worst",
+    "mistake",
+    "always",
+    "hidden",
+    "shocking",
+    "finally",
+    "nobody",
+    "everyone",
+    "weird",
+    "impossible",
+    "hack",
+    "trick",
+    "discover",
+    "proof",
+    "exposed",
 }
 
 
@@ -55,7 +79,9 @@ def build_semif_prompt(
     lines.append("")
 
     allowed_str = ", ".join(sorted(options.keys()))
-    lines.append(f"Respond strictly with the single uppercase letter ({allowed_str}) corresponding to the best choice:")
+    lines.append(
+        f"Respond strictly with the single uppercase letter ({allowed_str}) corresponding to the best choice:"
+    )
     return "\n".join(lines)
 
 
@@ -132,10 +158,7 @@ def evaluate_heuristic(text: str, duration_sec: float | None = None) -> float:
 
     # Composite weighted score
     composite = (
-        0.30 * wpm_score
-        + 0.40 * keyword_score
-        + 0.15 * question_score
-        + 0.15 * exclamation_score
+        0.30 * wpm_score + 0.40 * keyword_score + 0.15 * question_score + 0.15 * exclamation_score
     )
 
     # Clamp to [0.05, 0.98] to maintain smooth probabilistic representation

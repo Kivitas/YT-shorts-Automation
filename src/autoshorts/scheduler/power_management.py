@@ -39,7 +39,7 @@ def prevent_system_sleep() -> bool:
             return False
         logger.debug("Windows sleep prevention activated (SYSTEM_REQUIRED | AWAYMODE).")
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"Failed to invoke Win32 SetThreadExecutionState: {e}")
         return False
 
@@ -62,7 +62,7 @@ def allow_system_sleep() -> bool:
             return False
         logger.debug("Windows sleep prevention cleared; normal sleep allowed.")
         return True
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"Failed to restore Win32 SetThreadExecutionState: {e}")
         return False
 

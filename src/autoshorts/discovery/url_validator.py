@@ -10,8 +10,9 @@ from __future__ import annotations
 import os
 import re
 import urllib.parse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -38,17 +39,35 @@ class ParsedLink(BaseModel):
     """Structured representation of a validated YouTube link with instruction overrides."""
 
     video_id: str = Field(..., description="YouTube 11-char video ID")
-    canonical_url: str = Field(..., description="Clean canonical URL (https://www.youtube.com/watch?v=...)")
+    canonical_url: str = Field(
+        ..., description="Clean canonical URL (https://www.youtube.com/watch?v=...)"
+    )
     raw_input: str = Field(..., description="Original raw input line")
-    clips_per_video: int = Field(default=1, ge=1, description="Number of clips to cut from this video")
-    min_duration_seconds: int = Field(default=30, ge=10, description="Minimum clip duration in seconds")
-    max_duration_seconds: int = Field(default=50, le=60, description="Maximum clip duration in seconds")
-    window_stride_seconds: int = Field(default=15, ge=5, description="Window stride step in seconds")
-    focus_prompt: str | None = Field(default=None, description="Topic, humor, or editorial focus angle")
-    background_style: str | None = Field(default=None, description="Theme (e.g. minecraft, subway, auto)")
-    dopamine_level: str | None = Field(default=None, description="Compositor energy preset: low, medium, high")
+    clips_per_video: int = Field(
+        default=1, ge=1, description="Number of clips to cut from this video"
+    )
+    min_duration_seconds: int = Field(
+        default=30, ge=10, description="Minimum clip duration in seconds"
+    )
+    max_duration_seconds: int = Field(
+        default=50, le=60, description="Maximum clip duration in seconds"
+    )
+    window_stride_seconds: int = Field(
+        default=15, ge=5, description="Window stride step in seconds"
+    )
+    focus_prompt: str | None = Field(
+        default=None, description="Topic, humor, or editorial focus angle"
+    )
+    background_style: str | None = Field(
+        default=None, description="Theme (e.g. minecraft, subway, auto)"
+    )
+    dopamine_level: str | None = Field(
+        default=None, description="Compositor energy preset: low, medium, high"
+    )
     custom_instructions: str | None = Field(default=None, description="Combined user instructions")
-    extra_options: dict[str, Any] = Field(default_factory=dict, description="Additional unmapped options")
+    extra_options: dict[str, Any] = Field(
+        default_factory=dict, description="Additional unmapped options"
+    )
 
 
 def extract_video_id(url_or_id: str) -> str:
@@ -171,11 +190,11 @@ def is_valid_youtube_url(url_or_id: str) -> bool:
 def _parse_time_seconds(val_str: str) -> int:
     """Parse a time string like '45s', '45 sec', '45', '1m' into integer seconds."""
     s = val_str.lower().strip()
-    if s.endswith("sec") or s.endswith("sec."):
+    if s.endswith(("sec", "sec.")):
         s = s.rstrip(".sec").strip()
     elif s.endswith("s"):
         s = s[:-1].strip()
-    elif s.endswith("m") or s.endswith("min"):
+    elif s.endswith(("m", "min")):
         s = s.rstrip("min").rstrip("m").strip()
         return int(float(s) * 60)
     return int(float(s))
@@ -232,7 +251,9 @@ def parse_link_line(
             def_max_s = defaults.max_duration_seconds
             def_stride = defaults.window_stride_seconds
             def_focus = defaults.focus_prompt
-            def_bg = getattr(defaults, "background_category", getattr(defaults, "background_style", "minecraft"))
+            def_bg = getattr(
+                defaults, "background_category", getattr(defaults, "background_style", "minecraft")
+            )
             def_dopamine = defaults.dopamine_level
         elif isinstance(defaults, dict):
             def_clips = int(defaults.get("clips_per_video", def_clips))
@@ -240,7 +261,9 @@ def parse_link_line(
             def_max_s = int(defaults.get("max_duration_seconds", def_max_s))
             def_stride = int(defaults.get("window_stride_seconds", def_stride))
             def_focus = defaults.get("focus_prompt", def_focus)
-            def_bg = defaults.get("background_category") or defaults.get("background_style") or def_bg
+            def_bg = (
+                defaults.get("background_category") or defaults.get("background_style") or def_bg
+            )
             def_dopamine = defaults.get("dopamine_level", def_dopamine)
 
     clips = def_clips
@@ -387,15 +410,11 @@ def parse_links_input(
         if not line_clean or line_clean.startswith("#"):
             continue
 
-        try:
-            parsed_link = parse_link_line(
-                line_clean,
-                defaults=defaults,
-                global_instructions=global_instructions,
-            )
-        except InvalidURLError:
-            # Re-raise or skip invalid URLs
-            raise
+        parsed_link = parse_link_line(
+            line_clean,
+            defaults=defaults,
+            global_instructions=global_instructions,
+        )
 
         if dedupe:
             if parsed_link.video_id in seen_ids:
@@ -409,9 +428,9 @@ def parse_links_input(
 
 __all__ = [
     "ALLOWED_YOUTUBE_HOSTS",
+    "YOUTUBE_VIDEO_ID_REGEX",
     "InvalidURLError",
     "ParsedLink",
-    "YOUTUBE_VIDEO_ID_REGEX",
     "extract_video_id",
     "is_valid_youtube_url",
     "normalize_youtube_url",

@@ -61,3 +61,14 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",   # Blind exception catches at pipeline, worker, CLI, and cleanup boundaries
+    "S110",     # Try-except-pass blocks (intentional suppression in fallbacks and cleanups)
+    "ASYNC251", # Sleep in background worker/task
+    "PLW1510",  # Subprocess run without check
+    "TRY004",   # Prefer TypeError for type check
+    "SIM102",   # Collapsible if statements
+]
+

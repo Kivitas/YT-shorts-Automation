@@ -14,8 +14,9 @@ import os
 import re
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
@@ -159,7 +160,9 @@ class TranscriptFetcher:
 
         resolved_cookies = cookies_from_browser
         if not resolved_cookies:
-            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get("COOKIES_FROM_BROWSER")
+            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get(
+                "COOKIES_FROM_BROWSER"
+            )
         self.cookies_from_browser = resolved_cookies
 
     def fetch(self, url_or_video_id: str) -> list[TranscriptSegment]:
@@ -184,22 +187,36 @@ class TranscriptFetcher:
         try:
             segments = self._fetch_via_transcript_api(vid)
             if segments:
-                logger.info("Successfully fetched %d transcript segments via youtube-transcript-api for %s", len(segments), vid)
+                logger.info(
+                    "Successfully fetched %d transcript segments via youtube-transcript-api for %s",
+                    len(segments),
+                    vid,
+                )
                 return segments
         except Exception as exc:
-            logger.info("youtube-transcript-api failed for %s (%s). Attempting yt-dlp subtitle fallback.", vid, exc)
+            logger.info(
+                "youtube-transcript-api failed for %s (%s). Attempting yt-dlp subtitle fallback.",
+                vid,
+                exc,
+            )
 
         # 2. Secondary Attempt: yt-dlp subtitles
         try:
             segments = self._fetch_via_ytdlp(canonical_url, vid)
             if segments:
-                logger.info("Successfully fetched %d transcript segments via yt-dlp for %s", len(segments), vid)
+                logger.info(
+                    "Successfully fetched %d transcript segments via yt-dlp for %s",
+                    len(segments),
+                    vid,
+                )
                 return segments
         except Exception as exc:
             logger.warning("yt-dlp subtitle fallback failed for %s (%s).", vid, exc)
 
         # 3. No captions available: Signal NO_CAPTIONS
-        logger.warning("No captions found for video %s. Signaling NO_CAPTIONS for Whisper fallback.", vid)
+        logger.warning(
+            "No captions found for video %s. Signaling NO_CAPTIONS for Whisper fallback.", vid
+        )
         raise TranscriptNotFoundError(
             f"No captions available for YouTube video {vid}. Signaling {NO_CAPTIONS} for Whisper fallback."
         )
@@ -357,8 +374,12 @@ class TranscriptFetcher:
         # If a subtitle format URL is found, download and parse
         if target_entry:
             # Prefer json3 or vtt
-            json3_url = next((f["url"] for f in target_entry if f.get("ext") == "json3" and "url" in f), None)
-            vtt_url = next((f["url"] for f in target_entry if f.get("ext") == "vtt" and "url" in f), None)
+            json3_url = next(
+                (f["url"] for f in target_entry if f.get("ext") == "json3" and "url" in f), None
+            )
+            vtt_url = next(
+                (f["url"] for f in target_entry if f.get("ext") == "vtt" and "url" in f), None
+            )
 
             if json3_url:
                 segments = self._fetch_and_parse_json3(json3_url)
@@ -374,6 +395,7 @@ class TranscriptFetcher:
 
     def _fetch_and_parse_json3(self, url: str) -> list[TranscriptSegment]:
         """Fetch JSON3 from URL and parse into segments."""
+
         def _get(c: httpx.Client) -> httpx.Response:
             return c.get(url, timeout=self.timeout_sec)
 
@@ -389,6 +411,7 @@ class TranscriptFetcher:
 
     def _fetch_and_parse_vtt(self, url: str) -> list[TranscriptSegment]:
         """Fetch WebVTT from URL and parse into segments."""
+
         def _get(c: httpx.Client) -> httpx.Response:
             return c.get(url, timeout=self.timeout_sec)
 
@@ -413,16 +436,19 @@ class TranscriptFetcher:
                 "--skip-download",
                 "--write-sub",
                 "--write-auto-sub",
-                "--sub-lang", ",".join(self.languages),
-                "--sub-format", "vtt",
-                "-o", out_template,
+                "--sub-lang",
+                ",".join(self.languages),
+                "--sub-format",
+                "vtt",
+                "-o",
+                out_template,
                 canonical_url,
             ]
 
             if self.cookies_from_browser:
                 cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
 
-            proc = subprocess.run(
+            subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,

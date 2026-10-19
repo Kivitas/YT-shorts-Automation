@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from autoshorts.cli import build_parser, cmd_clean, cmd_quota, cmd_scheduler, main
+from autoshorts.cli import build_parser, cmd_clean, cmd_edge_login, cmd_quota, cmd_scheduler, main
 from autoshorts.core.config import Settings
 from autoshorts.core.models import Job, JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
@@ -35,6 +35,11 @@ def dashboard_client(tmp_path: Path):
     mock_scheduler.is_paused.return_value = False
     mock_pipeline.scheduler = mock_scheduler
 
+    # Mock cleaner
+    mock_cleaner = MagicMock()
+    mock_cleaner.cleanup_job.return_value = [tmp_path / "work" / "test_file.mp4"]
+    mock_pipeline.cleaner = mock_cleaner
+
     app = create_app(pipeline=mock_pipeline, state_manager=state_mgr)
     client = TestClient(app)
     return {
@@ -42,12 +47,14 @@ def dashboard_client(tmp_path: Path):
         "state_mgr": state_mgr,
         "pipeline": mock_pipeline,
         "scheduler": mock_scheduler,
+        "cleaner": mock_cleaner,
     }
 
 
 # =============================================================================
 # Dashboard API Endpoint Tests
 # =============================================================================
+
 
 def test_dashboard_index_html(dashboard_client: dict[str, Any]):
     """Verify GET / returns 200 and loads HTML template."""
@@ -237,17 +244,24 @@ def test_dashboard_upload_now_endpoint(dashboard_client: dict[str, Any]):
 # CLI Command Argument Parsing & Execution Tests
 # =============================================================================
 
+
 def test_cli_parser_run_subcommand():
     """Verify argument parsing for 'autoshorts run'."""
     parser = build_parser()
-    args = parser.parse_args([
-        "run",
-        "--links", "https://youtube.com/watch?v=1234567890a",
-        "--bg", "subway",
-        "--preset", "high",
-        "--upload",
-        "--instructions", "Focus on humor",
-    ])
+    args = parser.parse_args(
+        [
+            "run",
+            "--links",
+            "https://youtube.com/watch?v=1234567890a",
+            "--bg",
+            "subway",
+            "--preset",
+            "high",
+            "--upload",
+            "--instructions",
+            "Focus on humor",
+        ]
+    )
     assert args.command == "run"
     assert args.links == "https://youtube.com/watch?v=1234567890a"
     assert args.bg == "subway"
@@ -286,7 +300,9 @@ def test_cli_parser_quota_subcommand():
 def test_cli_parser_clean_subcommand():
     """Verify argument parsing for 'autoshorts clean'."""
     parser = build_parser()
-    args = parser.parse_args(["clean", "--days", "3", "--dry-run", "--job-id", "job_123", "--force"])
+    args = parser.parse_args(
+        ["clean", "--days", "3", "--dry-run", "--job-id", "job_123", "--force"]
+    )
     assert args.command == "clean"
     assert args.days == 3
     assert args.dry_run is True
@@ -385,10 +401,12 @@ def test_cli_main_help(capsys: pytest.CaptureFixture[str]):
 # Background Worker, SSE Log Streaming & Enhanced UI Endpoint Tests
 # =============================================================================
 
+
 @pytest.mark.asyncio
 async def test_scheduler_background_worker_lifecycle(tmp_path: Path):
     """Verify background scheduler worker starts in FastAPI lifespan, executes run_tick, and cleanly shuts down."""
     import time
+
     db_path = tmp_path / "lifecycle_test.db"
     state_mgr = StateManager(db_path=db_path)
     mock_pipeline = MagicMock()
@@ -405,7 +423,7 @@ async def test_scheduler_background_worker_lifecycle(tmp_path: Path):
         scheduler_interval_sec=0.04,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app):
         # Worker should be active
         assert hasattr(app.state, "scheduler_worker_task")
         task = app.state.scheduler_worker_task
@@ -422,6 +440,7 @@ async def test_scheduler_background_worker_lifecycle(tmp_path: Path):
 def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any]):
     """Verify GET /api/logs/stream returns SSE events and POST /api/logs/clear flushes buffer."""
     import logging
+
     from autoshorts.core.logging_setup import get_log_stream_handler
 
     client: TestClient = dashboard_client["client"]
@@ -455,6 +474,7 @@ def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any]):
 def test_in_memory_log_stream_handler_ring_buffer_and_redaction():
     """Verify LogStreamHandler enforces max capacity, redacts secrets, and provides history."""
     import logging
+
     from autoshorts.core.logging_setup import (
         LogStreamHandler,
         RedactingFilter,
@@ -509,7 +529,9 @@ def test_dashboard_quota_rolling_rate_and_countdown(dashboard_client: dict[str, 
     assert "reset_time_pt" in data
 
 
-def test_dashboard_jobs_enriched_with_seo_metadata_and_youtube_link(dashboard_client: dict[str, Any]):
+def test_dashboard_jobs_enriched_with_seo_metadata_and_youtube_link(
+    dashboard_client: dict[str, Any],
+):
     """Verify GET /api/jobs and GET /api/jobs/{id} enrich job objects with SEO title, description, tags, and video ID."""
     client: TestClient = dashboard_client["client"]
     state_mgr: StateManager = dashboard_client["state_mgr"]
@@ -549,3 +571,142 @@ def test_dashboard_jobs_enriched_with_seo_metadata_and_youtube_link(dashboard_cl
     assert "hashtags" in target
     assert "#Shorts" in target["hashtags"]
 
+
+def test_cli_parser_edge_login_subcommand():
+    """Verify argument parsing for 'autoshorts edge-login'."""
+    parser = build_parser()
+    args = parser.parse_args(["edge-login", "--timeout", "120"])
+    assert args.command == "edge-login"
+    assert args.timeout == 120
+
+
+def test_cli_cmd_edge_login_execution():
+    """Verify execution of cmd_edge_login."""
+    config = Settings()
+    state_mgr = StateManager()
+    parser = build_parser()
+    args = parser.parse_args(["edge-login", "--timeout", "60"])
+
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session",
+        return_value=True,
+    ) as mock_login:
+        exit_code = cmd_edge_login(args, config, state_mgr)
+        assert exit_code == 0
+        mock_login.assert_called_once_with(timeout_sec=60.0)
+
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session",
+        return_value=False,
+    ):
+        exit_code = cmd_edge_login(args, config, state_mgr)
+        assert exit_code == 1
+
+
+def test_cli_cmd_scheduler_studio_uploader(tmp_path: Path):
+    """Verify cmd_scheduler instantiates PlaywrightStudioUploader when mode == 'studio'."""
+    from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+    db_path = tmp_path / "test_state.db"
+    state_mgr = StateManager(db_path=db_path)
+    config = Settings()
+    config.upload.mode = "studio"
+
+    parser = build_parser()
+    args = parser.parse_args(["scheduler", "--once"])
+
+    captured_schedulers: list[Any] = []
+    orig_init = SpreadScheduler.__init__
+
+    def spy_init(self, *s_args, **s_kwargs):
+        orig_init(self, *s_args, **s_kwargs)
+        captured_schedulers.append(self)
+
+    with (
+        patch.object(SpreadScheduler, "__init__", spy_init),
+        patch("autoshorts.cli.SpreadScheduler.run_tick", return_value=None),
+    ):
+        exit_code = cmd_scheduler(args, config, state_mgr)
+        assert exit_code == 0
+        assert len(captured_schedulers) == 1
+        scheduler = captured_schedulers[0]
+        assert scheduler.uploader is not None
+        assert isinstance(scheduler.uploader, PlaywrightStudioUploader)
+
+
+def test_dashboard_auth_edge_login_endpoint(dashboard_client: dict[str, Any]):
+    """Verify POST /api/auth/edge-login triggers background login session."""
+    client: TestClient = dashboard_client["client"]
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session",
+        return_value=True,
+    ):
+        res = client.post("/api/auth/edge-login")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["success"] is True
+        assert "sign-in session launched" in data["message"].lower()
+
+
+def test_dashboard_spark_prompts_endpoint(dashboard_client: dict[str, Any]):
+    """Verify GET /api/spark/prompts returns formatted prompt containing expected skill keywords."""
+    client: TestClient = dashboard_client["client"]
+    res = client.get("/api/spark/prompts")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert "prompt" in data
+    assert "[GEMINI SPARK SKILL: VIRAL SHORT CURATOR]" in data["prompt"]
+    assert "minecraft" in data["prompt"]
+
+
+def test_dashboard_delete_job_endpoint(dashboard_client: dict[str, Any]):
+    """Verify DELETE /api/jobs/{id} triggers cleaner.cleanup_job and returns deleted file info."""
+    client: TestClient = dashboard_client["client"]
+    state_mgr: StateManager = dashboard_client["state_mgr"]
+    cleaner: MagicMock = dashboard_client["cleaner"]
+
+    job = Job(id="job_to_delete", source_url="https://youtu.be/delete_me")
+    state_mgr.save_job(job)
+
+    res = client.delete("/api/jobs/job_to_delete")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["job_id"] == "job_to_delete"
+    assert data["count"] == 1
+    cleaner.cleanup_job.assert_called_once_with("job_to_delete", force=True)
+
+    # 404 for missing job
+    res_404 = client.delete("/api/jobs/nonexistent_id")
+    assert res_404.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_dashboard_inbox_watcher_lifespan_polling(tmp_path: Path):
+    """Verify SparkInboxWatcher poll_once is executed by scheduler worker during lifespan."""
+    import time
+
+    db_path = tmp_path / "inbox_lifespan_test.db"
+    state_mgr = StateManager(db_path=db_path)
+    mock_pipeline = MagicMock()
+    mock_pipeline.state_manager = state_mgr
+    mock_pipeline.scheduler = MagicMock()
+    mock_pipeline.scheduler.run_tick = MagicMock(return_value=None)
+    mock_pipeline.quota_tracker = QuotaTracker(state_manager=state_mgr)
+
+    mock_watcher = MagicMock()
+    mock_watcher.poll_once = MagicMock(return_value=[])
+
+    app = create_app(
+        pipeline=mock_pipeline,
+        state_manager=state_mgr,
+        run_scheduler_worker=True,
+        scheduler_interval_sec=0.03,
+        inbox_watcher=mock_watcher,
+    )
+
+    with TestClient(app):
+        assert app.state.inbox_watcher is mock_watcher
+        time.sleep(0.1)
+        assert mock_watcher.poll_once.call_count >= 1

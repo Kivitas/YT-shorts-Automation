@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from autoshorts.core.contracts import Uploader
+from autoshorts.core.exceptions import UploadError
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.uploader.local_exporter import LocalExportUploader
@@ -264,17 +265,134 @@ def test_local_exporter_copy_and_verify(dummy_video: Path, tmp_path: Path):
     assert exporter.verify(result.video_id) is True
 
 
-def test_studio_playwright_stub_behavior():
-    """Test PlaywrightStudioUploader raises NotImplementedError with clear documentation."""
-    studio = PlaywrightStudioUploader()
-    with pytest.raises(NotImplementedError) as exc_info:
-        studio.upload(
-            path=Path("dummy.mp4"),
-            title="Studio Short",
-            description="desc",
-            tags=[],
-        )
-    assert "architectural stub" in str(exc_info.value)
+def test_studio_playwright_open_login_session_detected():
+    """Verify open_login_session returns True when authenticated Studio DOM elements appear."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.is_closed.return_value = False
+    mock_page.url = "https://studio.youtube.com"
 
-    with pytest.raises(NotImplementedError):
-        studio.verify("any_id")
+    mock_loc = MagicMock()
+    mock_loc.is_visible.return_value = True
+    mock_page.locator.return_value = mock_loc
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory, headless=False)
+
+    success = uploader.open_login_session(timeout_sec=5.0)
+    assert success is True
+    factory.assert_called_once()
+    mock_page.goto.assert_called_with("https://studio.youtube.com", wait_until="domcontentloaded")
+
+
+def test_studio_playwright_open_login_session_window_closed():
+    """Verify open_login_session terminates and returns False if user closes Edge window."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.is_closed.return_value = True
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory, headless=False)
+
+    success = uploader.open_login_session(timeout_sec=5.0)
+    assert success is False
+
+
+def test_studio_playwright_upload_file_not_found(tmp_path: Path):
+    """Verify upload raises UploadError if video file does not exist."""
+    uploader = PlaywrightStudioUploader()
+    missing_path = tmp_path / "nonexistent.mp4"
+    with pytest.raises(UploadError) as exc_info:
+        uploader.upload(video_path=missing_path, title="Short", description="Desc")
+    assert "does not exist" in str(exc_info.value)
+
+
+def test_studio_playwright_upload_unauthenticated_redirect(dummy_video: Path):
+    """Verify upload raises clear error prompting edge-login when redirected to accounts.google.com."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.url = "https://accounts.google.com/signin/v2/identifier?service=youtube"
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    with pytest.raises(UploadError) as exc_info:
+        uploader.upload(
+            video_path=dummy_video,
+            title="Unauthenticated Test",
+            description="Desc",
+        )
+    assert "autoshorts edge-login" in str(exc_info.value)
+
+
+def test_studio_playwright_upload_success_flow(dummy_video: Path):
+    """Verify successful studio upload steps: file picker, title, desc, not-MFK, next clicks, visibility, video ID extraction."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.url = "https://studio.youtube.com"
+
+    mock_loc = MagicMock()
+    mock_loc.is_visible.return_value = True
+    mock_loc.first = mock_loc
+    mock_loc.nth.return_value = mock_loc
+    mock_loc.get_attribute.return_value = "https://youtu.be/edgeVid1234"
+
+    mock_page.locator.return_value = mock_loc
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    result = uploader.upload(
+        video_path=dummy_video,
+        title="Edge Automated Short",
+        description="Uploaded via Playwright Edge persistent profile",
+        tags=["edge", "shorts"],
+        privacy_status="unlisted",
+    )
+
+    assert result.video_id == "edgeVid1234"
+    assert result.url == "https://youtube.com/shorts/edgeVid1234"
+    assert result.status == "uploaded"
+    assert result.verified is True
+    assert result.privacy_status == "unlisted"
+    assert result.quota_spent == 0
+    assert result.raw_response["mode"] == "studio_playwright"
+
+    # Verify key steps were called
+    mock_loc.set_input_files.assert_called_with(str(dummy_video.resolve()))
+    mock_loc.fill.assert_any_call("Edge Automated Short #Shorts")
+    mock_loc.fill.assert_any_call("Uploaded via Playwright Edge persistent profile")
+
+
+def test_studio_playwright_verify():
+    """Verify verify() returns True for valid Short and False for unavailable."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+
+    # 1. Successful check
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_page.goto.return_value = mock_resp
+    mock_page.title.return_value = "Active Video Title - YouTube"
+    mock_page.content.return_value = "<html><body>Playing short</body></html>"
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    assert uploader.verify("edgeVid12345") is True
+
+    # 2. Unavailable video
+    mock_page.title.return_value = "Video unavailable - YouTube"
+    assert uploader.verify("edgeVid12345") is False
+
+    # 3. HTTP 404
+    mock_resp.status = 404
+    assert uploader.verify("edgeVid12345") is False
+
+    # 4. Empty ID
+    assert uploader.verify("") is False

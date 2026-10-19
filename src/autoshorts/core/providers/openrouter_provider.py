@@ -8,12 +8,13 @@ decoding fallback, redacted logging, and backoff retries.
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import httpx
 
 from autoshorts.core.config import Settings, load_config
-from autoshorts.core.exceptions import ModelNotFoundError, ProviderError, ProviderRateLimitError
+from autoshorts.core.exceptions import ProviderError, ProviderRateLimitError
 from autoshorts.core.logging_setup import redact
 from autoshorts.core.providers.base import BaseLLMProvider
 
@@ -95,7 +96,9 @@ class OpenRouterProvider(BaseLLMProvider):
             if resp.status_code == 429:
                 raise ProviderRateLimitError(f"OpenRouter rate limit: {resp.text}")
             if resp.status_code != 200:
-                raise ProviderError(f"OpenRouter list_models failed ({resp.status_code}): {resp.text}")
+                raise ProviderError(
+                    f"OpenRouter list_models failed ({resp.status_code}): {resp.text}"
+                )
 
             data = resp.json()
             models_data = data.get("data", [])
@@ -197,16 +200,18 @@ class OpenRouterProvider(BaseLLMProvider):
                             logits_map: dict[str, float] = {}
 
                             # Could be list of dicts [{"token": "A", "logprob": -0.1}] or dict
-                            items = (
-                                first_pos if isinstance(first_pos, list) else first_pos.items()
-                            )
+                            items = first_pos if isinstance(first_pos, list) else first_pos.items()
                             for item in items:
                                 if isinstance(item, dict):
                                     tok = item.get("token", "").strip().upper()
                                     lp = float(item.get("logprob", -100.0))
                                 else:
                                     tok = str(item[0]).strip().upper()
-                                    lp = float(item[1]) if isinstance(item[1], (int, float)) else -100.0
+                                    lp = (
+                                        float(item[1])
+                                        if isinstance(item[1], (int, float))
+                                        else -100.0
+                                    )
 
                                 if tok in norm_options:
                                     logits_map[tok] = max(logits_map.get(tok, -100.0), lp)
@@ -233,9 +238,12 @@ class OpenRouterProvider(BaseLLMProvider):
     ) -> dict[str, float]:
         """Fallback evaluation using greedy single-token choice."""
         allowed_keys = list(options.keys())
-        options_prompt = prompt + "\n\nOptions:\n" + "\n".join(
-            f"{k}: {v}" for k, v in options.items()
-        ) + f"\nRespond strictly with the single letter choice ({', '.join(allowed_keys)}):"
+        options_prompt = (
+            prompt
+            + "\n\nOptions:\n"
+            + "\n".join(f"{k}: {v}" for k, v in options.items())
+            + f"\nRespond strictly with the single letter choice ({', '.join(allowed_keys)}):"
+        )
 
         payload: dict[str, Any] = {
             "model": model,
@@ -250,13 +258,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 data = resp.json()
                 choices = data.get("choices", [])
                 if choices:
-                    raw = (
-                        choices[0]
-                        .get("message", {})
-                        .get("content", "")
-                        .strip()
-                        .upper()
-                    )
+                    raw = choices[0].get("message", {}).get("content", "").strip().upper()
                     for k in allowed_keys:
                         if k in raw:
                             dist = {opt: 0.05 for opt in allowed_keys}

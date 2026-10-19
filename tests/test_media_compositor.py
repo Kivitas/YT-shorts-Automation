@@ -179,6 +179,20 @@ def test_build_zoom_punch_filter():
     assert out_label == "top_out"
 
 
+def test_build_zoom_punch_filter_smooth_ramp():
+    """Verify zoom punch-in expressions include smooth ease-in/ease-out ramps."""
+    punches = [
+        ZoomPunchIn(timestamp=2.0, scale=1.20, duration=1.0, emphasis_word="BOOM"),
+    ]
+    crop_str, out_label = build_zoom_punch_filter(
+        punches, input_label="v_in", output_label="v_out", ramp_duration_sec=0.15
+    )
+    # Ramp up: (t - 2.00) / 0.15, Ramp down: (3.00 - t) / 0.15 clamped to 1.0
+    assert "min(min((t-2.00)/0.15,(3.00-t)/0.15),1.0)" in crop_str
+    assert "between(t,2.00,3.00)" in crop_str
+    assert "v_out" == out_label
+
+
 def test_build_jumpcut_select_filter():
     """Verify jump cut select expressions for dead air removal."""
     cuts = [

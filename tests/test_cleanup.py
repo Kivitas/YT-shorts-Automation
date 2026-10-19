@@ -1,21 +1,16 @@
 """Tests for SafetyCleaner: path guards, Recycle Bin retention, and verification checks."""
 
 import os
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from autoshorts.cleanup.safety_cleaner import SafetyCleaner
 from autoshorts.core.contracts import Cleaner
 from autoshorts.core.exceptions import CleanupError, PathSecurityError
-from autoshorts.core.models import JobStatus, UploadResult
+from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import (
-    ALLOWED_CLEANUP_ROOTS,
     FORBIDDEN_PROTECTED_PATHS,
-    PROJECT_ROOT,
 )
 
 
@@ -383,7 +378,7 @@ def test_windows_locked_file_retry_and_backoff(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(Path, "unlink", lambda self: mock_unlink(self))
 
     # Should succeed on 2nd attempt after retry
-    deleted = cleaner.cleanup_job(job_id, verified=True)
+    cleaner.cleanup_job(job_id, verified=True)
     assert attempts == 2
     assert not locked_file.exists()
 

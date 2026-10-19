@@ -1,36 +1,24 @@
 """Foundation tests covering configuration, state manager, redaction, atomic writes, and contracts."""
 
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.contracts import (
-    Cleaner,
-    Compositor,
-    Decider,
-    Downloader,
-    EditPlanner,
     LLMProvider,
-    Transcriber,
-    Uploader,
 )
 from autoshorts.core.exceptions import InvalidStateTransitionError, PathSecurityError
 from autoshorts.core.logging_setup import redact, register_secret
 from autoshorts.core.models import (
-    ClipCandidate,
     EditDecisionList,
     Job,
     JobStatus,
     JumpCut,
-    VideoMetadata,
     ZoomPunchIn,
-    can_transition,
 )
 from autoshorts.core.paths import (
-    ALLOWED_CLEANUP_ROOTS,
     PROJECT_ROOT,
     assert_safe_to_delete,
     atomic_write,
@@ -40,10 +28,10 @@ from autoshorts.core.paths import (
 )
 from autoshorts.core.state_manager import StateManager, get_current_pt_date, get_pt_timezone
 
-
 # -----------------------------------------------------------------------------
 # 1. Config Loading & Zero Hardcoded Models
 # -----------------------------------------------------------------------------
+
 
 def test_config_loading_with_model_null():
     """Verify config.yaml loads correctly with model: null everywhere."""
@@ -69,6 +57,7 @@ def test_config_loading_with_model_null():
 # -----------------------------------------------------------------------------
 # 2. State Manager: Idempotency & Migrations
 # -----------------------------------------------------------------------------
+
 
 def test_state_manager_idempotency_and_persistence(tmp_path: Path):
     """Verify StateManager initializes cleanly, persists data, and handles re-initialization."""
@@ -103,6 +92,7 @@ def test_state_manager_idempotency_and_persistence(tmp_path: Path):
 # -----------------------------------------------------------------------------
 # 3. Dual-Bucket Quota Tracking & Pacific Time Reset Date
 # -----------------------------------------------------------------------------
+
 
 def test_state_manager_quota_tracking_and_pt_date(tmp_path: Path):
     """Verify dual-bucket quota tracking keyed by Pacific Time date."""
@@ -149,7 +139,7 @@ def test_scheduler_queue_pacing_methods(tmp_path: Path):
     job = Job(id=job_id, source_url="https://youtube.com/watch?v=123")
     sm.save_job(job)
 
-    sched_time = datetime.now(timezone.utc)
+    sched_time = datetime.now(UTC)
     sm.enqueue_for_upload(
         job_id=job_id,
         video_path="output/test.mp4",
@@ -165,11 +155,13 @@ def test_scheduler_queue_pacing_methods(tmp_path: Path):
     assert pending[0]["status"] == "SCHEDULED"
 
     # Mark completed
-    sm.update_scheduled_slot_status(job_id, "COMPLETED", youtube_video_id="yt_vid_abc", quota_spent=1)
+    sm.update_scheduled_slot_status(
+        job_id, "COMPLETED", youtube_video_id="yt_vid_abc", quota_spent=1
+    )
     assert len(sm.get_pending_scheduled_slots()) == 0
 
     # Count rolling hour and count for PT date
-    count_hour = sm.count_uploads_since(datetime(2020, 1, 1, tzinfo=timezone.utc))
+    count_hour = sm.count_uploads_since(datetime(2020, 1, 1, tzinfo=UTC))
     assert count_hour == 1
 
     count_day = sm.count_uploads_for_pt_date()
@@ -179,6 +171,7 @@ def test_scheduler_queue_pacing_methods(tmp_path: Path):
 # -----------------------------------------------------------------------------
 # 4. Secret Redaction
 # -----------------------------------------------------------------------------
+
 
 def test_secret_redaction():
     """Verify that API keys, bearer tokens, and secrets are sanitized."""
@@ -222,6 +215,7 @@ def test_secret_redaction():
 # 5. Atomic Write Helper
 # -----------------------------------------------------------------------------
 
+
 def test_atomic_write(tmp_path: Path):
     """Verify atomic writing creates files cleanly and supports replacement."""
     target_file = tmp_path / "subfolder" / "atomic.txt"
@@ -244,6 +238,7 @@ def test_atomic_write(tmp_path: Path):
 # -----------------------------------------------------------------------------
 # 6. Path Safety Guards & FFmpeg Escaping
 # -----------------------------------------------------------------------------
+
 
 def test_path_guards():
     """Verify assert_safe_to_delete prevents accidental deletion of forbidden roots."""
@@ -281,6 +276,7 @@ def test_ffmpeg_filter_path_escaping():
 # 7. Domain Models & State Transitions
 # -----------------------------------------------------------------------------
 
+
 def test_job_state_machine():
     """Verify Job state transitions and validation."""
     job = Job(source_url="https://youtube.com/watch?v=xyz")
@@ -304,7 +300,9 @@ def test_edl_model():
         hook_in_sec=1.5,
         hook_out_sec=42.0,
         jump_cuts=[JumpCut(cut_start=10.0, cut_end=12.0, reason="Silence")],
-        zoom_punch_ins=[ZoomPunchIn(timestamp=5.0, scale=1.15, duration=0.8, emphasis_word="AMAZING")],
+        zoom_punch_ins=[
+            ZoomPunchIn(timestamp=5.0, scale=1.15, duration=0.8, emphasis_word="AMAZING")
+        ],
         recommended_title="Amazing Fact #Shorts",
         recommended_hook="Did you know this?",
     )
@@ -317,14 +315,94 @@ def test_edl_model():
 # 8. Protocol Runtime Checks
 # -----------------------------------------------------------------------------
 
+
 def test_protocols_runtime_checkable():
     """Verify that Protocols are @runtime_checkable."""
+
     class DummyLLM:
         name = "dummy"
         supports_logprobs = True
-        def list_models(self): return ["m1"]
-        def complete(self, prompt, **kwargs): return "done"
-        def score_options(self, prompt, options, **kwargs): return {"A": 1.0}
+
+        def list_models(self):
+            return ["m1"]
+
+        def complete(self, prompt, **kwargs):
+            return "done"
+
+        def score_options(self, prompt, options, **kwargs):
+            return {"A": 1.0}
 
     dummy = DummyLLM()
     assert isinstance(dummy, LLMProvider)
+
+
+# -----------------------------------------------------------------------------
+# 9. Startup Stranded Job Reconciliation
+# -----------------------------------------------------------------------------
+
+
+def test_reconcile_stranded_jobs(tmp_path: Path):
+    """Verify reconcile_stranded_jobs transitions transient jobs to FAILED and leaves finished jobs untouched."""
+    db_path = tmp_path / "stranded_test.db"
+    sm = StateManager(db_path)
+
+    # 1. Create transient jobs
+    transient_statuses = [
+        JobStatus.DOWNLOADING_SECTION,
+        JobStatus.COMPOSITING,
+        JobStatus.UPLOADING,
+        JobStatus.VERIFYING,
+    ]
+    for i, st in enumerate(transient_statuses):
+        job = Job(id=f"job_transient_{i}", source_url=f"https://youtu.be/{i}")
+        job.status = st
+        sm.save_job(job)
+
+    # Add custom string transient jobs directly into DB
+    conn = sm._get_connection()
+    now_str = datetime.now(UTC).isoformat()
+    conn.execute(
+        """
+        INSERT INTO jobs (id, source_url, status, payload_json, created_at, updated_at)
+        VALUES ('job_custom_str_1', 'https://youtu.be/custom1', 'FETCHING_METADATA', '{"id":"job_custom_str_1","source_url":"https://youtu.be/custom1","status":"FETCHING_METADATA"}', ?, ?),
+               ('job_custom_str_2', 'https://youtu.be/custom2', 'PLANNING_EDITS', '{"id":"job_custom_str_2","source_url":"https://youtu.be/custom2","status":"PLANNING_EDITS"}', ?, ?);
+        """,
+        (now_str, now_str, now_str, now_str),
+    )
+    conn.close()
+
+    # 2. Create non-transient jobs (should NOT be reconciled)
+    queued_job = Job(id="job_queued", source_url="https://youtu.be/queued", status=JobStatus.QUEUED)
+    completed_job = Job(
+        id="job_completed", source_url="https://youtu.be/comp", status=JobStatus.COMPLETED
+    )
+    cleaned_job = Job(
+        id="job_cleaned", source_url="https://youtu.be/clean", status=JobStatus.CLEANED
+    )
+    sm.save_job(queued_job)
+    sm.save_job(completed_job)
+    sm.save_job(cleaned_job)
+
+    # Reconcile stranded jobs
+    reconciled_count = sm.reconcile_stranded_jobs()
+    assert reconciled_count == 6
+
+    # Verify all transient jobs are now FAILED with expected restart message
+    for i in range(len(transient_statuses)):
+        j = sm.get_job(f"job_transient_{i}")
+        assert j is not None
+        assert j.status == JobStatus.FAILED
+        assert j.error_message == "Interrupted by application restart; ready for retry"
+
+    custom_1 = sm.get_job("job_custom_str_1")
+    assert custom_1 is not None
+    assert custom_1.status == JobStatus.FAILED
+    assert custom_1.error_message == "Interrupted by application restart; ready for retry"
+
+    # Verify non-transient jobs untouched
+    assert sm.get_job("job_queued").status == JobStatus.QUEUED
+    assert sm.get_job("job_completed").status == JobStatus.COMPLETED
+    assert sm.get_job("job_cleaned").status == JobStatus.CLEANED
+
+    # Subsequent run finds 0 stranded jobs
+    assert sm.reconcile_stranded_jobs() == 0

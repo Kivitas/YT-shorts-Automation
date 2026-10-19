@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from autoshorts.core.models import ClipCandidate
 
@@ -23,7 +24,11 @@ def _is_sentence_boundary(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
-    return stripped[-1] in {".", "!", "?"} or (len(stripped) > 1 and stripped[-2] in {".", "!", "?"} and stripped[-1] in {'"', "'", "”", "’"})
+    return stripped[-1] in {".", "!", "?"} or (
+        len(stripped) > 1
+        and stripped[-2] in {".", "!", "?"}
+        and stripped[-1] in {'"', "'", "”", "’"}
+    )
 
 
 def _normalize_segments(
@@ -44,11 +49,13 @@ def _normalize_segments(
                 continue
             words = max(1, len(s_clean.split()))
             dur = max(1.5, words / 2.5)
-            segments.append({
-                "start": cur_t,
-                "end": cur_t + dur,
-                "text": s_clean,
-            })
+            segments.append(
+                {
+                    "start": cur_t,
+                    "end": cur_t + dur,
+                    "text": s_clean,
+                }
+            )
             cur_t += dur
         return segments
 

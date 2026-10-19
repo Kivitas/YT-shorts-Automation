@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import urllib.parse
-import os
-from typing import Any
 
 import httpx
 
@@ -49,7 +48,9 @@ class MetadataFetcher:
 
         resolved_cookies = cookies_from_browser
         if not resolved_cookies:
-            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get("COOKIES_FROM_BROWSER")
+            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get(
+                "COOKIES_FROM_BROWSER"
+            )
         self.cookies_from_browser = resolved_cookies
 
     def fetch(self, url: str) -> VideoMetadata:
@@ -152,7 +153,11 @@ class MetadataFetcher:
         channel_url = (
             data.get("channel_url")
             or data.get("uploader_url")
-            or (f"https://www.youtube.com/@{data['uploader_id']}" if data.get("uploader_id") else "https://www.youtube.com")
+            or (
+                f"https://www.youtube.com/@{data['uploader_id']}"
+                if data.get("uploader_id")
+                else "https://www.youtube.com"
+            )
         )
         duration = float(data.get("duration") or 0.0)
         webpage_url = data.get("webpage_url") or canonical_url
@@ -170,9 +175,7 @@ class MetadataFetcher:
 
     def _fetch_via_oembed(self, canonical_url: str, video_id: str) -> VideoMetadata:
         """Fetch basic video metadata via YouTube oEmbed endpoint."""
-        oembed_url = (
-            f"https://www.youtube.com/oembed?url={urllib.parse.quote(canonical_url, safe='')}&format=json"
-        )
+        oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(canonical_url, safe='')}&format=json"
         logger.debug("Querying oEmbed: %s", oembed_url)
 
         def _get_resp(client: httpx.Client) -> httpx.Response:

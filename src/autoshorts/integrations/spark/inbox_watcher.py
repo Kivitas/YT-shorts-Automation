@@ -20,9 +20,10 @@ import re
 import shutil
 import threading
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -33,7 +34,7 @@ from autoshorts.core.paths import get_inbox_dir
 logger = logging.getLogger(__name__)
 
 
-def parse_timestamp_to_seconds(ts: str | float | int | None) -> float | None:
+def parse_timestamp_to_seconds(ts: str | float | None) -> float | None:
     """Parse a timestamp string ('MM:SS', 'HH:MM:SS', '90', 90.0) into float seconds."""
     if ts is None:
         return None
@@ -72,16 +73,22 @@ class SparkClipHint(BaseModel):
 
     source_url: str = Field(..., description="YouTube video URL")
     clip_title: str | None = Field(default=None, description="Topic or hook title")
-    start_time: str | float | int | None = Field(default=None, description="Raw start time string or number")
-    end_time: str | float | int | None = Field(default=None, description="Raw end time string or number")
+    start_time: str | float | int | None = Field(
+        default=None, description="Raw start time string or number"
+    )
+    end_time: str | float | int | None = Field(
+        default=None, description="Raw end time string or number"
+    )
     start_sec: float | None = Field(default=None, description="Resolved start time in seconds")
     end_sec: float | None = Field(default=None, description="Resolved end time in seconds")
     hook_text: str | None = Field(default=None, description="First 3-second hook question/card")
     target_background: str = Field(default="minecraft", description="Recommended background theme")
     notes: str | None = Field(default=None, description="Editorial notes or timestamps")
-    custom_instructions: str | None = Field(default=None, description="Combined operator instructions")
+    custom_instructions: str | None = Field(
+        default=None, description="Combined operator instructions"
+    )
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, context: Any, /) -> None:
         """Resolve start_sec and end_sec from start_time and end_time if not provided."""
         if self.start_sec is None and self.start_time is not None:
             self.start_sec = parse_timestamp_to_seconds(self.start_time)
@@ -360,7 +367,7 @@ class SparkInboxWatcher:
                 reason_file = self.failed_dir / f"{dest_path.name}.reason.txt"
                 try:
                     reason_content = (
-                        f"Timestamp: {datetime.now(timezone.utc).isoformat()}\n"
+                        f"Timestamp: {datetime.now(UTC).isoformat()}\n"
                         f"File: {file_path.name}\n"
                         f"Error: {err}\n"
                     )
@@ -375,7 +382,7 @@ class SparkInboxWatcher:
         destination_dir.mkdir(parents=True, exist_ok=True)
         dest = destination_dir / source.name
         if dest.exists():
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
             dest = destination_dir / f"{source.stem}_{timestamp}{source.suffix}"
 
         shutil.move(str(source), str(dest))
@@ -387,9 +394,15 @@ class SparkInboxWatcher:
             if self._running:
                 return
             self._running = True
-            self._thread = threading.Thread(target=self._run_loop, daemon=True, name="SparkInboxWatcher")
+            self._thread = threading.Thread(
+                target=self._run_loop, daemon=True, name="SparkInboxWatcher"
+            )
             self._thread.start()
-            logger.info("SparkInboxWatcher started polling %s every %ds", self.inbox_dir, self.poll_interval_sec)
+            logger.info(
+                "SparkInboxWatcher started polling %s every %ds",
+                self.inbox_dir,
+                self.poll_interval_sec,
+            )
 
     def stop(self, timeout: float = 5.0) -> None:
         """Stop the background inbox polling thread."""

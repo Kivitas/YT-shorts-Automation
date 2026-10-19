@@ -7,7 +7,6 @@ and provides redaction capabilities.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -92,9 +91,13 @@ class QuotaConfig(BaseModel):
 
     upload_bucket_daily: int = Field(default=100, description="Dedicated videos.insert calls/day")
     general_bucket_daily: int = Field(default=10000, description="Shared general units/day")
-    reserve_retries: int = Field(default=50, description="Calls reserved for retries in upload bucket")
+    reserve_retries: int = Field(
+        default=50, description="Calls reserved for retries in upload bucket"
+    )
     insert_cost_units: int = Field(default=1, description="videos.insert cost in upload bucket")
-    list_cost_units: int = Field(default=1, description="videos.list verification cost in general bucket")
+    list_cost_units: int = Field(
+        default=1, description="videos.list verification cost in general bucket"
+    )
     stop_threshold_units: int = Field(default=100, description="General bucket reserve threshold")
     exhaustion_fallback: Literal["queue_next_day", "studio", "local"] = "queue_next_day"
 
@@ -192,7 +195,7 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = Field(default=None, alias="OPENROUTER_API_KEY")
     local_gguf_path: str | None = Field(default=None, alias="LOCAL_GGUF_PATH")
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, context: Any, /) -> None:
         """Register loaded secrets for automatic redaction in logs."""
         if self.gemini_api_key:
             register_secret(self.gemini_api_key.get_secret_value())

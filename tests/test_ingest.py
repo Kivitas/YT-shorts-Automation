@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from autoshorts.core.config import JobDefaultsConfig, Settings
+from autoshorts.core.config import JobDefaultsConfig
 from autoshorts.core.contracts import Downloader as DownloaderProtocol
 from autoshorts.core.exceptions import (
     DownloadError,
@@ -30,7 +30,7 @@ from autoshorts.core.exceptions import (
     VideoUnavailableError,
 )
 from autoshorts.core.models import VideoMetadata
-from autoshorts.discovery.metadata_fetcher import MetadataFetcher, fetch_video_metadata
+from autoshorts.discovery.metadata_fetcher import MetadataFetcher
 from autoshorts.discovery.url_validator import (
     ParsedLink,
     extract_video_id,
@@ -40,24 +40,20 @@ from autoshorts.discovery.url_validator import (
     parse_links_input,
 )
 from autoshorts.media.downloader import (
-    DEFAULT_FORMAT_SPEC,
     Downloader,
     format_section_arg,
 )
 from autoshorts.transcript.fetcher import (
     NO_CAPTIONS,
     TranscriptFetcher,
-    TranscriptSegment,
-    fetch_transcript,
-    fetch_transcript_or_signal,
     parse_json3_dict,
     parse_vtt_text,
 )
 
-
 # =============================================================================
 # 1. URL Validation & Normalization Tests
 # =============================================================================
+
 
 @pytest.mark.parametrize(
     "url_input,expected_id",
@@ -118,6 +114,7 @@ def test_extract_video_id_invalid(invalid_input: str):
 # =============================================================================
 # 2. Instruction Parsing & Typed Links Parser Tests
 # =============================================================================
+
 
 def test_parse_link_line_space_separated_syntax():
     """Verify parsing per-link instruction syntax like: URL | max 45s | focus funny | clips 3 | bg minecraft."""
@@ -217,6 +214,7 @@ def test_parse_links_input_cli_list():
 # 3. Section Timestamp Formatting & Downloader Protocol Tests
 # =============================================================================
 
+
 @pytest.mark.parametrize(
     "start,end,expected",
     [
@@ -314,18 +312,21 @@ def test_downloader_retries_on_failure(tmp_path: Path):
 # 4. Metadata Extraction Tests (yt-dlp with oEmbed Fallback)
 # =============================================================================
 
+
 def test_metadata_fetcher_ytdlp_success():
     """Verify metadata retrieval from simulated yt-dlp --dump-json."""
-    fake_json = json.dumps({
-        "id": "dQw4w9WgXcQ",
-        "title": "Rick Astley - Never Gonna Give You Up",
-        "uploader": "RickAstleyVEVO",
-        "uploader_id": "RickAstleyVEVO",
-        "channel_url": "https://www.youtube.com/@RickAstleyVEVO",
-        "duration": 212.0,
-        "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        "description": "The official video for Never Gonna Give You Up.",
-    })
+    fake_json = json.dumps(
+        {
+            "id": "dQw4w9WgXcQ",
+            "title": "Rick Astley - Never Gonna Give You Up",
+            "uploader": "RickAstleyVEVO",
+            "uploader_id": "RickAstleyVEVO",
+            "channel_url": "https://www.youtube.com/@RickAstleyVEVO",
+            "duration": 212.0,
+            "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "description": "The official video for Never Gonna Give You Up.",
+        }
+    )
 
     fetcher = MetadataFetcher()
     with patch("subprocess.run") as mock_run:
@@ -357,16 +358,18 @@ def test_metadata_fetcher_fallback_to_oembed():
     mock_resp.json.return_value = oembed_payload
 
     # yt-dlp fails
-    with patch("subprocess.run", side_effect=FileNotFoundError("yt-dlp missing")):
-        with patch("httpx.Client.get", return_value=mock_resp) as mock_get:
-            meta = fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+    with (
+        patch("subprocess.run", side_effect=FileNotFoundError("yt-dlp missing")),
+        patch("httpx.Client.get", return_value=mock_resp),
+    ):
+        meta = fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
 
-            assert isinstance(meta, VideoMetadata)
-            assert meta.title == "oEmbed Video Title"
-            assert meta.channel == "oEmbed Creator"
-            assert meta.channel_url == "https://www.youtube.com/@oembed_creator"
-            assert meta.duration == 0.0
-            assert meta.video_id == "dQw4w9WgXcQ"
+        assert isinstance(meta, VideoMetadata)
+        assert meta.title == "oEmbed Video Title"
+        assert meta.channel == "oEmbed Creator"
+        assert meta.channel_url == "https://www.youtube.com/@oembed_creator"
+        assert meta.duration == 0.0
+        assert meta.video_id == "dQw4w9WgXcQ"
 
 
 def test_metadata_fetcher_both_fail():
@@ -376,15 +379,18 @@ def test_metadata_fetcher_both_fail():
     mock_resp.status_code = 404
     mock_resp.text = "Not Found"
 
-    with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "yt-dlp")):
-        with patch("httpx.Client.get", return_value=mock_resp):
-            with pytest.raises(MetadataFetchError):
-                fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+    with (
+        patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "yt-dlp")),
+        patch("httpx.Client.get", return_value=mock_resp),
+        pytest.raises(MetadataFetchError),
+    ):
+        fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
 
 
 # =============================================================================
 # 5. Transcript Extraction & Caption Fallback Tests
 # =============================================================================
+
 
 def test_transcript_parser_vtt():
     """Verify WebVTT text parser extracts segments with timestamps."""
@@ -440,15 +446,11 @@ def test_transcript_fetcher_prefers_manual_over_auto():
 
     mock_manual = MagicMock()
     mock_manual.is_generated = False
-    mock_manual.fetch.return_value = [
-        {"start": 0.0, "duration": 2.0, "text": "Manual subtitle"}
-    ]
+    mock_manual.fetch.return_value = [{"start": 0.0, "duration": 2.0, "text": "Manual subtitle"}]
 
     mock_auto = MagicMock()
     mock_auto.is_generated = True
-    mock_auto.fetch.return_value = [
-        {"start": 0.0, "duration": 2.0, "text": "Auto subtitle"}
-    ]
+    mock_auto.fetch.return_value = [{"start": 0.0, "duration": 2.0, "text": "Auto subtitle"}]
 
     mock_list = MagicMock()
     mock_list.find_manually_created_transcript.return_value = mock_manual
@@ -478,12 +480,14 @@ yt-dlp fallback captions
             return subprocess.CompletedProcess(
                 args=cmd,
                 returncode=0,
-                stdout=json.dumps({
-                    "subtitles": {},
-                    "automatic_captions": {
-                        "en": [{"ext": "vtt", "url": "https://example.com/captions.vtt"}]
+                stdout=json.dumps(
+                    {
+                        "subtitles": {},
+                        "automatic_captions": {
+                            "en": [{"ext": "vtt", "url": "https://example.com/captions.vtt"}]
+                        },
                     }
-                }),
+                ),
                 stderr="",
             )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
@@ -493,13 +497,19 @@ yt-dlp fallback captions
     mock_http_resp.text = fake_vtt
 
     fetcher = TranscriptFetcher()
-    with patch.object(youtube_transcript_api.YouTubeTranscriptApi, "list", side_effect=Exception("API blocked")):
-        with patch("subprocess.run", side_effect=fake_subprocess_subtitles):
-            with patch("httpx.Client.get", return_value=mock_http_resp):
-                segments = fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
-                assert len(segments) == 1
-                assert segments[0].text == "yt-dlp fallback captions"
-                assert segments[0].start == 0.5
+    with (
+        patch.object(
+            youtube_transcript_api.YouTubeTranscriptApi,
+            "list",
+            side_effect=Exception("API blocked"),
+        ),
+        patch("subprocess.run", side_effect=fake_subprocess_subtitles),
+        patch("httpx.Client.get", return_value=mock_http_resp),
+    ):
+        segments = fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+        assert len(segments) == 1
+        assert segments[0].text == "yt-dlp fallback captions"
+        assert segments[0].start == 0.5
 
 
 def test_transcript_fetcher_no_captions_signal():
@@ -508,18 +518,27 @@ def test_transcript_fetcher_no_captions_signal():
 
     fetcher = TranscriptFetcher()
 
-    with patch.object(youtube_transcript_api.YouTubeTranscriptApi, "list", side_effect=Exception("No captions")):
-        with patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")):
-            # Method 1: raises TranscriptNotFoundError
-            with pytest.raises(TranscriptNotFoundError) as exc_info:
-                fetcher.fetch("dQw4w9WgXcQ")
-            assert NO_CAPTIONS in str(exc_info.value)
+    with (
+        patch.object(
+            youtube_transcript_api.YouTubeTranscriptApi,
+            "list",
+            side_effect=Exception("No captions"),
+        ),
+        patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=""),
+        ),
+    ):
+        # Method 1: raises TranscriptNotFoundError
+        with pytest.raises(TranscriptNotFoundError) as exc_info:
+            fetcher.fetch("dQw4w9WgXcQ")
+        assert NO_CAPTIONS in str(exc_info.value)
 
-            # Method 2: fetch_or_signal returns (None, NO_CAPTIONS)
-            segs, signal = fetcher.fetch_or_signal("dQw4w9WgXcQ")
-            assert segs is None
-            assert signal == NO_CAPTIONS
-            assert signal == "NO_CAPTIONS"
+        # Method 2: fetch_or_signal returns (None, NO_CAPTIONS)
+        segs, signal = fetcher.fetch_or_signal("dQw4w9WgXcQ")
+        assert segs is None
+        assert signal == NO_CAPTIONS
+        assert signal == "NO_CAPTIONS"
 
 
 def test_metadata_fetcher_live_and_upcoming_guards():
@@ -529,15 +548,23 @@ def test_metadata_fetcher_live_and_upcoming_guards():
     # Case 1: is_live is True
     live_json = json.dumps({"title": "Live Stream", "is_live": True, "live_status": "is_live"})
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=live_json, stderr="")
-        with pytest.raises(VideoUnavailableError, match="Live stream or upcoming premiere cannot be processed"):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=live_json, stderr=""
+        )
+        with pytest.raises(
+            VideoUnavailableError, match="Live stream or upcoming premiere cannot be processed"
+        ):
             fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
 
     # Case 2: Upcoming premiere
     upcoming_json = json.dumps({"title": "Upcoming Premiere", "live_status": "is_upcoming"})
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=upcoming_json, stderr="")
-        with pytest.raises(VideoUnavailableError, match="Live stream or upcoming premiere cannot be processed"):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=upcoming_json, stderr=""
+        )
+        with pytest.raises(
+            VideoUnavailableError, match="Live stream or upcoming premiere cannot be processed"
+        ):
             fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
 
 
@@ -574,9 +601,14 @@ def test_transcript_fetcher_cookies_forwarding():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=json.dumps({}), stderr="")
 
     with (
-        patch.object(youtube_transcript_api.YouTubeTranscriptApi, "list", side_effect=Exception("Blocked")),
+        patch.object(
+            youtube_transcript_api.YouTubeTranscriptApi, "list", side_effect=Exception("Blocked")
+        ),
         patch("subprocess.run", side_effect=mock_run),
-        patch("autoshorts.transcript.fetcher.TranscriptFetcher._fetch_via_ytdlp_file_download", return_value=[]),
+        patch(
+            "autoshorts.transcript.fetcher.TranscriptFetcher._fetch_via_ytdlp_file_download",
+            return_value=[],
+        ),
     ):
         try:
             fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
@@ -592,12 +624,10 @@ def test_windows_process_tree_cleanup_taskkill():
     """Verify that terminate_process_tree runs taskkill /F /T /PID on Windows."""
     from autoshorts.media.downloader import terminate_process_tree
 
-    with patch("sys.platform", "win32"):
-        with patch("subprocess.run") as mock_run:
-            terminate_process_tree(99999)
-            mock_run.assert_called_once_with(
-                ["taskkill", "/F", "/T", "/PID", "99999"],
-                capture_output=True,
-                check=False,
-            )
-
+    with patch("sys.platform", "win32"), patch("subprocess.run") as mock_run:
+        terminate_process_tree(99999)
+        mock_run.assert_called_once_with(
+            ["taskkill", "/F", "/T", "/PID", "99999"],
+            capture_output=True,
+            check=False,
+        )

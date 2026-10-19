@@ -9,12 +9,10 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Union
 
 from autoshorts.core.exceptions import PathSecurityError
 
-
-PathLike = Union[str, os.PathLike[str], Path]
+PathLike = str | os.PathLike[str] | Path
 
 
 def get_project_root() -> Path:
@@ -144,9 +142,7 @@ def assert_safe_to_delete(target_path: PathLike) -> None:
     # Rule 1: Cannot delete the project root or the cleanup root directories themselves
     for root_dir in ALLOWED_CLEANUP_ROOTS + [PROJECT_ROOT.resolve()]:
         if abs_target == root_dir:
-            raise PathSecurityError(
-                f"CRITICAL: Attempted deletion of root directory: {abs_target}"
-            )
+            raise PathSecurityError(f"CRITICAL: Attempted deletion of root directory: {abs_target}")
 
     # Rule 2: Must be strictly inside an allowed root (work/ or output/)
     is_allowed = any(
@@ -170,7 +166,7 @@ def assert_safe_to_delete(target_path: PathLike) -> None:
 
 def atomic_write(
     target_path: PathLike,
-    content: Union[str, bytes],
+    content: str | bytes,
     mode: str = "w",
     encoding: str = "utf-8",
 ) -> Path:

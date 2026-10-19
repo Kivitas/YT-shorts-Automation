@@ -6,7 +6,7 @@ Video Metadata, Upload Results, and the JobStatus state machine per PLAN.md sect
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
@@ -79,7 +79,9 @@ class ClipCandidate(BaseModel):
     start: float = Field(..., ge=0.0, description="Start timestamp in seconds")
     end: float = Field(..., ge=0.0, description="End timestamp in seconds")
     text: str = Field(..., description="Concatenated transcript text within this window")
-    score: float = Field(default=0.0, ge=0.0, le=1.0, description="SemIf retention score (0.0 - 1.0)")
+    score: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="SemIf retention score (0.0 - 1.0)"
+    )
     reason: str | None = Field(default=None, description="Scoring rationale or topic label")
 
     @property
@@ -132,9 +134,15 @@ class EditDecisionList(BaseModel):
     hook_in_sec: float = Field(default=0.0, ge=0.0, description="Exact trim start in seconds")
     hook_out_sec: float = Field(default=45.0, ge=0.0, description="Exact trim end in seconds")
     jump_cuts: list[JumpCut] = Field(default_factory=list, description="Excised silence intervals")
-    zoom_punch_ins: list[ZoomPunchIn] = Field(default_factory=list, description="Visual camera punch-ins")
-    caption_corrections: list[CaptionCorrection] = Field(default_factory=list, description="Vocabulary fixes")
-    recommended_thumbnail_timestamp: float = Field(default=0.0, ge=0.0, description="Expressive facial timestamp")
+    zoom_punch_ins: list[ZoomPunchIn] = Field(
+        default_factory=list, description="Visual camera punch-ins"
+    )
+    caption_corrections: list[CaptionCorrection] = Field(
+        default_factory=list, description="Vocabulary fixes"
+    )
+    recommended_thumbnail_timestamp: float = Field(
+        default=0.0, ge=0.0, description="Expressive facial timestamp"
+    )
     recommended_title: str = Field(default="", max_length=60, description="Shorts title")
     recommended_hook: str = Field(default="", max_length=100, description="Hook text")
     background_style_recommendation: Literal["minecraft", "subway", "auto"] = Field(
@@ -147,9 +155,13 @@ class UploadResult(BaseModel):
 
     video_id: str = Field(..., description="YouTube 11-char video ID")
     url: str = Field(..., description="Direct link: https://youtube.com/shorts/{video_id}")
-    status: str = Field(default="uploaded", description="Status (uploaded, published, unlisted, private)")
-    verified: bool = Field(default=False, description="True once verified via videos.list or Studio DOM")
-    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: str = Field(
+        default="uploaded", description="Status (uploaded, published, unlisted, private)"
+    )
+    verified: bool = Field(
+        default=False, description="True once verified via videos.list or Studio DOM"
+    )
+    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     quota_spent: int = Field(default=1, description="API quota units consumed from upload bucket")
     privacy_status: str = Field(default="unlisted", description="Applied privacy status")
     raw_response: dict[str, Any] = Field(default_factory=dict, description="Raw API response data")
@@ -160,21 +172,29 @@ class Job(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid4().hex[:12], description="Unique job identifier")
     source_url: str = Field(..., description="Source YouTube video URL")
-    custom_instructions: str | None = Field(default=None, description="Per-job operator instructions")
+    custom_instructions: str | None = Field(
+        default=None, description="Per-job operator instructions"
+    )
     status: JobStatus = Field(default=JobStatus.QUEUED, description="Current lifecycle stage")
-    video_metadata: VideoMetadata | None = Field(default=None, description="Extracted video metadata")
-    candidate_windows: list[ClipCandidate] = Field(default_factory=list, description="Sliding windows")
+    video_metadata: VideoMetadata | None = Field(
+        default=None, description="Extracted video metadata"
+    )
+    candidate_windows: list[ClipCandidate] = Field(
+        default_factory=list, description="Sliding windows"
+    )
     selected_clips: list[ClipSelection] = Field(default_factory=list, description="Chosen clips")
     edl: EditDecisionList | None = Field(default=None, description="Generated Edit Decision List")
     raw_video_path: str | None = Field(default=None, description="Path to precision downloaded cut")
     subtitles_path: str | None = Field(default=None, description="Path to generated .ass subtitles")
-    rendered_video_path: str | None = Field(default=None, description="Path to master 1080x1920 MP4")
+    rendered_video_path: str | None = Field(
+        default=None, description="Path to master 1080x1920 MP4"
+    )
     preview_video_path: str | None = Field(default=None, description="Path to low-res preview MP4")
     scheduled_time: datetime | None = Field(default=None, description="Scheduled upload timestamp")
     upload_result: UploadResult | None = Field(default=None, description="Upload outcome")
     error_message: str | None = Field(default=None, description="Last error message if failed")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def transition_to(self, new_status: JobStatus) -> None:
         """Safely transition this job to a new status, checking validity."""
@@ -183,4 +203,4 @@ class Job(BaseModel):
         if not can_transition(self.status, new_status):
             raise InvalidStateTransitionError(self.status.value, new_status.value)
         self.status = new_status
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(UTC)

@@ -13,7 +13,9 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import pytest
 
 from autoshorts.core.contracts import Decider, LLMProvider
@@ -30,10 +32,10 @@ from autoshorts.decision.window_slicer import (
     slice_transcript_windows,
 )
 
-
 # -----------------------------------------------------------------------------
 # 1. SemIf Prompt Builder & Softmax Tests
 # -----------------------------------------------------------------------------
+
 
 def test_semif_prompt_builder():
     """Verify SemIf prompt builder formats context, question, and options clearly."""
@@ -68,6 +70,7 @@ def test_semif_softmax_math():
 # -----------------------------------------------------------------------------
 # 2. Sliding Window Slicer & Sentence Snapping
 # -----------------------------------------------------------------------------
+
 
 def test_window_slicer_with_sentence_snapping():
     """Verify window slicer respects 50s target, 15s stride, and snaps to sentence ends."""
@@ -141,6 +144,7 @@ def test_select_non_overlapping_candidates():
 # 3. Rule-Based Heuristic Fallback Evaluator
 # -----------------------------------------------------------------------------
 
+
 def test_heuristic_fallback_evaluator():
     """Verify heuristic scores text based on WPM, question marks, and hook keywords."""
     # High-engagement text with questions, exclamations, and keywords
@@ -163,6 +167,7 @@ def test_heuristic_fallback_evaluator():
 # -----------------------------------------------------------------------------
 # 4. Semantic-IF Action Table & State Machine
 # -----------------------------------------------------------------------------
+
 
 def test_semif_action_table_mappings():
     """Verify all actions in SEMIF_ACTION_TABLE map correctly per PLAN.md section 5.3."""
@@ -190,6 +195,7 @@ def test_semif_action_table_mappings():
 # -----------------------------------------------------------------------------
 # 5. SemIfDecider Protocol & Orchestration
 # -----------------------------------------------------------------------------
+
 
 class MockProvider(LLMProvider):
     """Mock LLMProvider implementing contracts.LLMProvider for decider testing."""
@@ -298,7 +304,9 @@ def test_decider_select_clips_workflow():
     decider = SemIfDecider(provider=provider)
 
     candidates = [
-        ClipCandidate(start=0.0, end=45.0, text="How does human brain plasticity work?", score=0.90),
+        ClipCandidate(
+            start=0.0, end=45.0, text="How does human brain plasticity work?", score=0.90
+        ),
         ClipCandidate(start=100.0, end=145.0, text="Second distinct segment.", score=0.70),
     ]
 
@@ -316,6 +324,7 @@ def test_decider_select_clips_workflow():
 # -----------------------------------------------------------------------------
 # 6. Generative LLM Helpers
 # -----------------------------------------------------------------------------
+
 
 def test_generative_helpers():
     """Verify title, hook, description, and hashtags generative helpers."""

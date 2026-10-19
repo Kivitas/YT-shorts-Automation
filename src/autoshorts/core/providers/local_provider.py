@@ -7,8 +7,9 @@ true single-forward-pass logit extraction, tokenizer-resolved token IDs, and laz
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.exceptions import ModelNotFoundError, ProviderError
@@ -91,7 +92,9 @@ class LocalProvider(BaseLLMProvider):
             return self._model_path
 
         # If configured path is provided, even if not found yet, produce helpful error
-        target = self._model_path or self.settings.local_gguf_path or self.settings.llm.local_model_path
+        target = (
+            self._model_path or self.settings.local_gguf_path or self.settings.llm.local_model_path
+        )
         raise ModelNotFoundError(
             f"No local GGUF model file found at '{target}' or in data/models/. "
             "Please place a valid .gguf model file in data/models/."
@@ -208,11 +211,7 @@ class LocalProvider(BaseLLMProvider):
 
             if last_logits is not None:
                 for key, tids in option_token_ids.items():
-                    key_vals = [
-                        float(last_logits[tid])
-                        for tid in tids
-                        if tid < len(last_logits)
-                    ]
+                    key_vals = [float(last_logits[tid]) for tid in tids if tid < len(last_logits)]
                     logits_dict[key] = max(key_vals) if key_vals else -100.0
 
         # Fallback to create_completion with logprobs if eval scores unavailable
@@ -228,11 +227,7 @@ class LocalProvider(BaseLLMProvider):
                 top_lp = choices[0]["logprobs"].get("top_logprobs", [{}])[0]
                 for key in norm_options:
                     # Match key or ' ' + key
-                    matches = [
-                        v
-                        for k_tok, v in top_lp.items()
-                        if k_tok.strip().upper() == key
-                    ]
+                    matches = [v for k_tok, v in top_lp.items() if k_tok.strip().upper() == key]
                     logits_dict[key] = max(matches) if matches else -100.0
 
         # If still empty (e.g., in test mocks), assign uniform

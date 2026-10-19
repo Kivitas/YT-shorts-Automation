@@ -20,7 +20,7 @@ MAX_DESCRIPTION_BYTES = 5000
 
 DEFAULT_ATTRIBUTION_DISCLAIMER = (
     "📌 ORIGINAL SOURCE ATTRIBUTION:\n"
-    "This video is a clip from \"{title}\". All rights belong to {channel}. Original video: {video_url}\n"
+    'This video is a clip from "{title}". All rights belong to {channel}. Original video: {video_url}\n'
     "Channel Link: {channel_url}\n\n"
     "All rights and intellectual property belong to {channel}. If you are the copyright owner "
     "and wish for this clip to be removed or modified, please contact the channel owner."
@@ -32,7 +32,7 @@ DEFAULT_DESCRIPTION_TEMPLATE = (
     "{hook}\n\n"
     "---\n"
     "📌 ORIGINAL SOURCE ATTRIBUTION:\n"
-    "This video is a clip from \"{title}\". All rights belong to {channel}. Original video: {video_url}\n"
+    'This video is a clip from "{title}". All rights belong to {channel}. Original video: {video_url}\n'
     "Channel Link: {channel_url}\n\n"
     "All rights and intellectual property belong to {channel}. If you are the copyright owner "
     "and wish for this clip to be removed or modified, please contact the channel owner.\n\n"
@@ -202,7 +202,9 @@ class DescriptionBuilder:
         Returns:
             Sanitized description guaranteed <= 5000 UTF-8 bytes.
         """
-        raw_tpl = template or self.upload_config.description_template or DEFAULT_DESCRIPTION_TEMPLATE
+        raw_tpl = (
+            template or self.upload_config.description_template or DEFAULT_DESCRIPTION_TEMPLATE
+        )
 
         clean_title = sanitize_youtube_text(title)
         clean_channel = sanitize_youtube_text(channel)
@@ -227,12 +229,15 @@ class DescriptionBuilder:
         # Ensure mandatory disclaimer phrase is present
         disclaimer_key_phrase = "All rights belong to"
         original_clip_phrase = "This video is a clip from"
-        if disclaimer_key_phrase.lower() not in rendered.lower() or original_clip_phrase.lower() not in rendered.lower():
+        if (
+            disclaimer_key_phrase.lower() not in rendered.lower()
+            or original_clip_phrase.lower() not in rendered.lower()
+        ):
             # Inject mandatory disclaimer
             disclaimer_block = (
                 f"\n\n---\n"
                 f"📌 ORIGINAL SOURCE ATTRIBUTION:\n"
-                f"This video is a clip from \"{clean_title}\". All rights belong to {clean_channel}. Original video: {clean_video_url}\n"
+                f'This video is a clip from "{clean_title}". All rights belong to {clean_channel}. Original video: {clean_video_url}\n'
                 f"Channel Link: {clean_channel_url}\n\n"
                 f"All rights and intellectual property belong to {clean_channel}. If you are the copyright owner "
                 f"and wish for this clip to be removed or modified, please contact the channel owner."
@@ -261,7 +266,9 @@ class DescriptionBuilder:
 
             available_header_bytes = MAX_DESCRIPTION_BYTES - footer_bytes_len - 20
             if available_header_bytes > 50:
-                header_truncated = header_part.encode("utf-8")[:available_header_bytes].decode("utf-8", "ignore")
+                header_truncated = header_part.encode("utf-8")[:available_header_bytes].decode(
+                    "utf-8", "ignore"
+                )
                 rendered = f"{header_truncated.rstrip()}...\n\n{footer_part}"
                 if len(rendered.encode("utf-8")) <= MAX_DESCRIPTION_BYTES:
                     return rendered

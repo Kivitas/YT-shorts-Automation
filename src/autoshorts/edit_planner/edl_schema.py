@@ -8,12 +8,10 @@ and produces deterministic empty EDL fallbacks.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping
-
-from pydantic import ValidationError
+from collections.abc import Mapping
+from typing import Any
 
 from autoshorts.core.models import (
-    CaptionCorrection,
     EditDecisionList,
     JumpCut,
     ZoomPunchIn,

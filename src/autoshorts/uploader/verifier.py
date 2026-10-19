@@ -38,7 +38,9 @@ class YouTubeVerifier:
             True if video verified successfully, False if timed out or failed.
         """
         for attempt in range(1, max_retries + 1):
-            logger.debug(f"Polling verification for {video_id} (attempt {attempt}/{max_retries})...")
+            logger.debug(
+                f"Polling verification for {video_id} (attempt {attempt}/{max_retries})..."
+            )
             if self.uploader.verify(video_id):
                 logger.info(f"Video {video_id} confirmed verified after {attempt} poll(s).")
                 return True

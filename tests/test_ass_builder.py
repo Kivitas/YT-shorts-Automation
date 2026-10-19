@@ -3,12 +3,15 @@
 from pathlib import Path
 
 from autoshorts.core.config import SubtitlesConfig
+from autoshorts.core.models import JumpCut
 from autoshorts.media.ass_styler import (
     TimedWord,
     build_ass_script,
     chunk_words,
     format_ass_timestamp,
+    format_emojis_for_ass,
     is_emphasis_word,
+    remap_words_for_jump_cuts,
     write_ass_file,
 )
 
@@ -187,3 +190,119 @@ def test_shorts_mobile_safe_zone_margins():
     config_mid = SubtitlesConfig(safe_zone_margin_v=420)
     script_mid = build_ass_script(words, config=config_mid)
     assert ",80,150,420,1" in script_mid
+
+
+def test_remap_words_for_jump_cuts_multiple():
+    """Verify that remap_words_for_jump_cuts removes words inside cuts and shifts subsequent timestamps."""
+    words = [
+        TimedWord(word="First", start=0.0, end=1.0),
+        TimedWord(word="point", start=1.2, end=1.8),
+        # Cut 1: 2.0 to 3.0 (dur 1.0)
+        TimedWord(word="cut_out_1", start=2.2, end=2.8),
+        TimedWord(word="second", start=3.2, end=3.8),
+        # Cut 2: 4.0 to 5.5 (dur 1.5)
+        TimedWord(word="cut_out_2", start=4.5, end=5.2),
+        TimedWord(word="third", start=6.0, end=6.8),
+    ]
+
+    cuts = [
+        JumpCut(cut_start=2.0, cut_end=3.0, reason="silence 1"),
+        JumpCut(cut_start=4.0, cut_end=5.5, reason="silence 2"),
+    ]
+
+    remapped = remap_words_for_jump_cuts(words, cuts)
+
+    # Words falling inside cuts should be removed
+    words_text = [w.word for w in remapped]
+    assert words_text == ["First", "point", "second", "third"]
+
+    # First and point are before Cut 1: unchanged
+    assert remapped[0].start == 0.0
+    assert remapped[0].end == 1.0
+    assert remapped[1].start == 1.2
+    assert remapped[1].end == 1.8
+
+    # second is after Cut 1 (1.0s excised): 3.2 - 1.0 = 2.2, 3.8 - 1.0 = 2.8
+    assert remapped[2].start == 2.2
+    assert remapped[2].end == 2.8
+
+    # third is after Cut 1 and Cut 2 (1.0 + 1.5 = 2.5s excised): 6.0 - 2.5 = 3.5, 6.8 - 2.5 = 4.3
+    assert remapped[3].start == 3.5
+    assert remapped[3].end == 4.3
+
+
+def test_build_ass_script_with_jump_cuts():
+    """Verify that build_ass_script integrates remap_words_for_jump_cuts to keep subtitles synchronized."""
+    words = [
+        {"word": "Before", "start": 0.0, "end": 1.0},
+        {"word": "SilenceWord", "start": 2.2, "end": 2.8},
+        {"word": "After", "start": 3.5, "end": 4.5},
+    ]
+    cuts = [JumpCut(cut_start=2.0, cut_end=3.0, reason="dead air")]
+
+    script = build_ass_script(words, jump_cuts=cuts)
+
+    # SilenceWord must not be in dialogue events
+    assert "SILENCEWORD" not in script
+    assert "BEFORE" in script
+    assert "AFTER" in script
+
+    # "After" was originally at 3.5s, shifted earlier by 1.0s cut to 2.5s -> 0:00:02.50
+    assert "0:00:02.50" in script
+
+
+def test_caption_style_presets():
+    """Verify subtitle presets: neon, minimal, and pill."""
+    words = [{"word": "Hello", "start": 0.0, "end": 1.0}]
+
+    # 1. Neon preset: Yellow #FFE600 active (&H0000E6FF), Cyan #00F0FF emphasis (&H00FFF000), heavy outline
+    neon_script = build_ass_script(words, style_preset="neon")
+    assert "&H0000E6FF" in neon_script
+    assert ",1,8,4,2," in neon_script  # BorderStyle=1, Outline=8, Shadow=4
+
+    # 2. Minimal preset: Emerald #00FF66 active (&H0066FF00), subtle shadow
+    min_script = build_ass_script(words, style_preset="minimal")
+    assert "&H0066FF00" in min_script
+    assert ",1,2,2,2," in min_script  # BorderStyle=1, Outline=2, Shadow=2
+
+    # 3. Pill preset: BorderStyle=3 with opaque backing box (&HA0000000)
+    pill_script = build_ass_script(words, style_preset="pill")
+    assert ",3,6,0,2," in pill_script  # BorderStyle=3, Outline=6, Shadow=0
+    assert "&HA0000000" in pill_script  # Backing box color
+
+
+def test_active_word_micro_tilt_and_scale_animation():
+    """Verify active word pop animation includes micro-tilt bounce \\frz-2 to \\frz0 and \\fscx118."""
+    words = [
+        TimedWord(word="Regular", start=0.0, end=0.8),
+        TimedWord(word="INSANE", start=0.85, end=1.5),  # High-emphasis keyword
+    ]
+
+    script = build_ass_script(words, style_preset="neon")
+
+    # Regular word pops to 118% with \frz-2 to \frz0 micro-tilt
+    assert r"\frz-2\t(0,80,\fscx118\fscy118)\t(80,160,\fscx100\fscy100)\t(80,160,\frz0)" in script
+
+    # High-emphasis word pops to 125% with cyan emphasis color & micro-tilt
+    assert (
+        r"\frz-2\t(0,80,\fscx125\fscy125)\t(80,160,\fscx100\fscy100)\t(80,160,\frz0)\c&H00FFF000&"
+        in script
+    )
+
+
+def test_emoji_font_wrapping_windows():
+    """Verify that Unicode emojis are wrapped with inline Segoe UI Emoji font override."""
+    # Direct function test
+    wrapped = format_emojis_for_ass("FIRE 🔥 ALERT", base_font="Montserrat ExtraBold")
+    assert wrapped == "FIRE {\\fnSegoe UI Emoji}🔥{\\fnMontserrat ExtraBold} ALERT"
+
+    # Multi-emoji test
+    multi = format_emojis_for_ass("🚀 WOW 😱", base_font="Montserrat Black")
+    assert "{\\fnSegoe UI Emoji}🚀{\\fnMontserrat Black}" in multi
+    assert "{\\fnSegoe UI Emoji}😱{\\fnMontserrat Black}" in multi
+
+    # Integration test inside build_ass_script
+    words = [{"word": "Shocking 🔥", "start": 0.0, "end": 1.0}]
+    script = build_ass_script(words, hook_title="Warning ⚡")
+    assert r"{\fnSegoe UI Emoji}🔥{\fnMontserrat ExtraBold}" in script
+    assert r"{\fnSegoe UI Emoji}⚡{\fnMontserrat Black}" in script

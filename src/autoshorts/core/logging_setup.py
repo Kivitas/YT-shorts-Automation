@@ -6,12 +6,13 @@ Ensures API keys, tokens, and sensitive credentials are never written to disk or
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 import logging
 import re
 import threading
+from collections import deque
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 # Set of known secrets to redact at runtime
 _REGISTERED_SECRETS: set[str] = set()
@@ -62,7 +63,14 @@ def redact(val: Any) -> Any:
         return text
 
     elif isinstance(val, Mapping):
-        sensitive_keys = {"api_key", "secret", "token", "password", "client_secret", "refresh_token"}
+        sensitive_keys = {
+            "api_key",
+            "secret",
+            "token",
+            "password",
+            "client_secret",
+            "refresh_token",
+        }
         redacted_dict: dict[str, Any] = {}
         for k, v in val.items():
             if any(s in str(k).lower() for s in sensitive_keys) and isinstance(v, str):

@@ -22,16 +22,16 @@ import pytest
 
 from autoshorts.core.config import Settings
 from autoshorts.core.contracts import LLMProvider
-from autoshorts.core.exceptions import ModelNotFoundError, ProviderError, ProviderRateLimitError
+from autoshorts.core.exceptions import ProviderError
 from autoshorts.core.providers.base import BaseLLMProvider
-from autoshorts.core.providers.gemini_provider import GEMINI_BASE_URL, GeminiProvider
+from autoshorts.core.providers.gemini_provider import GeminiProvider
 from autoshorts.core.providers.local_provider import LocalProvider
-from autoshorts.core.providers.openrouter_provider import OPENROUTER_BASE_URL, OpenRouterProvider
-
+from autoshorts.core.providers.openrouter_provider import OpenRouterProvider
 
 # -----------------------------------------------------------------------------
 # BaseLLMProvider & Softmax Tests
 # -----------------------------------------------------------------------------
+
 
 def test_softmax_numerical_stability():
     """Verify softmax handles large logits, identical logits, and negative infinities."""
@@ -71,9 +71,11 @@ def test_option_normalization():
 # Local Provider Tests (CPU GGUF)
 # -----------------------------------------------------------------------------
 
+
 def test_local_provider_lazy_import_error(monkeypatch: pytest.MonkeyPatch):
     """Verify LocalProvider raises informative ProviderError if llama-cpp-python is missing."""
     import sys
+
     monkeypatch.setitem(sys.modules, "llama_cpp", None)
 
     provider = LocalProvider()
@@ -101,6 +103,7 @@ def test_local_provider_dynamic_model_listing(tmp_path: Path):
 
     # Point data_dir to mock
     import autoshorts.core.providers.local_provider as lp_mod
+
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(lp_mod, "get_data_dir", lambda: tmp_path / "data")
 
@@ -117,6 +120,7 @@ def test_local_provider_single_forward_pass_scoring():
     """Verify LocalProvider single-forward-pass logit extraction using tokenizer."""
     # Create mock model instance with tokenizer and scores
     mock_model = MagicMock()
+
     # Mock tokenizer mapping "A" -> [101], "B" -> [102]
     def mock_tokenize(b_text: bytes, **kwargs: Any) -> list[int]:
         text = b_text.decode("utf-8").strip()
@@ -148,6 +152,7 @@ def test_local_provider_single_forward_pass_scoring():
 # Google Gemini Provider Tests (Mocked HTTP)
 # -----------------------------------------------------------------------------
 
+
 def test_gemini_provider_missing_key():
     """Verify GeminiProvider raises when API key is missing."""
     settings = Settings()
@@ -159,6 +164,7 @@ def test_gemini_provider_missing_key():
 
 def test_gemini_dynamic_model_resolution():
     """Verify GeminiProvider resolves default model dynamically from API list."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1beta/models":
             data = {
@@ -189,11 +195,20 @@ def test_gemini_dynamic_model_resolution():
 
 def test_gemini_score_options_with_response_logprobs():
     """Verify GeminiProvider score_options with responseLogprobs."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1beta/models":
-            return httpx.Response(200, json={
-                "models": [{"name": "models/mock-model", "supportedGenerationMethods": ["generateContent"]}]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/mock-model",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+            )
         if ":generateContent" in request.url.path:
             body = json.loads(request.content)
             # Verify temperature 0 and responseLogprobs requested
@@ -232,22 +247,33 @@ def test_gemini_score_options_with_response_logprobs():
 
 def test_gemini_score_options_fallback_voting():
     """Verify GeminiProvider falls back to constrained voting when logprobs is absent."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1beta/models":
-            return httpx.Response(200, json={
-                "models": [{"name": "models/mock-model", "supportedGenerationMethods": ["generateContent"]}]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/mock-model",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+            )
         if ":generateContent" in request.url.path:
             body = json.loads(request.content)
             gen_cfg = body.get("generationConfig", {})
             # If responseLogprobs requested, return empty logprobsResult to trigger fallback
             if gen_cfg.get("responseLogprobs"):
-                return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "A"}]}}]})
+                return httpx.Response(
+                    200, json={"candidates": [{"content": {"parts": [{"text": "A"}]}}]}
+                )
 
             # Constrained fallback JSON request
-            return httpx.Response(200, json={
-                "candidates": [{"content": {"parts": [{"text": '"A"'}]}}]
-            })
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": '"A"'}]}}]}
+            )
         return httpx.Response(404)
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -260,15 +286,29 @@ def test_gemini_score_options_fallback_voting():
 
 def test_gemini_complete():
     """Verify GeminiProvider text completion."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1beta/models":
-            return httpx.Response(200, json={
-                "models": [{"name": "models/mock-model", "supportedGenerationMethods": ["generateContent"]}]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/mock-model",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+            )
         if ":generateContent" in request.url.path:
-            return httpx.Response(200, json={
-                "candidates": [{"content": {"parts": [{"text": "Generated Viral Title #Shorts"}]}}]
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {"content": {"parts": [{"text": "Generated Viral Title #Shorts"}]}}
+                    ]
+                },
+            )
         return httpx.Response(404)
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -281,6 +321,7 @@ def test_gemini_complete():
 # OpenRouter Provider Tests (Mocked HTTP)
 # -----------------------------------------------------------------------------
 
+
 def test_openrouter_missing_key():
     """Verify OpenRouterProvider raises when API key is missing."""
     settings = Settings()
@@ -292,6 +333,7 @@ def test_openrouter_missing_key():
 
 def test_openrouter_dynamic_models_and_auto_route():
     """Verify OpenRouterProvider queries models list and supports auto routing."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json={"data": [{"id": "provider-auto-discovered-model"}]})
@@ -308,6 +350,7 @@ def test_openrouter_dynamic_models_and_auto_route():
 
 def test_openrouter_score_options_with_logprobs():
     """Verify OpenRouterProvider score_options with top_logprobs."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json={"data": [{"id": "mock-model"}]})
@@ -341,14 +384,15 @@ def test_openrouter_score_options_with_logprobs():
 
 def test_openrouter_score_options_fallback():
     """Verify OpenRouterProvider fallback when logprobs is absent."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json={"data": [{"id": "mock-model"}]})
         if request.url.path == "/api/v1/chat/completions":
             # Returns no logprobs
-            return httpx.Response(200, json={
-                "choices": [{"message": {"content": "B"}, "logprobs": None}]
-            })
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "B"}, "logprobs": None}]}
+            )
         return httpx.Response(404)
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -361,13 +405,14 @@ def test_openrouter_score_options_fallback():
 
 def test_openrouter_complete():
     """Verify OpenRouterProvider text completion."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json={"data": [{"id": "mock-model"}]})
         if request.url.path == "/api/v1/chat/completions":
-            return httpx.Response(200, json={
-                "choices": [{"message": {"content": "Shorts Title #Shorts"}}]
-            })
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "Shorts Title #Shorts"}}]}
+            )
         return httpx.Response(404)
 
     client = httpx.Client(transport=httpx.MockTransport(handler))

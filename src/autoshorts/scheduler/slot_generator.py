@@ -94,17 +94,13 @@ class SlotGenerator:
 
         if candidate < w_start:
             # Before today's window start: align to window start plus a small random gap
-            first_gap_sec = self.rng.uniform(
-                self.min_gap_minutes * 60, self.max_gap_minutes * 60
-            )
+            first_gap_sec = self.rng.uniform(self.min_gap_minutes * 60, self.max_gap_minutes * 60)
             return w_start + timedelta(seconds=first_gap_sec)
         elif candidate > w_end:
             # Past today's window end: rollover to tomorrow's window start plus random gap
             tomorrow = candidate + timedelta(days=1)
             next_start, _ = self.get_window_bounds_for_date(tomorrow)
-            first_gap_sec = self.rng.uniform(
-                self.min_gap_minutes * 60, self.max_gap_minutes * 60
-            )
+            first_gap_sec = self.rng.uniform(self.min_gap_minutes * 60, self.max_gap_minutes * 60)
             return next_start + timedelta(seconds=first_gap_sec)
         else:
             return candidate

@@ -180,14 +180,12 @@ class MultimodalEditPlanner(EditPlanner):
 
         # 1. Attempt generation (multimodal or transcript-only)
         raw_output: str | None = None
-        is_multimodal = False
 
         # Check if provider supports multimodal video analysis
         if hasattr(self.provider, "analyze_video") or hasattr(self.provider, "complete_multimodal"):
             try:
                 self.last_privacy_warning = PRIVACY_NOTICE
                 logger.warning(PRIVACY_NOTICE)
-                is_multimodal = True
 
                 prompt = build_edl_prompt(
                     clip_duration=clip_duration,
@@ -262,7 +260,9 @@ Do NOT include markdown explanations or code blocks outside the JSON.
 
         # If both initial and repair attempts failed, use deterministic fallback
         if validated_edl is None:
-            logger.warning("All EDL validation attempts failed; falling back to deterministic empty EDL")
+            logger.warning(
+                "All EDL validation attempts failed; falling back to deterministic empty EDL"
+            )
             return create_empty_edl(clip_duration=clip_duration)
 
         # 3. Clamp times and reject absurd/overlapping jump cuts

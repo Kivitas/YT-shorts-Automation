@@ -7,14 +7,14 @@ Spark import parsing, and video previews.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
 import json
 import logging
 import os
 import subprocess
 import threading
 import webbrowser
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import get_log_stream_handler
 from autoshorts.core.models import Job
+from autoshorts.core.paths import get_output_dir
 from autoshorts.core.state_manager import StateManager, get_pt_timezone
 from autoshorts.integrations.spark import parse_spark_import
 from autoshorts.media.encoder_probe import probe_encoder
@@ -45,17 +46,24 @@ STATIC_DIR = DASHBOARD_DIR / "static"
 # Metadata Enrichment Helper
 # -----------------------------------------------------------------------------
 
+
 def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
     """Augment job dictionary with SEO title, full description, tags, and video ID."""
     data = job.model_dump()
 
     # YouTube short ID if uploaded
-    yt_id = job.upload_result.video_id if (job.upload_result and job.upload_result.video_id) else None
+    yt_id = (
+        job.upload_result.video_id if (job.upload_result and job.upload_result.video_id) else None
+    )
     data["youtube_video_id"] = yt_id
 
     # Formatting attributes
     channel = job.video_metadata.channel if job.video_metadata else "AutoShorts"
-    v_title = job.video_metadata.title if job.video_metadata else (job.custom_instructions or "AutoShort Clip")
+    v_title = (
+        job.video_metadata.title
+        if job.video_metadata
+        else (job.custom_instructions or "AutoShort Clip")
+    )
     v_url = job.video_metadata.video_url if job.video_metadata else job.source_url
     ch_url = job.video_metadata.channel_url if job.video_metadata else "https://youtube.com"
 
@@ -97,12 +105,14 @@ def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
 # Background Scheduler Worker
 # -----------------------------------------------------------------------------
 
+
 async def scheduler_worker(
     pipe: ShortsPipeline,
     stop_event: asyncio.Event,
     interval_sec: float = 15.0,
+    inbox_watcher: Any | None = None,
 ) -> None:
-    """Async background worker that calls pipe.scheduler.run_tick() every interval_sec."""
+    """Async background worker that calls pipe.scheduler.run_tick() and polls inbox every interval_sec."""
     logger.info("Scheduler background worker started (interval=%.1fs)", interval_sec)
     while not stop_event.is_set():
         try:
@@ -111,8 +121,13 @@ async def scheduler_worker(
         except Exception as e:
             logger.warning("Error during scheduler background run_tick: %s", e)
         try:
+            if inbox_watcher is not None and hasattr(inbox_watcher, "poll_once"):
+                await asyncio.to_thread(inbox_watcher.poll_once)
+        except Exception as e:
+            logger.warning("Error during inbox watcher poll_once: %s", e)
+        try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
     logger.info("Scheduler background worker stopped")
 
@@ -120,6 +135,7 @@ async def scheduler_worker(
 # -----------------------------------------------------------------------------
 # Request & Response Models
 # -----------------------------------------------------------------------------
+
 
 class JobSubmitRequest(BaseModel):
     links: str = Field(..., description="Newline separated links with optional : instructions")
@@ -143,6 +159,7 @@ class SchedulerToggleRequest(BaseModel):
 # -----------------------------------------------------------------------------
 # Browser Launcher Helper
 # -----------------------------------------------------------------------------
+
 
 def launch_browser(url: str, prefer_edge: bool = True) -> None:
     """Launch Microsoft Edge or default browser on startup (safely guarded)."""
@@ -170,12 +187,14 @@ def launch_browser(url: str, prefer_edge: bool = True) -> None:
 # FastAPI Application Factory
 # -----------------------------------------------------------------------------
 
+
 def create_app(
     pipeline: ShortsPipeline | None = None,
     state_manager: StateManager | None = None,
     config: Settings | None = None,
     run_scheduler_worker: bool = True,
     scheduler_interval_sec: float = 15.0,
+    inbox_watcher: Any | None = None,
 ) -> FastAPI:
     """Factory to instantiate the AutoShorts FastAPI dashboard app."""
     cfg = config or load_config()
@@ -186,9 +205,34 @@ def create_app(
     async def lifespan(app_instance: FastAPI):
         stop_event = asyncio.Event()
         worker_task = None
+
+        watcher = inbox_watcher
+        if watcher is None:
+            try:
+                from autoshorts.integrations.spark import SparkInboxWatcher
+
+                inbox_dir = (
+                    getattr(cfg.spark, "inbox_dir", "inbox") if hasattr(cfg, "spark") else "inbox"
+                )
+                watcher = SparkInboxWatcher(
+                    inbox_dir=inbox_dir,
+                    state_manager=state_mgr,
+                    poll_interval_sec=getattr(cfg.spark, "poll_interval_sec", 10)
+                    if hasattr(cfg, "spark")
+                    else 10,
+                )
+            except Exception as e:
+                logger.warning("Failed to initialize SparkInboxWatcher in lifespan: %s", e)
+
+        app_instance.state.inbox_watcher = watcher
         if run_scheduler_worker:
             worker_task = asyncio.create_task(
-                scheduler_worker(pipe, stop_event, interval_sec=scheduler_interval_sec)
+                scheduler_worker(
+                    pipe,
+                    stop_event,
+                    interval_sec=scheduler_interval_sec,
+                    inbox_watcher=watcher,
+                )
             )
             app_instance.state.scheduler_worker_task = worker_task
             app_instance.state.scheduler_stop_event = stop_event
@@ -232,7 +276,9 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Any:
         if templates and (TEMPLATES_DIR / "index.html").is_file():
-            return templates.TemplateResponse(request=request, name="index.html", context={"config": cfg})
+            return templates.TemplateResponse(
+                request=request, name="index.html", context={"config": cfg}
+            )
         return HTMLResponse(
             "<html><body><h1>AutoShorts Dashboard</h1><p>Templates not found. Use API endpoints.</p></body></html>"
         )
@@ -242,10 +288,37 @@ def create_app(
     # -------------------------------------------------------------------------
 
     @app.post("/api/jobs/submit")
-    async def submit_jobs(req: JobSubmitRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    async def submit_jobs(
+        req: JobSubmitRequest, background_tasks: BackgroundTasks
+    ) -> dict[str, Any]:
         """Submit links, parse them, and kick off background processing."""
         if not req.links.strip():
             raise HTTPException(status_code=400, detail="No links provided")
+
+        if req.upload_mode:
+            cfg.upload.mode = req.upload_mode
+            if pipe and pipe.config:
+                pipe.config.upload.mode = req.upload_mode
+                if req.upload_mode == "studio":
+                    from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+                    pipe.uploader = PlaywrightStudioUploader(config=pipe.config)
+                elif req.upload_mode == "local":
+                    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+                    pipe.uploader = LocalExportUploader(export_dir=get_output_dir())
+                elif req.upload_mode in ("api", "youtube"):
+                    from autoshorts.uploader.youtube_api import YouTubeApiUploader
+
+                    try:
+                        pipe.uploader = YouTubeApiUploader(
+                            config=pipe.config,
+                            quota_tracker=pipe.quota_tracker,
+                        )
+                    except Exception as e:
+                        logger.warning("Could not switch to YouTube API uploader: %s", e)
+                if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
+                    pipe.scheduler.uploader = pipe.uploader
 
         jobs = pipe.submit_links(
             links_input=req.links,
@@ -326,6 +399,28 @@ def create_app(
             logger.error("Upload now failed for job %s: %s", job_id, e)
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    @app.delete("/api/jobs/{job_id}")
+    async def delete_job(job_id: str, force: bool = True) -> dict[str, Any]:
+        """Purge intermediate work files and clean up a job."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        deleted_paths: list[str] = []
+        if hasattr(pipe, "cleaner") and pipe.cleaner is not None:
+            try:
+                paths = pipe.cleaner.cleanup_job(job_id, force=force)
+                deleted_paths = [str(p) for p in paths]
+            except Exception as e:
+                logger.warning("Error purging files for job %s: %s", job_id, e)
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "deleted_files": deleted_paths,
+            "count": len(deleted_paths),
+        }
+
     # -------------------------------------------------------------------------
     # Quota & Scheduler API
     # -------------------------------------------------------------------------
@@ -345,7 +440,11 @@ def create_app(
         rolling_limit = 7
         if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
             sched_cfg = getattr(pipe.scheduler, "config", None)
-            if sched_cfg and hasattr(sched_cfg, "max_per_rolling_hour") and isinstance(sched_cfg.max_per_rolling_hour, int):
+            if (
+                sched_cfg
+                and hasattr(sched_cfg, "max_per_rolling_hour")
+                and isinstance(sched_cfg.max_per_rolling_hour, int)
+            ):
                 rolling_limit = sched_cfg.max_per_rolling_hour
 
         # Pacific-Time reset countdown calculation
@@ -418,6 +517,45 @@ def create_app(
             "hints": [h.model_dump() for h in hints],
         }
 
+    @app.get("/api/spark/prompts")
+    async def get_spark_prompts(
+        topic: str = "{TOPIC}",
+        target_background: str = "minecraft",
+        duration_min: int = 30,
+        duration_max: int = 55,
+    ) -> dict[str, Any]:
+        """Return ready-to-copy Gemini Spark skill prompt template."""
+        from autoshorts.integrations.spark import generate_spark_skill_prompt
+
+        prompt_text = generate_spark_skill_prompt(
+            topic=topic,
+            target_background=target_background,
+            duration_min=duration_min,
+            duration_max=duration_max,
+        )
+        return {
+            "success": True,
+            "prompt": prompt_text,
+            "topic": topic,
+            "target_background": target_background,
+        }
+
+    # -------------------------------------------------------------------------
+    # Authentication & Studio Edge Automation API
+    # -------------------------------------------------------------------------
+
+    @app.post("/api/auth/edge-login")
+    async def edge_login(background_tasks: BackgroundTasks) -> dict[str, Any]:
+        """Trigger interactive Microsoft Edge login session for YouTube Studio."""
+        from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+        uploader = PlaywrightStudioUploader(config=cfg, headless=False)
+        background_tasks.add_task(uploader.open_login_session, 300.0)
+        return {
+            "success": True,
+            "message": "Microsoft Edge sign-in session launched. Please complete sign-in in the browser window.",
+        }
+
     # -------------------------------------------------------------------------
     # System Health API
     # -------------------------------------------------------------------------
@@ -466,7 +604,7 @@ def create_app(
                     try:
                         msg = await asyncio.wait_for(q.get(), timeout=12.0)
                         yield f"data: {json.dumps({'message': msg})}\n\n"
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Keep-alive comment for SSE connection stability
                         yield ": ping\n\n"
             except (asyncio.CancelledError, GeneratorExit):
