@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoShorts On-Device Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="app-header">
+    <div class="logo-area">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <h1>AutoShorts <span class="badge version">v3.2</span></h1>
+        <p class="subtitle">On-Device SemIf Video Ingestion &amp; Pacing Orchestrator</p>
+      </div>
+    </div>
+    <div class="header-badges">
+      <div class="badge system-badge" id="cpu-badge">
+        <span class="dot green"></span> <span id="cpu-label">CPU int8 (Zero CUDA)</span>
+      </div>
+      <div class="badge provider-badge" id="provider-badge">
+        <span class="dot purple"></span> <span id="provider-label">Provider: Local</span>
+      </div>
+      <div class="badge encoder-badge" id="encoder-badge">
+        <span class="dot blue"></span> <span id="encoder-label">FFmpeg libx264</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Top Row: Metrics & Scheduler Controls -->
+    <section class="metrics-grid">
+      <!-- Upload Bucket -->
+      <div class="card metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Upload Quota Bucket</span>
+          <span class="metric-tag">100 / day</span>
+        </div>
+        <div class="metric-value" id="upload-spend">0 <span class="metric-sub">/ 100 calls</span></div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="upload-bar" style="width: 0%;"></div>
+        </div>
+        <div class="metric-footer" id="upload-remaining">100 remaining today (PT)</div>
+      </div>
+
+      <!-- General Bucket -->
+      <div class="card metric-card">
+        <div class="metric-header">
+          <span class="metric-title">General Quota Pool</span>
+          <span class="metric-tag">10,000 / day</span>
+        </div>
+        <div class="metric-value" id="general-spend">0 <span class="metric-sub">/ 10,000 units</span></div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="general-bar" style="width: 0%;"></div>
+        </div>
+        <div class="metric-footer" id="general-remaining">10,000 remaining</div>
+      </div>
+
+      <!-- Daily Cap & Scheduler -->
+      <div class="card metric-card scheduler-card">
+        <div class="metric-header">
+          <span class="metric-title">Scheduler &amp; Daily Cap</span>
+          <span class="metric-tag" id="scheduler-status-tag">ACTIVE</span>
+        </div>
+        <div class="metric-value" id="daily-cap-val">0 <span class="metric-sub">/ 50 uploaded</span></div>
+        <div class="scheduler-actions">
+          <button id="scheduler-toggle-btn" class="btn btn-secondary btn-sm" onclick="toggleScheduler()">
+            Pause Scheduler
+          </button>
+          <span class="pending-badge" id="pending-slots-count">0 queued slots</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Workspace Layout: 2 Columns -->
+    <div class="workspace-grid">
+      <!-- Left Column: Input Links & Settings -->
+      <section class="left-pane">
+        <!-- Links Input Box -->
+        <div class="card">
+          <div class="card-title">
+            <span>📥 Video Ingestion Links</span>
+            <span class="hint">1 link per line with optional : instructions</span>
+          </div>
+          <textarea id="links-input" placeholder="https://www.youtube.com/watch?v=... : Focus on the AI debate&#10;https://youtu.be/... : Extract the funniest blooper"></textarea>
+
+          <div class="accordion">
+            <details>
+              <summary>✨ Spark Companion Import (Paste Markdown/JSON)</summary>
+              <div class="spark-box">
+                <textarea id="spark-input" placeholder="Paste Gemini Spark generated clips summary or prompt output here..."></textarea>
+                <button class="btn btn-secondary btn-sm" onclick="importSpark()">Parse Spark Clips</button>
+                <div id="spark-feedback" class="feedback"></div>
+              </div>
+            </details>
+          </div>
+
+          <!-- Configuration Controls -->
+          <div class="settings-grid">
+            <div class="control-group">
+              <label for="provider-select">LLM Provider</label>
+              <select id="provider-select">
+                <option value="local" selected>Local (Zero Cloud / Offline)</option>
+                <option value="gemini">Gemini API (Multimodal Video)</option>
+                <option value="openrouter">OpenRouter API</option>
+              </select>
+            </div>
+
+            <div class="control-group">
+              <label for="background-select">Background Theme</label>
+              <select id="background-select">
+                <option value="minecraft" selected>Minecraft Parkour</option>
+                <option value="subway">Subway Surfers</option>
+                <option value="gta">GTA Car Stunts</option>
+                <option value="auto">Auto / Procedural</option>
+              </select>
+            </div>
+
+            <div class="control-group">
+              <label for="dopamine-select">Dopamine Level</label>
+              <select id="dopamine-select">
+                <option value="low">Low (Clean, minimal)</option>
+                <option value="medium" selected>Medium (Punch-in, Pop ASS)</option>
+                <option value="high">High (SFX, Zoom, High Energy)</option>
+              </select>
+            </div>
+
+            <div class="control-group">
+              <label for="upload-mode-select">Upload Target</label>
+              <select id="upload-mode-select">
+                <option value="local" selected>Local Export Folder (Safe)</option>
+                <option value="api">YouTube Data API v3</option>
+                <option value="studio">YouTube Studio (Playwright)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="toggle-row">
+            <label class="toggle-switch">
+              <input type="checkbox" id="auto-upload-toggle">
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Auto-enqueue to Scheduler upon render completion</span>
+          </div>
+
+          <div class="action-buttons">
+            <button id="submit-btn" class="btn btn-primary" onclick="submitJobs()">
+              ⚡ Start Pipeline
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Job Queue & Active Progress -->
+      <section class="right-pane">
+        <div class="card">
+          <div class="card-title">
+            <span>📋 Job Queue &amp; Live Status</span>
+            <button class="btn btn-icon btn-sm" onclick="refreshDashboard()" title="Refresh">🔄</button>
+          </div>
+          <div id="jobs-container" class="jobs-list">
+            <div class="empty-state">No active clipping jobs. Enter a YouTube URL to get started.</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Video Preview Modal -->
+  <div id="preview-modal" class="modal-backdrop" onclick="closePreviewModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="modal-title">Short Preview</h3>
+        <button class="btn-close" onclick="closePreviewModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <video id="modal-video" controls autoplay playsinline></video>
+      </div>
+      <div class="modal-footer">
+        <a id="modal-download" class="btn btn-primary" download>Download Master MP4</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
