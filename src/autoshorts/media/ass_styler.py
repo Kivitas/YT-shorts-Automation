@@ -188,6 +188,48 @@ def chunk_words(
     return chunks
 
 
+def offset_words_for_hook(
+    words: Sequence[TimedWord | dict[str, Any]],
+    hook_in_sec: float,
+) -> list[TimedWord]:
+    """Offset subtitle word timestamps when hook_in trimming is applied.
+
+    Words ending at or before hook_in_sec are discarded.
+    Words overlapping hook_in_sec are clamped to start at 0.0.
+    Subsequent words are shifted earlier by hook_in_sec.
+    """
+    if hook_in_sec <= 0.0:
+        res: list[TimedWord] = []
+        for w in words:
+            if isinstance(w, TimedWord):
+                res.append(w)
+            else:
+                res.append(TimedWord.from_dict(w))
+        return res
+
+    offset_words: list[TimedWord] = []
+    for item in words:
+        if isinstance(item, TimedWord):
+            w = item
+        else:
+            w = TimedWord.from_dict(item)
+
+        if w.end <= hook_in_sec:
+            continue
+
+        new_start = max(0.0, w.start - hook_in_sec)
+        new_end = max(new_start + 0.05, w.end - hook_in_sec)
+        offset_words.append(
+            TimedWord(
+                word=w.word,
+                start=round(new_start, 3),
+                end=round(new_end, 3),
+                probability=w.probability,
+            )
+        )
+    return offset_words
+
+
 def build_ass_script(
     words: Sequence[TimedWord | dict[str, Any]],
     hook_title: str | None = None,
@@ -196,6 +238,7 @@ def build_ass_script(
     onscreen_credit: str | None = None,
     total_duration_sec: float | None = None,
     active_color_override: str | None = None,
+    hook_in_sec: float = 0.0,
 ) -> str:
     """Generate complete SubStation Alpha (.ass) file contents for a 1080x1920 Short.
 
@@ -209,10 +252,17 @@ def build_ass_script(
 
     font_name = config.font_name
     font_size = config.font_size
-    margin_v = config.safe_zone_margin_v
+    # Enforce mobile Shorts UI safe zones: clear of bottom 350px and right 150px
+    margin_v = max(350, config.safe_zone_margin_v)
+    margin_r = 150
+    margin_l = 80
     primary_color = config.primary_color
     active_color = active_color_override or config.active_color
     outline_color = config.outline_color
+
+    # If hook_in trimming was applied, offset word timestamps
+    if hook_in_sec > 0:
+        words = offset_words_for_hook(words, hook_in_sec)
 
     # Clean and chunk the words
     chunks = chunk_words(
@@ -242,15 +292,15 @@ def build_ass_script(
         ),
         (
             f"Style: DopamineYellow,{font_name},{font_size},{primary_color},{active_color},"
-            f"{outline_color},&H80000000,-1,0,0,0,100,100,2,0,1,8,4,2,60,60,{margin_v},1"
+            f"{outline_color},&H80000000,-1,0,0,0,100,100,2,0,1,8,4,2,{margin_l},{margin_r},{margin_v},1"
         ),
         (
             f"Style: HookCard,Montserrat Black,64,{active_color},{primary_color},"
-            f"{outline_color},&H90000000,-1,0,0,0,100,100,1,0,1,6,3,8,80,80,220,1"
+            f"{outline_color},&H90000000,-1,0,0,0,100,100,1,0,1,6,3,8,{margin_l},{margin_r},220,1"
         ),
         (
-            "Style: Watermark,Montserrat Medium,36,&H80FFFFFF,&H00FFFFFF,&H80000000,"
-            "&H80000000,0,0,0,0,100,100,1,0,1,3,1,2,40,40,280,1"
+            f"Style: Watermark,Montserrat Medium,36,&H80FFFFFF,&H00FFFFFF,&H80000000,"
+            f"&H80000000,0,0,0,0,100,100,1,0,1,3,1,2,{margin_l},{margin_r},380,1"
         ),
         "",
         "[Events]",
@@ -332,6 +382,7 @@ def write_ass_file(
     config: SubtitlesConfig | None = None,
     onscreen_credit: str | None = None,
     total_duration_sec: float | None = None,
+    hook_in_sec: float = 0.0,
 ) -> Path:
     """Generate and atomically write an ASS subtitle file to disk."""
     dest = Path(output_path).resolve()
@@ -342,5 +393,6 @@ def write_ass_file(
         config=config,
         onscreen_credit=onscreen_credit,
         total_duration_sec=total_duration_sec,
+        hook_in_sec=hook_in_sec,
     )
     return atomic_write(dest, content, mode="w", encoding="utf-8")

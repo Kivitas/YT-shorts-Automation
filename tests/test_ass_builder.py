@@ -136,3 +136,54 @@ def test_write_ass_file_atomic(tmp_path: Path):
     content = written.read_text(encoding="utf-8")
     assert "PlayResX: 1080" in content
     assert "HELLO" in content
+
+
+def test_offset_words_for_hook():
+    """Verify subtitle words before hook_in are discarded and remaining words shifted."""
+    from autoshorts.media.ass_styler import offset_words_for_hook
+
+    words = [
+        TimedWord(word="Intro", start=0.0, end=1.5),
+        TimedWord(word="chatter", start=1.6, end=2.4),
+        TimedWord(word="Secret", start=2.5, end=3.2),
+        TimedWord(word="revealed", start=3.3, end=4.0),
+    ]
+
+    # hook_in_sec = 2.5 trims out the first 2.5 seconds
+    offset = offset_words_for_hook(words, hook_in_sec=2.5)
+    assert len(offset) == 2
+    assert offset[0].word == "Secret"
+    assert offset[0].start == 0.0
+    assert offset[0].end == 0.7
+    assert offset[1].word == "revealed"
+    assert offset[1].start == 0.8
+    assert offset[1].end == 1.5
+
+
+def test_build_ass_script_with_hook_in_offset():
+    """Verify that build_ass_script offsets word timestamps by hook_in_sec."""
+    words = [
+        {"word": "Discarded", "start": 0.0, "end": 1.0},
+        {"word": "Action", "start": 2.0, "end": 3.0},
+    ]
+    script = build_ass_script(words, hook_in_sec=1.5)
+    assert "DISCARDED" not in script
+    assert "ACTION" in script
+    # Event should start at 0.5s (2.0 - 1.5)
+    assert "0:00:00.50" in script
+
+
+def test_shorts_mobile_safe_zone_margins():
+    """Verify subtitle styles enforce mobile Shorts safe zones (clear of bottom 350px and right 150px)."""
+    words = [{"word": "Test", "start": 0.0, "end": 1.0}]
+
+    # Even if configured with dangerously low margin_v (e.g. 100), safe zone clamps to >= 350
+    config_low = SubtitlesConfig(safe_zone_margin_v=100)
+    script_low = build_ass_script(words, config=config_low)
+    # DopamineYellow style format: MarginL=80, MarginR=150, MarginV=350
+    assert ",80,150,350,1" in script_low
+
+    # When configured near mid-seam or split boundary (e.g. 420 or 780), margin is respected
+    config_mid = SubtitlesConfig(safe_zone_margin_v=420)
+    script_mid = build_ass_script(words, config=config_mid)
+    assert ",80,150,420,1" in script_mid

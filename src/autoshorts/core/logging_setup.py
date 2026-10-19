@@ -5,8 +5,11 @@ Ensures API keys, tokens, and sensitive credentials are never written to disk or
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -97,15 +100,124 @@ class RedactingFormatter(logging.Formatter):
         return redact(formatted)
 
 
+class LogStreamHandler(logging.Handler):
+    """Thread-safe in-memory ring-buffer logging handler with live queue subscribers."""
+
+    def __init__(self, capacity: int = 1000) -> None:
+        super().__init__()
+        self.capacity = capacity
+        self._buffer: deque[str] = deque(maxlen=capacity)
+        self._lock = threading.Lock()
+        self._subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            with self._lock:
+                self._buffer.append(msg)
+                active_subs = list(self._subscribers)
+
+            for loop, q in active_subs:
+                if loop.is_closed():
+                    continue
+                try:
+                    loop.call_soon_threadsafe(self._push_to_queue, q, msg)
+                except Exception:
+                    pass
+        except Exception:
+            self.handleError(record)
+
+    @staticmethod
+    def _push_to_queue(q: asyncio.Queue[str], msg: str) -> None:
+        try:
+            if q.full():
+                try:
+                    q.get_nowait()
+                except Exception:
+                    pass
+            q.put_nowait(msg)
+        except Exception:
+            pass
+
+    def subscribe(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue[str]) -> None:
+        """Register an asyncio queue to receive live streaming log records."""
+        with self._lock:
+            self._subscribers.append((loop, queue))
+
+    def unsubscribe(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue[str]) -> None:
+        """Unregister an active subscriber queue."""
+        with self._lock:
+            self._subscribers = [
+                (l, q) for (l, q) in self._subscribers if not (l is loop and q is queue)
+            ]
+
+    def get_history(self, limit: int | None = None) -> list[str]:
+        """Retrieve recent buffered log records."""
+        with self._lock:
+            items = list(self._buffer)
+            if limit is not None and limit < len(items):
+                return items[-limit:]
+            return items
+
+    def clear(self) -> None:
+        """Clear the in-memory ring-buffer."""
+        with self._lock:
+            self._buffer.clear()
+
+
+_LOG_STREAM_HANDLER: LogStreamHandler | None = None
+
+
+def get_log_stream_handler(capacity: int = 1000) -> LogStreamHandler:
+    """Return the global in-memory ring-buffer LogStreamHandler instance."""
+    global _LOG_STREAM_HANDLER
+    if _LOG_STREAM_HANDLER is None:
+        _LOG_STREAM_HANDLER = LogStreamHandler(capacity=capacity)
+        fmt = "%(asctime)s [%(levelname)s] [%(name)s]: %(message)s"
+        formatter = RedactingFormatter(fmt, datefmt="%Y-%m-%d %H:%M:%S")
+        _LOG_STREAM_HANDLER.setFormatter(formatter)
+        _LOG_STREAM_HANDLER.addFilter(RedactingFilter())
+
+        root_logger = logging.getLogger()
+        if _LOG_STREAM_HANDLER not in root_logger.handlers:
+            root_logger.addHandler(_LOG_STREAM_HANDLER)
+        if root_logger.level > logging.INFO or root_logger.level == logging.NOTSET:
+            root_logger.setLevel(logging.INFO)
+
+        autoshorts_logger = logging.getLogger("autoshorts")
+        if _LOG_STREAM_HANDLER not in autoshorts_logger.handlers:
+            autoshorts_logger.addHandler(_LOG_STREAM_HANDLER)
+
+    return _LOG_STREAM_HANDLER
+
+
+class SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler that ignores I/O errors on closed streams during test runner capture."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            if self.stream is None or (hasattr(self.stream, "closed") and self.stream.closed):
+                return
+            msg = self.format(record)
+            self.stream.write(msg + self.terminator)
+            self.flush()
+        except (ValueError, OSError):
+            pass
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging(
     level: str = "INFO",
     log_file: Path | str | None = None,
+    attach_stream_handler: bool = True,
 ) -> logging.Logger:
     """Configure root and autoshorts logging with the redacting filter.
 
     Args:
         level: Logging level string ('DEBUG', 'INFO', 'WARNING', 'ERROR').
         log_file: Optional file destination for logs.
+        attach_stream_handler: Whether to attach the live SSE ring-buffer handler.
 
     Returns:
         The configured 'autoshorts' logger instance.
@@ -125,7 +237,7 @@ def setup_logging(
     root_logger.handlers.clear()
 
     # Console handler
-    console_handler = logging.StreamHandler()
+    console_handler = SafeStreamHandler()
     console_handler.setLevel(numeric_level)
     console_handler.setFormatter(formatter)
     console_handler.addFilter(redacting_filter)
@@ -140,6 +252,12 @@ def setup_logging(
         file_handler.setFormatter(formatter)
         file_handler.addFilter(redacting_filter)
         root_logger.addHandler(file_handler)
+
+    # Stream ring-buffer handler for real-time SSE
+    if attach_stream_handler:
+        stream_handler = get_log_stream_handler()
+        if stream_handler not in root_logger.handlers:
+            root_logger.addHandler(stream_handler)
 
     # Dedicated autoshorts logger
     logger = logging.getLogger("autoshorts")

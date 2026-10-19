@@ -6,6 +6,10 @@ Spark import parsing, and video previews.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+import json
 import logging
 import os
 import subprocess
@@ -16,22 +20,101 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from autoshorts.core.config import Settings, load_config
-from autoshorts.core.state_manager import StateManager
+from autoshorts.core.logging_setup import get_log_stream_handler
+from autoshorts.core.models import Job
+from autoshorts.core.state_manager import StateManager, get_pt_timezone
 from autoshorts.integrations.spark import parse_spark_import
 from autoshorts.media.encoder_probe import probe_encoder
 from autoshorts.pipeline import ShortsPipeline
+from autoshorts.uploader.description_builder import build_short_description, build_short_title
 
 logger = logging.getLogger("autoshorts.dashboard")
 
 DASHBOARD_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = DASHBOARD_DIR / "templates"
 STATIC_DIR = DASHBOARD_DIR / "static"
+
+
+# -----------------------------------------------------------------------------
+# Metadata Enrichment Helper
+# -----------------------------------------------------------------------------
+
+def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
+    """Augment job dictionary with SEO title, full description, tags, and video ID."""
+    data = job.model_dump()
+
+    # YouTube short ID if uploaded
+    yt_id = job.upload_result.video_id if (job.upload_result and job.upload_result.video_id) else None
+    data["youtube_video_id"] = yt_id
+
+    # Formatting attributes
+    channel = job.video_metadata.channel if job.video_metadata else "AutoShorts"
+    v_title = job.video_metadata.title if job.video_metadata else (job.custom_instructions or "AutoShort Clip")
+    v_url = job.video_metadata.video_url if job.video_metadata else job.source_url
+    ch_url = job.video_metadata.channel_url if job.video_metadata else "https://youtube.com"
+
+    hook = "Must Watch"
+    start_sec = 0.0
+    end_sec = 45.0
+    if job.selected_clips:
+        sel = job.selected_clips[0]
+        hook = sel.hook_text or sel.title or hook
+        start_sec = sel.candidate.start
+        end_sec = sel.candidate.end
+    elif job.edl and job.edl.recommended_hook:
+        hook = job.edl.recommended_hook
+
+    seo_title = build_short_title(
+        hook=hook,
+        channel=channel,
+        title=v_title,
+        template=cfg.upload.title_template,
+    )
+    full_description = build_short_description(
+        title=v_title,
+        channel=channel,
+        channel_url=ch_url,
+        video_url=v_url,
+        hook=hook,
+        start=start_sec,
+        end=end_sec,
+        template=cfg.upload.description_template,
+    )
+
+    data["seo_title"] = seo_title
+    data["full_description"] = full_description
+    data["hashtags"] = "#Shorts #Podcasts #Education"
+    return data
+
+
+# -----------------------------------------------------------------------------
+# Background Scheduler Worker
+# -----------------------------------------------------------------------------
+
+async def scheduler_worker(
+    pipe: ShortsPipeline,
+    stop_event: asyncio.Event,
+    interval_sec: float = 15.0,
+) -> None:
+    """Async background worker that calls pipe.scheduler.run_tick() every interval_sec."""
+    logger.info("Scheduler background worker started (interval=%.1fs)", interval_sec)
+    while not stop_event.is_set():
+        try:
+            if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
+                await asyncio.to_thread(pipe.scheduler.run_tick)
+        except Exception as e:
+            logger.warning("Error during scheduler background run_tick: %s", e)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
+        except asyncio.TimeoutError:
+            pass
+    logger.info("Scheduler background worker stopped")
 
 
 # -----------------------------------------------------------------------------
@@ -91,16 +174,40 @@ def create_app(
     pipeline: ShortsPipeline | None = None,
     state_manager: StateManager | None = None,
     config: Settings | None = None,
+    run_scheduler_worker: bool = True,
+    scheduler_interval_sec: float = 15.0,
 ) -> FastAPI:
     """Factory to instantiate the AutoShorts FastAPI dashboard app."""
     cfg = config or load_config()
     state_mgr = state_manager or (pipeline.state_manager if pipeline else StateManager())
     pipe = pipeline or ShortsPipeline(config=cfg, state_manager=state_mgr)
 
+    @asynccontextmanager
+    async def lifespan(app_instance: FastAPI):
+        stop_event = asyncio.Event()
+        worker_task = None
+        if run_scheduler_worker:
+            worker_task = asyncio.create_task(
+                scheduler_worker(pipe, stop_event, interval_sec=scheduler_interval_sec)
+            )
+            app_instance.state.scheduler_worker_task = worker_task
+            app_instance.state.scheduler_stop_event = stop_event
+        try:
+            yield
+        finally:
+            if worker_task:
+                stop_event.set()
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
     app = FastAPI(
         title="AutoShorts Dashboard",
         version="3.2.0",
         description="On-Device Video Clipping and Quota Pacing Orchestrator",
+        lifespan=lifespan,
     )
 
     # Allow CORS for development
@@ -164,10 +271,10 @@ def create_app(
 
     @app.get("/api/jobs")
     async def list_jobs(limit: int = 50) -> dict[str, Any]:
-        """Return list of most recent clipping jobs."""
+        """Return list of most recent clipping jobs enriched with SEO copy metadata."""
         jobs = state_mgr.list_jobs(limit=limit)
         return {
-            "jobs": [j.model_dump() for j in jobs],
+            "jobs": [enrich_job_dict(j, cfg) for j in jobs],
         }
 
     @app.get("/api/jobs/{job_id}")
@@ -179,7 +286,7 @@ def create_app(
 
         stages = state_mgr.get_job_stages(job_id)
         return {
-            "job": job.model_dump(),
+            "job": enrich_job_dict(job, cfg),
             "stages": stages,
         }
 
@@ -225,11 +332,29 @@ def create_app(
 
     @app.get("/api/quota")
     async def get_quota() -> dict[str, Any]:
-        """Return current Pacific-Time daily quota usage and limits."""
+        """Return current Pacific-Time daily quota usage, rolling hourly rate limit, and reset countdown."""
         status = pipe.quota_tracker.get_status()
         upload_b = status.get("upload_bucket", {})
         general_b = status.get("general_bucket", {})
         daily_c = status.get("daily_cap", {})
+
+        # Rolling hour rate limit calculations
+        now_utc = datetime.now(UTC)
+        one_hour_ago = now_utc - timedelta(hours=1)
+        rolling_count = state_mgr.count_uploads_since(one_hour_ago)
+        rolling_limit = 7
+        if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
+            sched_cfg = getattr(pipe.scheduler, "config", None)
+            if sched_cfg and hasattr(sched_cfg, "max_per_rolling_hour") and isinstance(sched_cfg.max_per_rolling_hour, int):
+                rolling_limit = sched_cfg.max_per_rolling_hour
+
+        # Pacific-Time reset countdown calculation
+        pt_tz = get_pt_timezone()
+        now_pt = datetime.now(pt_tz)
+        next_reset_pt = (now_pt + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        seconds_until_reset = max(0, int((next_reset_pt - now_pt).total_seconds()))
 
         return {
             "date_pt": status.get("date_pt"),
@@ -241,6 +366,10 @@ def create_app(
             "general_remaining": general_b.get("remaining", 10000),
             "completed_today": daily_c.get("completed", 0),
             "daily_cap": daily_c.get("cap", 50),
+            "rolling_hour_count": rolling_count,
+            "rolling_hour_limit": rolling_limit,
+            "seconds_until_reset": seconds_until_reset,
+            "reset_time_pt": next_reset_pt.isoformat(),
             "can_upload": upload_b.get("can_upload_fresh", True),
             "upload_bucket": upload_b,
             "general_bucket": general_b,
@@ -310,6 +439,57 @@ def create_app(
             "ffmpeg_encoder": encoder_str,
             "scheduler_paused": pipe.scheduler.is_paused(),
         }
+
+    # -------------------------------------------------------------------------
+    # Real-Time Log Streaming (SSE) API
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/logs/stream")
+    async def stream_logs(request: Request) -> StreamingResponse:
+        """Stream system logs in real-time using Server-Sent Events (SSE)."""
+        handler = get_log_stream_handler()
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+
+        # Preload initial history so the client receives buffered logs upon connect
+        history = handler.get_history(limit=100)
+        for entry in history:
+            q.put_nowait(entry)
+
+        handler.subscribe(loop, q)
+
+        async def event_generator():
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        msg = await asyncio.wait_for(q.get(), timeout=12.0)
+                        yield f"data: {json.dumps({'message': msg})}\n\n"
+                    except asyncio.TimeoutError:
+                        # Keep-alive comment for SSE connection stability
+                        yield ": ping\n\n"
+            except (asyncio.CancelledError, GeneratorExit):
+                pass
+            finally:
+                handler.unsubscribe(loop, q)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/logs/clear")
+    async def clear_logs() -> dict[str, Any]:
+        """Clear the in-memory log stream buffer."""
+        handler = get_log_stream_handler()
+        handler.clear()
+        return {"success": True, "message": "Log buffer cleared."}
 
     # -------------------------------------------------------------------------
     # Video Streaming & Download API

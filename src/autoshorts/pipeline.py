@@ -117,7 +117,9 @@ class ShortsPipeline:
 
         # Downloader & Ingest
         self.downloader = downloader or MediaDownloader(settings=self.config)
-        self.transcript_fetcher = transcript_fetcher or TranscriptFetcher()
+        self.transcript_fetcher = transcript_fetcher or TranscriptFetcher(
+            cookies_from_browser=getattr(self.config.media, "cookies_from_browser", None),
+        )
 
         # Transcriber (Whisper CPU int8)
         self.transcriber = transcriber or FasterWhisperTranscriber(
@@ -621,6 +623,8 @@ class ShortsPipeline:
 
             channel_credit = job.video_metadata.channel if job.video_metadata else None
             hook = sel.hook_text or (job.edl.recommended_hook if job.edl else "") or None
+            hook_in = job.edl.hook_in_sec if (job.edl and job.edl.hook_in_sec > 0) else 0.0
+            total_dur = max(1.0, sel.candidate.duration - hook_in) if sel.candidate.duration else None
 
             write_ass_file(
                 output_path=ass_path,
@@ -628,7 +632,8 @@ class ShortsPipeline:
                 hook_title=hook,
                 config=self.config.subtitles,
                 onscreen_credit=channel_credit,
-                total_duration_sec=sel.candidate.duration,
+                total_duration_sec=total_dur,
+                hook_in_sec=hook_in,
             )
 
             job.subtitles_path = str(ass_path)

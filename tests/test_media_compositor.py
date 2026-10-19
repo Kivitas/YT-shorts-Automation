@@ -223,10 +223,39 @@ def test_complex_filtergraph_with_high_dopamine():
     assert "subtitles=" in fg
     # Audio loudnorm & ducking & SFX
     assert "loudnorm=I=-14:LRA=7:tp=-1" in fg
-    assert "[2:a]volume=0.15[bg_music]" in fg
+    assert "sidechaincompress=" in fg
+    assert "alimiter=limit=-1.0dB" in fg
     assert "[3:a]volume=0.4[sfx_audio]" in fg
     assert out_v == "[outv]"
-    assert out_a == "[final_a]"
+    assert out_a == "[master_a]"
+
+
+def test_complex_filtergraph_with_jumpcuts():
+    """Verify that build_complex_filtergraph wires build_jumpcut_select_filter into audio and video chains before vertical stack."""
+    from autoshorts.core.models import JumpCut
+
+    edl = EditDecisionList(
+        jump_cuts=[
+            JumpCut(cut_start=2.0, cut_end=4.0, reason="Dead air"),
+        ],
+    )
+    preset = get_dopamine_preset("medium")
+
+    fg, out_v, out_a = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="work/subs.ass",
+        duration_sec=30.0,
+        dopamine_preset=preset,
+        edl=edl,
+    )
+
+    # Both video select and audio aselect should be in filtergraph before vstack
+    assert "select='not(between(t,2.00,4.00))'" in fg
+    assert "aselect='not(between(t,2.00,4.00))'" in fg
+    assert "[top_cut][bottom]vstack=inputs=2[stacked]" in fg
+    assert "[a_cut]loudnorm=I=-14:LRA=7:tp=-1" in fg
+    assert out_v == "[outv]"
+    assert out_a == "[master_a]"
 
 
 # -----------------------------------------------------------------------------

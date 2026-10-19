@@ -60,13 +60,32 @@
         <div class="metric-footer" id="general-remaining">10,000 remaining</div>
       </div>
 
-      <!-- Daily Cap & Scheduler -->
+      <!-- Rolling Hour Rate Limit Gauge -->
+      <div class="card metric-card rate-limit-card">
+        <div class="metric-header">
+          <span class="metric-title">Rolling Rate Limit</span>
+          <span class="metric-tag" id="rolling-rate-tag">7 / hr cap</span>
+        </div>
+        <div class="metric-value" id="rolling-rate-val">0 <span class="metric-sub">/ 7 uploads</span></div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill gauge-fill" id="rolling-rate-bar" style="width: 0%;"></div>
+        </div>
+        <div class="metric-footer" id="rolling-rate-footer">0 / 7 uploads in rolling 60 min</div>
+      </div>
+
+      <!-- Daily Cap & PT Reset Clock -->
       <div class="card metric-card scheduler-card">
         <div class="metric-header">
-          <span class="metric-title">Scheduler &amp; Daily Cap</span>
+          <span class="metric-title">Scheduler &amp; PT Reset</span>
           <span class="metric-tag" id="scheduler-status-tag">ACTIVE</span>
         </div>
-        <div class="metric-value" id="daily-cap-val">0 <span class="metric-sub">/ 50 uploaded</span></div>
+        <div class="countdown-row">
+          <span class="countdown-clock" id="pt-countdown-clock">--:--:--</span>
+          <span class="countdown-label">until PT reset</span>
+        </div>
+        <div class="metric-sub-line">
+          <span id="daily-cap-val">0 <span class="metric-sub">/ 50 uploaded today</span></span>
+        </div>
         <div class="scheduler-actions">
           <button id="scheduler-toggle-btn" class="btn btn-secondary btn-sm" onclick="toggleScheduler()">
             Pause Scheduler
@@ -168,6 +187,29 @@
         </div>
       </section>
     </div>
+
+    <!-- Real-Time SSE Log Console -->
+    <section class="log-console-section">
+      <div class="card log-card">
+        <div class="log-header">
+          <div class="log-title-area">
+            <span class="log-dot live" id="log-status-dot"></span>
+            <span class="log-title">Live System Logs (SSE)</span>
+            <span class="badge log-status-badge" id="log-connection-badge">Connecting...</span>
+          </div>
+          <div class="log-controls">
+            <label class="autoscroll-label">
+              <input type="checkbox" id="log-autoscroll" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button class="btn btn-secondary btn-sm" onclick="clearLogConsole()">🗑️ Clear</button>
+          </div>
+        </div>
+        <div class="log-terminal" id="log-terminal">
+          <div class="log-placeholder">Connecting to live log stream...</div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <!-- Video Preview Modal -->
@@ -185,6 +227,25 @@
       </div>
     </div>
   </div>
+
+  <!-- Stage Inspection Modal -->
+  <div id="stage-modal" class="modal-backdrop" onclick="closeStageModal(event)">
+    <div class="modal-content modal-lg" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="stage-modal-title">Pipeline Stage Details</h3>
+        <button class="btn-close" onclick="closeStageModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="stage-modal-body">
+        <div class="stage-inspect-loading">Loading stage details...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="closeStageModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
 
   <script src="/static/app.js"></script>
 </body>

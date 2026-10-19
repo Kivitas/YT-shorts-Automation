@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import tempfile
@@ -140,6 +141,7 @@ class TranscriptFetcher:
         yt_dlp_binary: str = "yt-dlp",
         timeout_sec: float = 30.0,
         http_client: httpx.Client | None = None,
+        cookies_from_browser: str | None = None,
     ) -> None:
         """Initialize TranscriptFetcher.
 
@@ -148,11 +150,17 @@ class TranscriptFetcher:
             yt_dlp_binary: Executable name/path for yt-dlp.
             timeout_sec: Timeout for fallback operations.
             http_client: Optional httpx.Client for fetching subtitle URLs.
+            cookies_from_browser: Optional browser name (e.g. 'chrome', 'firefox') for cookies.
         """
         self.languages = list(languages)
         self.yt_dlp_binary = yt_dlp_binary
         self.timeout_sec = timeout_sec
         self._client = http_client
+
+        resolved_cookies = cookies_from_browser
+        if not resolved_cookies:
+            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get("COOKIES_FROM_BROWSER")
+        self.cookies_from_browser = resolved_cookies
 
     def fetch(self, url_or_video_id: str) -> list[TranscriptSegment]:
         """Fetch transcript segments, preferring manual then auto captions.
@@ -305,6 +313,9 @@ class TranscriptFetcher:
             canonical_url,
         ]
 
+        if self.cookies_from_browser:
+            cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -408,6 +419,9 @@ class TranscriptFetcher:
                 canonical_url,
             ]
 
+            if self.cookies_from_browser:
+                cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -428,18 +442,20 @@ class TranscriptFetcher:
 def fetch_transcript(
     url_or_video_id: str,
     languages: Sequence[str] = ("en", "en-US", "en-GB"),
+    cookies_from_browser: str | None = None,
 ) -> list[TranscriptSegment]:
     """Convenience helper to fetch transcript segments directly."""
-    fetcher = TranscriptFetcher(languages=languages)
+    fetcher = TranscriptFetcher(languages=languages, cookies_from_browser=cookies_from_browser)
     return fetcher.fetch(url_or_video_id)
 
 
 def fetch_transcript_or_signal(
     url_or_video_id: str,
     languages: Sequence[str] = ("en", "en-US", "en-GB"),
+    cookies_from_browser: str | None = None,
 ) -> tuple[list[TranscriptSegment] | None, str | None]:
     """Convenience helper returning (segments, None) or (None, NO_CAPTIONS)."""
-    fetcher = TranscriptFetcher(languages=languages)
+    fetcher = TranscriptFetcher(languages=languages, cookies_from_browser=cookies_from_browser)
     return fetcher.fetch_or_signal(url_or_video_id)
 
 

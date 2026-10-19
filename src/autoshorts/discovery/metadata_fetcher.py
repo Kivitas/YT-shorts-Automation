@@ -10,11 +10,12 @@ import json
 import logging
 import subprocess
 import urllib.parse
+import os
 from typing import Any
 
 import httpx
 
-from autoshorts.core.exceptions import MetadataFetchError
+from autoshorts.core.exceptions import MetadataFetchError, VideoUnavailableError
 from autoshorts.core.models import VideoMetadata
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
 
@@ -30,6 +31,7 @@ class MetadataFetcher:
         timeout_sec: float = 30.0,
         oembed_timeout_sec: float = 10.0,
         http_client: httpx.Client | None = None,
+        cookies_from_browser: str | None = None,
     ) -> None:
         """Initialize the MetadataFetcher.
 
@@ -38,11 +40,17 @@ class MetadataFetcher:
             timeout_sec: Subprocess timeout in seconds for yt-dlp.
             oembed_timeout_sec: HTTP timeout in seconds for oEmbed fallback.
             http_client: Optional pre-configured httpx.Client instance.
+            cookies_from_browser: Optional browser name (e.g. 'chrome', 'firefox') for cookies.
         """
         self.yt_dlp_binary = yt_dlp_binary
         self.timeout_sec = timeout_sec
         self.oembed_timeout_sec = oembed_timeout_sec
         self._client = http_client
+
+        resolved_cookies = cookies_from_browser
+        if not resolved_cookies:
+            resolved_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or os.environ.get("COOKIES_FROM_BROWSER")
+        self.cookies_from_browser = resolved_cookies
 
     def fetch(self, url: str) -> VideoMetadata:
         """Fetch video metadata using yt-dlp, falling back to YouTube oEmbed on failure.
@@ -54,6 +62,7 @@ class MetadataFetcher:
             Populated VideoMetadata model.
 
         Raises:
+            VideoUnavailableError: If the video is a live stream or upcoming premiere.
             MetadataFetchError: If both yt-dlp and oEmbed fail.
         """
         canonical_url = normalize_youtube_url(url)
@@ -62,6 +71,8 @@ class MetadataFetcher:
         ytdlp_error: Exception | None = None
         try:
             return self._fetch_via_ytdlp(canonical_url, vid)
+        except VideoUnavailableError:
+            raise
         except Exception as exc:
             ytdlp_error = exc
             logger.warning(
@@ -95,6 +106,9 @@ class MetadataFetcher:
             canonical_url,
         ]
 
+        if self.cookies_from_browser:
+            cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+
         logger.debug("Executing yt-dlp metadata fetch: %s", " ".join(cmd))
         try:
             proc = subprocess.run(
@@ -119,6 +133,14 @@ class MetadataFetcher:
             data = json.loads(stdout_text)
         except json.JSONDecodeError as e:
             raise MetadataFetchError(f"Failed to decode yt-dlp output as JSON: {e}") from e
+
+        # Inspect live_status and is_live to guard against live streams and upcoming premieres
+        is_live = bool(data.get("is_live") or data.get("live_status") == "is_live")
+        is_upcoming = bool(data.get("live_status") == "is_upcoming")
+        if is_live or is_upcoming:
+            raise VideoUnavailableError(
+                "Live stream or upcoming premiere cannot be processed until broadcast finishes"
+            )
 
         title = data.get("title") or "Unknown Title"
         channel = (
@@ -192,9 +214,14 @@ def fetch_video_metadata(
     url: str,
     yt_dlp_binary: str = "yt-dlp",
     timeout_sec: float = 30.0,
+    cookies_from_browser: str | None = None,
 ) -> VideoMetadata:
     """Convenience functional helper to fetch VideoMetadata."""
-    fetcher = MetadataFetcher(yt_dlp_binary=yt_dlp_binary, timeout_sec=timeout_sec)
+    fetcher = MetadataFetcher(
+        yt_dlp_binary=yt_dlp_binary,
+        timeout_sec=timeout_sec,
+        cookies_from_browser=cookies_from_browser,
+    )
     return fetcher.fetch(url)
 
 
@@ -202,5 +229,6 @@ __all__ = [
     "MetadataFetchError",
     "MetadataFetcher",
     "VideoMetadata",
+    "VideoUnavailableError",
     "fetch_video_metadata",
 ]

@@ -20,10 +20,13 @@ from autoshorts.cleanup.safety_cleaner import SafetyCleaner
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import setup_logging
 from autoshorts.core.models import JobStatus
+from autoshorts.core.paths import get_output_dir
 from autoshorts.core.state_manager import StateManager
 from autoshorts.pipeline import ShortsPipeline
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
+from autoshorts.uploader.local_exporter import LocalExportUploader
+from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
 logger = logging.getLogger("autoshorts.cli")
 
@@ -125,9 +128,26 @@ def cmd_dashboard(args: argparse.Namespace, config: Settings, state_manager: Sta
 def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
     """Run upload scheduler tick or background daemon."""
     tracker = QuotaTracker(state_manager=state_manager, config=config)
+
+    if config.upload.mode == "local":
+        uploader = LocalExportUploader(export_dir=get_output_dir())
+    else:
+        try:
+            uploader = YouTubeApiUploader(
+                config=config,
+                quota_tracker=tracker,
+            )
+        except Exception as e:
+            logger.warning(
+                "YouTube API uploader initialization deferred or failed: %s. Using LocalExportUploader fallback.",
+                e,
+            )
+            uploader = LocalExportUploader(export_dir=get_output_dir())
+
     scheduler = SpreadScheduler(
         state_mgr=state_manager,
         quota_tracker=tracker,
+        uploader=uploader,
         config=config,
     )
 

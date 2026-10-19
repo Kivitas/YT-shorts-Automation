@@ -35,6 +35,7 @@ from autoshorts.media.dopamine_effects import (
     get_dopamine_preset,
     pick_background_asset,
 )
+from autoshorts.media.downloader import run_command_with_cleanup, terminate_process_tree
 from autoshorts.media.encoder_probe import EncoderInfo, probe_encoder
 
 logger = logging.getLogger(__name__)
@@ -61,12 +62,9 @@ def probe_media_duration(media_path: Path | str, default: float = 45.0) -> float
         str(target),
     ]
     try:
-        proc = subprocess.run(
+        proc = run_command_with_cleanup(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=10.0,
-            check=False,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             val = float(proc.stdout.strip())
@@ -100,12 +98,9 @@ def has_audio_stream(media_path: Path | str) -> bool:
         str(target),
     ]
     try:
-        proc = subprocess.run(
+        proc = run_command_with_cleanup(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=10.0,
-            check=False,
         )
         return "audio" in proc.stdout.lower()
     except (OSError, subprocess.SubprocessError):
@@ -150,12 +145,9 @@ def extract_16khz_mono_wav(
     )
 
     try:
-        proc = subprocess.run(
+        proc = run_command_with_cleanup(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=timeout_sec,
-            check=False,
         )
         if proc.returncode != 0:
             raise RuntimeError(
@@ -445,12 +437,9 @@ class FFmpegCompositor:
         start_time = time.time()
 
         try:
-            proc = subprocess.run(
+            proc = run_command_with_cleanup(
                 cmd,
-                capture_output=True,
-                text=True,
                 timeout=timeout_sec,
-                check=False,
             )
             elapsed = time.time() - start_time
             if proc.returncode != 0:
@@ -523,12 +512,9 @@ class FFmpegCompositor:
         ]
 
         try:
-            proc = subprocess.run(
+            proc = run_command_with_cleanup(
                 cmd,
-                capture_output=True,
-                text=True,
                 timeout=timeout_sec,
-                check=False,
             )
             if proc.returncode != 0:
                 if tmp_dest.is_file():
@@ -543,3 +529,14 @@ class FFmpegCompositor:
             if tmp_dest.is_file():
                 tmp_dest.unlink(missing_ok=True)
             raise
+
+
+__all__ = [
+    "FFmpegCompositor",
+    "FasterWhisperTranscriber",
+    "extract_16khz_mono_wav",
+    "has_audio_stream",
+    "probe_media_duration",
+    "run_command_with_cleanup",
+    "terminate_process_tree",
+]

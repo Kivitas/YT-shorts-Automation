@@ -244,17 +244,39 @@ def build_complex_filtergraph(
     else:
         top_final = "top_scaled"
 
-    # 3. Bottom video (background): Scale & crop to 1080x960, 30fps
+    # 3. Jump cuts on both video and audio chains before vertical stack
+    current_a = "0:a" if source_clip_has_audio else None
+    if edl and edl.jump_cuts:
+        valid_cuts = [c for c in edl.jump_cuts if c.cut_end > c.cut_start >= 0]
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, top_cut, audio_cut = build_jumpcut_select_filter(
+                    valid_cuts,
+                    v_in=top_final,
+                    v_out="top_cut",
+                    a_in="0:a",
+                    a_out="a_cut",
+                )
+                filter_stages.append(jc_filter)
+                top_final = top_cut
+                current_a = audio_cut
+            else:
+                drop_conditions = [f"between(t,{cut.cut_start:.2f},{cut.cut_end:.2f})" for cut in valid_cuts]
+                cond_str = "+".join(drop_conditions)
+                filter_stages.append(f"[{top_final}]select='not({cond_str})',setpts=N/FRAME_RATE/TB[top_cut]")
+                top_final = "top_cut"
+
+    # 4. Bottom video (background): Scale & crop to 1080x960, 30fps
     filter_stages.append(
         "[1:v]scale=1080:960:force_original_aspect_ratio=increase,"
         "crop=1080:960,setsar=1,fps=30[bottom]"
     )
 
-    # 4. Vertical stack (1080x1920)
+    # 5. Vertical stack (1080x1920)
     filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
     current_v = "stacked"
 
-    # 5. Top progress bar
+    # 6. Top progress bar
     if dopamine_preset.enable_progress_bar:
         bar_filter, bar_out = build_progress_bar_filter(
             duration_sec=duration_sec,
@@ -264,7 +286,7 @@ def build_complex_filtergraph(
         filter_stages.append(bar_filter)
         current_v = bar_out
 
-    # 6. Burn-in ASS Subtitles with Windows-safe path escaping
+    # 7. Burn-in ASS Subtitles with Windows-safe path escaping
     escaped_subs = escape_ffmpeg_filter_path(subtitles_path)
     subtitles_filter = f"subtitles={escaped_subs}"
     if fonts_dir:
@@ -274,14 +296,10 @@ def build_complex_filtergraph(
     filter_stages.append(f"[{current_v}]{subtitles_filter}[outv]")
     out_video_label = "[outv]"
 
-    # 7. Audio processing: Loudnorm, Ducked Music, and SFX
+    # 8. Audio processing: Loudnorm, Ducked Music (sidechain compression), SFX, and Master Limiter
     if source_clip_has_audio:
-        current_a = "0:a"
-
-        # Apply jump cuts if present
-        if edl and edl.jump_cuts:
-            # Note: For pure audio jump cuts
-            pass
+        if current_a is None:
+            current_a = "0:a"
 
         if dopamine_preset.enable_loudnorm:
             filter_stages.append(f"[{current_a}]loudnorm=I=-14:LRA=7:tp=-1[voice]")
@@ -289,11 +307,13 @@ def build_complex_filtergraph(
         else:
             voice_label = current_a
 
-        # Mix background music if available
+        # Mix background music if available using sidechain compression
         if dopamine_preset.enable_music_ducking and music_input_index is not None:
             filter_stages.append(
-                f"[{music_input_index}:a]volume=0.15[bg_music]; "
-                f"[{voice_label}][bg_music]amix=inputs=2:duration=first:dropout_transition=2[mixed_a]"
+                f"[{voice_label}]asplit=2[v_main][v_side]; "
+                f"[{music_input_index}:a]volume=0.25[bg_raw]; "
+                f"[bg_raw][v_side]sidechaincompress=threshold=0.1:ratio=4:attack=20:release=300[bg_ducked]; "
+                f"[v_main][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[mixed_a]"
             )
             voice_label = "mixed_a"
 
@@ -301,9 +321,13 @@ def build_complex_filtergraph(
         if dopamine_preset.enable_sfx and sfx_input_index is not None:
             filter_stages.append(
                 f"[{sfx_input_index}:a]volume=0.4[sfx_audio]; "
-                f"[{voice_label}][sfx_audio]amix=inputs=2:duration=first[final_a]"
+                f"[{voice_label}][sfx_audio]amix=inputs=2:duration=first[sfx_mixed_a]"
             )
-            voice_label = "final_a"
+            voice_label = "sfx_mixed_a"
+
+        # Master audio limiting: protect against clipping and maintain -1.0dB true peak
+        filter_stages.append(f"[{voice_label}]alimiter=limit=-1.0dB[master_a]")
+        voice_label = "master_a"
 
         out_audio_label = f"[{voice_label}]"
     else:

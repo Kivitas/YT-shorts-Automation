@@ -74,6 +74,10 @@ class TranscriptNotFoundError(IngestError):
     """Raised when captions or transcripts are unavailable and audio fallback is required."""
 
 
+class VideoUnavailableError(IngestError):
+    """Raised when a video is unavailable, private, a live stream, or upcoming premiere."""
+
+
 class DeciderError(AutoShortsError):
     """Raised when SemIf candidate evaluation or action decision fails."""
 

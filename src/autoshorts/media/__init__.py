@@ -7,6 +7,7 @@ from autoshorts.media.ass_styler import (
     chunk_words,
     format_ass_timestamp,
     is_emphasis_word,
+    offset_words_for_hook,
     write_ass_file,
 )
 from autoshorts.media.compositor import (
@@ -66,6 +67,7 @@ __all__ = [
     "is_emphasis_word",
     "is_ffmpeg_available",
     "is_ffprobe_available",
+    "offset_words_for_hook",
     "pick_background_asset",
     "probe_encoder",
     "probe_media_duration",

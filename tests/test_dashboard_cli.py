@@ -15,6 +15,7 @@ from autoshorts.core.models import Job, JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
 from autoshorts.dashboard.app import create_app
 from autoshorts.quota.quota_tracker import QuotaTracker
+from autoshorts.scheduler.scheduler import SpreadScheduler
 
 
 @pytest.fixture
@@ -341,9 +342,210 @@ def test_cli_cmd_scheduler_once(tmp_path: Path):
         mock_tick.assert_called_once()
 
 
+def test_cli_cmd_scheduler_has_active_uploader(tmp_path: Path):
+    """Verify that SpreadScheduler created by cmd_scheduler has an active uploader."""
+    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+    db_path = tmp_path / "test_state.db"
+    state_mgr = StateManager(db_path=db_path)
+    config = Settings()
+    config.upload.mode = "local"
+
+    parser = build_parser()
+    args = parser.parse_args(["scheduler", "--once"])
+
+    captured_schedulers: list[Any] = []
+    orig_init = SpreadScheduler.__init__
+
+    def spy_init(self, *s_args, **s_kwargs):
+        orig_init(self, *s_args, **s_kwargs)
+        captured_schedulers.append(self)
+
+    with (
+        patch.object(SpreadScheduler, "__init__", spy_init),
+        patch("autoshorts.cli.SpreadScheduler.run_tick", return_value=None),
+    ):
+        exit_code = cmd_scheduler(args, config, state_mgr)
+        assert exit_code == 0
+        assert len(captured_schedulers) == 1
+        scheduler = captured_schedulers[0]
+        assert scheduler.uploader is not None
+        assert isinstance(scheduler.uploader, LocalExportUploader)
+
+
 def test_cli_main_help(capsys: pytest.CaptureFixture[str]):
     """Verify main([]) prints help and exits with code 0."""
     exit_code = main([])
     assert exit_code == 0
     captured = capsys.readouterr()
     assert "AutoShorts v3.2" in captured.out
+
+
+# =============================================================================
+# Background Worker, SSE Log Streaming & Enhanced UI Endpoint Tests
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_scheduler_background_worker_lifecycle(tmp_path: Path):
+    """Verify background scheduler worker starts in FastAPI lifespan, executes run_tick, and cleanly shuts down."""
+    import time
+    db_path = tmp_path / "lifecycle_test.db"
+    state_mgr = StateManager(db_path=db_path)
+    mock_pipeline = MagicMock()
+    mock_pipeline.state_manager = state_mgr
+    mock_pipeline.scheduler = MagicMock()
+    mock_pipeline.scheduler.run_tick = MagicMock(return_value=None)
+    mock_pipeline.quota_tracker = QuotaTracker(state_manager=state_mgr)
+
+    # Fast 0.04s interval for testing
+    app = create_app(
+        pipeline=mock_pipeline,
+        state_manager=state_mgr,
+        run_scheduler_worker=True,
+        scheduler_interval_sec=0.04,
+    )
+
+    with TestClient(app) as client:
+        # Worker should be active
+        assert hasattr(app.state, "scheduler_worker_task")
+        task = app.state.scheduler_worker_task
+        assert not task.done()
+
+        # Allow worker loop to execute tick
+        time.sleep(0.12)
+        assert mock_pipeline.scheduler.run_tick.call_count >= 1
+
+    # After lifespan context exit, worker task should be cleanly completed/cancelled
+    assert task.done()
+
+
+def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any]):
+    """Verify GET /api/logs/stream returns SSE events and POST /api/logs/clear flushes buffer."""
+    import logging
+    from autoshorts.core.logging_setup import get_log_stream_handler
+
+    client: TestClient = dashboard_client["client"]
+    handler = get_log_stream_handler()
+    handler.clear()
+
+    test_logger = logging.getLogger("autoshorts.test")
+    test_logger.info("Test SSE log line alpha")
+
+    # Connect to SSE stream
+    with client.stream("GET", "/api/logs/stream") as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+
+        lines = []
+        for line in response.iter_lines():
+            if line:
+                lines.append(line)
+            if any("Test SSE log line alpha" in l for l in lines):
+                break
+
+        assert any("Test SSE log line alpha" in l for l in lines)
+
+    # Test clearing logs
+    res_clear = client.post("/api/logs/clear")
+    assert res_clear.status_code == 200
+    assert res_clear.json()["success"] is True
+    assert not any("Test SSE log line alpha" in item for item in handler.get_history())
+
+
+def test_in_memory_log_stream_handler_ring_buffer_and_redaction():
+    """Verify LogStreamHandler enforces max capacity, redacts secrets, and provides history."""
+    import logging
+    from autoshorts.core.logging_setup import (
+        LogStreamHandler,
+        RedactingFilter,
+        RedactingFormatter,
+        register_secret,
+    )
+
+    handler = LogStreamHandler(capacity=5)
+    fmt = "%(message)s"
+    formatter = RedactingFormatter(fmt)
+    handler.setFormatter(formatter)
+    handler.addFilter(RedactingFilter())
+
+    test_logger = logging.getLogger("test.ringbuffer")
+    test_logger.addHandler(handler)
+    test_logger.setLevel(logging.INFO)
+
+    secret_key = "sk-supersecretkey12345678"
+    register_secret(secret_key)
+
+    # Emit 7 logs into capacity=5 handler
+    for i in range(7):
+        test_logger.info(f"Log {i} with key {secret_key}")
+
+    history = handler.get_history()
+    assert len(history) == 5
+    # Should only retain the latest 5 logs (2..6)
+    assert "Log 0" not in history[0]
+    assert "Log 6" in history[-1]
+    # Secrets must be redacted
+    assert secret_key not in history[-1]
+    assert "***REDACTED***" in history[-1]
+
+    handler.clear()
+    assert len(handler.get_history()) == 0
+
+
+def test_dashboard_quota_rolling_rate_and_countdown(dashboard_client: dict[str, Any]):
+    """Verify GET /api/quota includes rolling hour uploads gauge and Pacific-Time reset countdown."""
+    client: TestClient = dashboard_client["client"]
+    res = client.get("/api/quota")
+    assert res.status_code == 200
+    data = res.json()
+
+    assert "rolling_hour_count" in data
+    assert isinstance(data["rolling_hour_count"], int)
+    assert "rolling_hour_limit" in data
+    assert data["rolling_hour_limit"] == 7
+    assert "seconds_until_reset" in data
+    assert isinstance(data["seconds_until_reset"], int)
+    assert data["seconds_until_reset"] > 0
+    assert "reset_time_pt" in data
+
+
+def test_dashboard_jobs_enriched_with_seo_metadata_and_youtube_link(dashboard_client: dict[str, Any]):
+    """Verify GET /api/jobs and GET /api/jobs/{id} enrich job objects with SEO title, description, tags, and video ID."""
+    client: TestClient = dashboard_client["client"]
+    state_mgr: StateManager = dashboard_client["state_mgr"]
+
+    uploaded_job = Job(
+        id="job_seo_test",
+        source_url="https://youtube.com/watch?v=1234567890b",
+        status=JobStatus.COMPLETED,
+        video_metadata={
+            "title": "Quantum Computing Breakthrough",
+            "channel": "Tech Channel",
+            "channel_url": "https://youtube.com/@tech",
+            "video_url": "https://youtube.com/watch?v=1234567890b",
+            "duration": 120.0,
+        },
+        upload_result=UploadResult(
+            video_id="yt_short_123",
+            url="https://youtube.com/shorts/yt_short_123",
+            status="uploaded",
+            verified=True,
+        ),
+    )
+    state_mgr.save_job(uploaded_job)
+
+    res = client.get("/api/jobs")
+    assert res.status_code == 200
+    jobs = res.json()["jobs"]
+    target = next((j for j in jobs if j["id"] == "job_seo_test"), None)
+    assert target is not None
+
+    # Check copy metadata & YouTube link ID
+    assert target["youtube_video_id"] == "yt_short_123"
+    assert "seo_title" in target
+    assert "#Shorts" in target["seo_title"]
+    assert "full_description" in target
+    assert "ORIGINAL SOURCE ATTRIBUTION" in target["full_description"]
+    assert "hashtags" in target
+    assert "#Shorts" in target["hashtags"]
+

@@ -116,6 +116,7 @@ class MediaConfig(BaseModel):
     crf: int = 22
     preset: str = "veryfast"
     generate_lowres_preview: bool = True
+    cookies_from_browser: str | None = None
 
 
 class SubtitlesConfig(BaseModel):

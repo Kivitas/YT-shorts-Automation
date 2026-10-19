@@ -27,6 +27,7 @@ from autoshorts.core.exceptions import (
     InvalidURLError,
     MetadataFetchError,
     TranscriptNotFoundError,
+    VideoUnavailableError,
 )
 from autoshorts.core.models import VideoMetadata
 from autoshorts.discovery.metadata_fetcher import MetadataFetcher, fetch_video_metadata
@@ -519,4 +520,84 @@ def test_transcript_fetcher_no_captions_signal():
             assert segs is None
             assert signal == NO_CAPTIONS
             assert signal == "NO_CAPTIONS"
+
+
+def test_metadata_fetcher_live_and_upcoming_guards():
+    """Verify that is_live and is_upcoming videos raise VideoUnavailableError."""
+    fetcher = MetadataFetcher()
+
+    # Case 1: is_live is True
+    live_json = json.dumps({"title": "Live Stream", "is_live": True, "live_status": "is_live"})
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=live_json, stderr="")
+        with pytest.raises(VideoUnavailableError, match="Live stream or upcoming premiere cannot be processed"):
+            fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+
+    # Case 2: Upcoming premiere
+    upcoming_json = json.dumps({"title": "Upcoming Premiere", "live_status": "is_upcoming"})
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=upcoming_json, stderr="")
+        with pytest.raises(VideoUnavailableError, match="Live stream or upcoming premiere cannot be processed"):
+            fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+
+
+def test_metadata_fetcher_cookies_forwarding():
+    """Verify that cookies_from_browser is forwarded to yt-dlp in MetadataFetcher."""
+    fetcher = MetadataFetcher(cookies_from_browser="firefox")
+    dummy_json = json.dumps({"title": "Normal Video", "duration": 60.0})
+
+    captured_cmd = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=dummy_json, stderr="")
+
+    with patch("subprocess.run", side_effect=mock_run):
+        fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+
+    assert "--cookies-from-browser" in captured_cmd
+    cookie_idx = captured_cmd.index("--cookies-from-browser")
+    assert captured_cmd[cookie_idx + 1] == "firefox"
+
+
+def test_transcript_fetcher_cookies_forwarding():
+    """Verify that cookies_from_browser is forwarded to yt-dlp in TranscriptFetcher."""
+    import youtube_transcript_api
+
+    fetcher = TranscriptFetcher(cookies_from_browser="chrome")
+    captured_cmd = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=json.dumps({}), stderr="")
+
+    with (
+        patch.object(youtube_transcript_api.YouTubeTranscriptApi, "list", side_effect=Exception("Blocked")),
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.transcript.fetcher.TranscriptFetcher._fetch_via_ytdlp_file_download", return_value=[]),
+    ):
+        try:
+            fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+        except TranscriptNotFoundError:
+            pass
+
+    assert "--cookies-from-browser" in captured_cmd
+    cookie_idx = captured_cmd.index("--cookies-from-browser")
+    assert captured_cmd[cookie_idx + 1] == "chrome"
+
+
+def test_windows_process_tree_cleanup_taskkill():
+    """Verify that terminate_process_tree runs taskkill /F /T /PID on Windows."""
+    from autoshorts.media.downloader import terminate_process_tree
+
+    with patch("sys.platform", "win32"):
+        with patch("subprocess.run") as mock_run:
+            terminate_process_tree(99999)
+            mock_run.assert_called_once_with(
+                ["taskkill", "/F", "/T", "/PID", "99999"],
+                capture_output=True,
+                check=False,
+            )
 

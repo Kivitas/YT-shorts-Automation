@@ -57,4 +57,4 @@ def test_filtergraph_contains_escaped_path():
     assert "subtitles=" in filtergraph
     assert r"C\:/work/sample.ass" in filtergraph
     assert out_v == "[outv]"
-    assert out_a == "[voice]"
+    assert out_a == "[master_a]"

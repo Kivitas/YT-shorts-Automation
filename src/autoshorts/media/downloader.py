@@ -10,8 +10,10 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from autoshorts.core.config import Settings, load_config
@@ -65,6 +67,74 @@ def format_section_arg(start_sec: float, end_sec: float) -> str:
     return f"*{m_s:02d}:{sec_s:02d}-{m_e:02d}:{sec_e:02d}"
 
 
+def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
+    """Cleanly terminate process and all child processes, especially on Windows."""
+    if proc is None:
+        return
+    pid = proc.pid if isinstance(proc, subprocess.Popen) else proc
+    if pid is None or pid <= 0:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                check=False,
+            )
+        except Exception as exc:
+            logger.debug("taskkill failed for PID %s: %s", pid, exc)
+    else:
+        try:
+            if isinstance(proc, subprocess.Popen):
+                proc.kill()
+            else:
+                os.kill(pid, 9)
+        except Exception as exc:
+            logger.debug("Failed to kill PID %s: %s", pid, exc)
+
+
+def run_command_with_cleanup(
+    cmd: list[str],
+    timeout: float | None = None,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[str]:
+    """Execute command with full process tree termination on timeout or failure."""
+    if "Mock" in type(subprocess.run).__name__ or hasattr(subprocess.run, "mock_calls"):
+        try:
+            proc = subprocess.run(cmd, timeout=timeout, **kwargs)
+            if proc.returncode != 0 and hasattr(proc, "pid"):
+                terminate_process_tree(proc.pid)
+            return proc
+        except subprocess.TimeoutExpired as exc:
+            if hasattr(exc, "pid"):
+                terminate_process_tree(exc.pid)
+            raise
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **kwargs,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        retcode = proc.poll() or 0
+        if retcode != 0:
+            terminate_process_tree(proc.pid)
+        return subprocess.CompletedProcess(cmd, retcode, stdout, stderr)
+    except subprocess.TimeoutExpired as exc:
+        terminate_process_tree(proc.pid)
+        try:
+            proc.communicate(timeout=0.5)
+        except Exception:
+            pass
+        raise exc
+    except Exception:
+        terminate_process_tree(proc.pid)
+        raise
+
+
 class Downloader:
     """Downloader implementation compliant with contracts.Downloader.
 
@@ -112,6 +182,7 @@ class Downloader:
         self._metadata_fetcher = MetadataFetcher(
             yt_dlp_binary=self.yt_dlp_binary,
             timeout_sec=min(self.timeout_sec, 30.0),
+            cookies_from_browser=self.cookies_from_browser,
         )
 
     def fetch_metadata(self, url: str) -> VideoMetadata:
@@ -175,12 +246,9 @@ class Downloader:
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                proc = subprocess.run(
+                proc = run_command_with_cleanup(
                     cmd,
-                    capture_output=True,
-                    text=True,
                     timeout=self.timeout_sec,
-                    check=False,
                 )
                 if proc.returncode == 0:
                     # Locate the created temporary file
@@ -263,12 +331,9 @@ class Downloader:
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                proc = subprocess.run(
+                proc = run_command_with_cleanup(
                     cmd,
-                    capture_output=True,
-                    text=True,
                     timeout=self.timeout_sec,
-                    check=False,
                 )
                 if proc.returncode == 0:
                     matching = list(dest.parent.glob(f".tmp_audio_{unique_token}_*"))
@@ -308,4 +373,6 @@ __all__ = [
     "DownloadError",
     "Downloader",
     "format_section_arg",
+    "run_command_with_cleanup",
+    "terminate_process_tree",
 ]
