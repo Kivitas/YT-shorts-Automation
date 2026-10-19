@@ -1,0 +1,186 @@
+"""Core data models and state machine for AutoShorts.
+
+Defines Pydantic v2 models for Jobs, Candidates, Selections, Edit Decision Lists (EDL),
+Video Metadata, Upload Results, and the JobStatus state machine per PLAN.md section 4.3 & 5.5.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+
+class JobStatus(str, Enum):
+    """Lifecycle state machine for a video clipping job (PLAN.md section 4.3)."""
+
+    QUEUED = "QUEUED"
+    METADATA_FETCHED = "METADATA_FETCHED"
+    TRANSCRIBED = "TRANSCRIBED"
+    WINDOWS_SLICED = "WINDOWS_SLICED"
+    SEMIF_EVALUATED = "SEMIF_EVALUATED"
+    DOWNLOADING_SECTION = "DOWNLOADING_SECTION"
+    SUBTITLES_GENERATED = "SUBTITLES_GENERATED"
+    COMPOSITING = "COMPOSITING"
+    READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    SCHEDULED = "SCHEDULED"
+    UPLOADING = "UPLOADING"
+    VERIFYING = "VERIFYING"
+    COMPLETED = "COMPLETED"
+    CLEANED = "CLEANED"
+    FAILED = "FAILED"
+
+
+# Valid state machine transitions per PLAN.md section 4.3
+VALID_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
+    JobStatus.QUEUED: {JobStatus.METADATA_FETCHED, JobStatus.FAILED},
+    JobStatus.METADATA_FETCHED: {JobStatus.TRANSCRIBED, JobStatus.FAILED},
+    JobStatus.TRANSCRIBED: {JobStatus.WINDOWS_SLICED, JobStatus.FAILED},
+    JobStatus.WINDOWS_SLICED: {JobStatus.SEMIF_EVALUATED, JobStatus.FAILED},
+    JobStatus.SEMIF_EVALUATED: {JobStatus.DOWNLOADING_SECTION, JobStatus.FAILED},
+    JobStatus.DOWNLOADING_SECTION: {JobStatus.SUBTITLES_GENERATED, JobStatus.FAILED},
+    JobStatus.SUBTITLES_GENERATED: {JobStatus.COMPOSITING, JobStatus.FAILED},
+    JobStatus.COMPOSITING: {JobStatus.READY_FOR_REVIEW, JobStatus.SCHEDULED, JobStatus.FAILED},
+    JobStatus.READY_FOR_REVIEW: {JobStatus.SCHEDULED, JobStatus.UPLOADING, JobStatus.FAILED},
+    JobStatus.SCHEDULED: {JobStatus.UPLOADING, JobStatus.FAILED},
+    JobStatus.UPLOADING: {JobStatus.VERIFYING, JobStatus.FAILED},
+    JobStatus.VERIFYING: {JobStatus.COMPLETED, JobStatus.FAILED},
+    JobStatus.COMPLETED: {JobStatus.CLEANED, JobStatus.FAILED},
+    JobStatus.CLEANED: set(),
+    JobStatus.FAILED: {JobStatus.QUEUED},  # Allow retry
+}
+
+
+def can_transition(current: JobStatus, target: JobStatus) -> bool:
+    """Return True if transitioning from current to target status is valid."""
+    if current == target:
+        return True
+    return target in VALID_TRANSITIONS.get(current, set())
+
+
+class VideoMetadata(BaseModel):
+    """Metadata extracted from the source YouTube video without downloading video bytes."""
+
+    title: str = Field(..., description="Video title")
+    channel: str = Field(..., description="Channel author / creator name")
+    channel_url: str = Field(..., description="URL to author's YouTube channel")
+    video_url: str = Field(..., description="Source YouTube watch URL")
+    duration: float = Field(..., ge=0.0, description="Total video duration in seconds")
+    video_id: str | None = Field(default=None, description="YouTube 11-char ID")
+    description: str | None = Field(default=None, description="Original video description")
+
+
+class ClipCandidate(BaseModel):
+    """A 30-60 second candidate transcript window evaluated by SemIf."""
+
+    start: float = Field(..., ge=0.0, description="Start timestamp in seconds")
+    end: float = Field(..., ge=0.0, description="End timestamp in seconds")
+    text: str = Field(..., description="Concatenated transcript text within this window")
+    score: float = Field(default=0.0, ge=0.0, le=1.0, description="SemIf retention score (0.0 - 1.0)")
+    reason: str | None = Field(default=None, description="Scoring rationale or topic label")
+
+    @property
+    def duration(self) -> float:
+        """Calculate duration of candidate window in seconds."""
+        return max(0.0, self.end - self.start)
+
+
+class ClipSelection(BaseModel):
+    """A chosen candidate segment configured for downloading and rendering."""
+
+    candidate: ClipCandidate = Field(..., description="Underlying candidate window")
+    clip_index: int = Field(default=0, ge=0, description="Index of this clip for the source video")
+    target_duration: float = Field(default=45.0, ge=10.0, le=60.0)
+    background_style: str = Field(default="minecraft", description="Selected background theme")
+    hook_text: str = Field(default="", description="First 3-second hook question/card")
+    title: str = Field(default="", description="Recommended Shorts title with hashtag")
+
+
+class JumpCut(BaseModel):
+    """Timestamp interval marking dead air or filler speech to excise."""
+
+    cut_start: float = Field(..., ge=0.0, description="Start time of segment to excise")
+    cut_end: float = Field(..., ge=0.0, description="End time of segment to excise")
+    reason: str = Field(default="", description="Reason for jump cut (e.g., pause, filler)")
+
+
+class ZoomPunchIn(BaseModel):
+    """Camera zoom punch-in synchronized to peak emphasis words."""
+
+    timestamp: float = Field(..., ge=0.0, description="Timestamp for punch-in")
+    scale: float = Field(default=1.10, ge=1.05, le=1.25, description="Zoom factor (1.05 - 1.25)")
+    duration: float = Field(default=0.8, ge=0.3, le=2.0, description="Punch-in duration in seconds")
+    emphasis_word: str = Field(default="", description="Peak word triggering the zoom")
+
+
+class CaptionCorrection(BaseModel):
+    """A vocabulary correction for misheard jargon, names, or slang."""
+
+    original: str = Field(..., description="Misheard word from Whisper")
+    corrected: str = Field(..., description="Corrected spelling/jargon")
+
+
+class EditDecisionList(BaseModel):
+    """Symbolic Edit Decision List (EDL) per PLAN.md section 5.5.
+
+    Generated by AI multimodal edit planning; executed deterministically by FFmpeg.
+    """
+
+    hook_in_sec: float = Field(default=0.0, ge=0.0, description="Exact trim start in seconds")
+    hook_out_sec: float = Field(default=45.0, ge=0.0, description="Exact trim end in seconds")
+    jump_cuts: list[JumpCut] = Field(default_factory=list, description="Excised silence intervals")
+    zoom_punch_ins: list[ZoomPunchIn] = Field(default_factory=list, description="Visual camera punch-ins")
+    caption_corrections: list[CaptionCorrection] = Field(default_factory=list, description="Vocabulary fixes")
+    recommended_thumbnail_timestamp: float = Field(default=0.0, ge=0.0, description="Expressive facial timestamp")
+    recommended_title: str = Field(default="", max_length=60, description="Shorts title")
+    recommended_hook: str = Field(default="", max_length=100, description="Hook text")
+    background_style_recommendation: Literal["minecraft", "subway", "auto"] = Field(
+        default="minecraft", description="Recommended background"
+    )
+
+
+class UploadResult(BaseModel):
+    """Outcome of YouTube video upload and verification."""
+
+    video_id: str = Field(..., description="YouTube 11-char video ID")
+    url: str = Field(..., description="Direct link: https://youtube.com/shorts/{video_id}")
+    status: str = Field(default="uploaded", description="Status (uploaded, published, unlisted, private)")
+    verified: bool = Field(default=False, description="True once verified via videos.list or Studio DOM")
+    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    quota_spent: int = Field(default=1, description="API quota units consumed from upload bucket")
+    privacy_status: str = Field(default="unlisted", description="Applied privacy status")
+    raw_response: dict[str, Any] = Field(default_factory=dict, description="Raw API response data")
+
+
+class Job(BaseModel):
+    """Primary pipeline work item tracking end-to-end progress of a video clipping task."""
+
+    id: str = Field(default_factory=lambda: uuid4().hex[:12], description="Unique job identifier")
+    source_url: str = Field(..., description="Source YouTube video URL")
+    custom_instructions: str | None = Field(default=None, description="Per-job operator instructions")
+    status: JobStatus = Field(default=JobStatus.QUEUED, description="Current lifecycle stage")
+    video_metadata: VideoMetadata | None = Field(default=None, description="Extracted video metadata")
+    candidate_windows: list[ClipCandidate] = Field(default_factory=list, description="Sliding windows")
+    selected_clips: list[ClipSelection] = Field(default_factory=list, description="Chosen clips")
+    edl: EditDecisionList | None = Field(default=None, description="Generated Edit Decision List")
+    raw_video_path: str | None = Field(default=None, description="Path to precision downloaded cut")
+    subtitles_path: str | None = Field(default=None, description="Path to generated .ass subtitles")
+    rendered_video_path: str | None = Field(default=None, description="Path to master 1080x1920 MP4")
+    preview_video_path: str | None = Field(default=None, description="Path to low-res preview MP4")
+    scheduled_time: datetime | None = Field(default=None, description="Scheduled upload timestamp")
+    upload_result: UploadResult | None = Field(default=None, description="Upload outcome")
+    error_message: str | None = Field(default=None, description="Last error message if failed")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def transition_to(self, new_status: JobStatus) -> None:
+        """Safely transition this job to a new status, checking validity."""
+        from autoshorts.core.exceptions import InvalidStateTransitionError
+
+        if not can_transition(self.status, new_status):
+            raise InvalidStateTransitionError(self.status.value, new_status.value)
+        self.status = new_status
+        self.updated_at = datetime.now(timezone.utc)

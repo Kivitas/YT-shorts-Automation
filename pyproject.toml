@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autoshorts"
+version = "3.2.0"
+description = "CPU-optimized, URL-driven YouTube Shorts clipping pipeline with SemIf orchestration"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "AutoShorts Team" }
+]
+dependencies = [
+    "yt-dlp>=2024.10.7",
+    "youtube-transcript-api>=0.6.2",
+    "google-api-python-client>=2.149.0",
+    "google-auth-oauthlib>=1.2.1",
+    "google-genai>=0.1.1",
+    "httpx>=0.27.2",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.31.0",
+    "pydantic>=2.9.2",
+    "pydantic-settings>=2.5.2",
+    "pyyaml>=6.0.2",
+    "send2trash>=1.8.3",
+    "tzdata>=2024.1",
+    "jinja2>=3.1.4",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+local-llm = [
+    "llama-cpp-python>=0.3.1",
+]
+whisper = [
+    "faster-whisper>=1.0.3",
+]
+browser = [
+    "playwright>=1.48.0",
+]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.6.9",
+]
+all = [
+    "autoshorts[local-llm,whisper,browser,dev]",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autoshorts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

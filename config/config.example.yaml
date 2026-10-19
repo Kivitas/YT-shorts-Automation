@@ -1,0 +1,107 @@
+app:
+  name: "AutoShorts-OnDevice"
+  version: "3.2.0"
+  port: 8765
+  host: "127.0.0.1"
+  auto_open_browser: true
+
+# Tooling Constraints:
+# - Video downloading: Exclusively yt-dlp (with --download-sections).
+# - Video rendering/compositing: Exclusively FFmpeg + ffprobe (zero MoviePy).
+# - Browser automation: Exclusively Playwright for YouTube Studio upload/verification fallback.
+
+llm:
+  provider: "local"                # "local", "gemini", or "openrouter"
+  model: null                      # null = use provider default (resolved dynamically at runtime)
+  local_model_path: "data/models/Qwen3-0.6B-Instruct-Q8_0.gguf"
+  n_threads: 4                     # Bounded for CPU execution
+  temperature: 0.0
+
+job_defaults:
+  clips_per_video: 1
+  min_duration_seconds: 30
+  max_duration_seconds: 50
+  window_stride_seconds: 15
+  focus_prompt: "Identify the most compelling, high-retention standalone insight or moment."
+  background_category: "minecraft" # "minecraft", "subway", or "auto"
+  dopamine_level: "medium"         # "low", "medium", "high"
+  auto_approve: false              # Require human dashboard confirmation before upload
+
+edit_planner:
+  enabled: true                    # Multimodal AI edit planning
+  provider: "gemini_video"         # Uses Gemini Files API video understanding
+  model: null                      # Resolved at runtime to Gemini multimodal default
+  fallback_to_transcript: true     # If API fails/unavailable, fall back to SemIf text planning
+  max_video_duration_for_analysis_sec: 180
+
+scheduler:
+  enabled: true                    # Persistent upload pacing engine
+  daily_upload_cap: 50             # Hard maximum Shorts uploaded per quota day (leaves 50 calls for retries)
+  max_per_rolling_hour: 7          # Anti-burst ceiling: max 7 uploads in any 60-minute window
+  min_gap_minutes: 5               # Minimum uniform random delay between uploads
+  max_gap_minutes: 25              # Maximum uniform random delay between uploads
+  active_window:
+    start: "08:00"                 # Start of active upload window (local time)
+    end: "23:59"                   # End of active upload window (local time)
+    timezone: "local"
+  quota_reset_timezone: "America/Los_Angeles" # YouTube quota resets midnight Pacific Time
+  prevent_sleep: true              # Win32 SetThreadExecutionState while slots are pending
+  catch_up_policy: "reschedule_respect_rate_limit" # Skip missed slots on PC wake; do not burst
+
+quota:
+  upload_bucket_daily: 100         # Dedicated videos.insert daily quota bucket (calls/day)
+  general_bucket_daily: 10000      # Shared general API daily quota bucket (units/day)
+  reserve_retries: 50              # Headroom reserved in upload bucket for retries/resumes
+  insert_cost_units: 1             # videos.insert cost per call in the upload bucket
+  list_cost_units: 1               # videos.list verification poll cost in general bucket
+  stop_threshold_units: 100        # General bucket reserve threshold
+  exhaustion_fallback: "queue_next_day" # "queue_next_day", "studio", or "local"
+
+spark:
+  inbox_dir: "inbox"               # Monitored drop directory for Gemini Spark companion
+  watch_inbox: true                # Watch inbox for incoming .json/.yaml instruction files
+  poll_interval_sec: 10            # Ingestion polling frequency
+
+media:
+  preferred_encoder: "auto"        # "auto" (probes h264_qsv then libx264), "h264_qsv", "libx264"
+  whisper_model: "base.en"         # "tiny.en" or "base.en" (CPU int8)
+  fps: 30
+  crf: 22
+  preset: "veryfast"
+  generate_lowres_preview: true    # Renders 540x960 fast preview for dashboard
+
+subtitles:
+  font_name: "Montserrat ExtraBold"
+  font_size: 76
+  words_per_burst: 3
+  karaoke_highlight: true
+  active_color: "&H0000FFFF"       # Vibrant Yellow
+  primary_color: "&H00FFFFFF"      # White
+  outline_color: "&H00000000"      # Black
+  safe_zone_margin_v: 780          # Centers over 960px boundary
+
+upload:
+  mode: "api"                      # "api" (Data API v3), "studio" (Playwright Edge), "local" (export only)
+  privacy_status: "unlisted"       # "private", "unlisted", "public"
+  title_template: "{hook} | {channel} #Shorts"
+  description_template: |
+    {hook}
+
+    ---
+    📌 ORIGINAL SOURCE ATTRIBUTION:
+    This video is an educational commentary clip excerpted from:
+    Video Title: "{title}"
+    Original Creator: {channel}
+    Original Video: {video_url}
+    Channel Link: {channel_url}
+
+    All rights and intellectual property belong to {channel}. If you are the copyright owner and wish for this clip to be removed or modified, please contact the channel owner.
+
+    #Shorts #Podcasts #Education {hashtags}
+
+cleanup:
+  enabled: true
+  use_recycle_bin: true            # Use send2trash
+  keep_master_mp4: true            # Retain output/ master MP4, purge work/ intermediate files
+  purge_intermediate_work: true
+  dry_run: false
