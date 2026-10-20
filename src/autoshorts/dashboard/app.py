@@ -27,9 +27,17 @@ from pydantic import BaseModel, Field
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import get_log_stream_handler
-from autoshorts.core.models import Job
+from autoshorts.core.models import EditDecisionList, Job, JobStatus
 from autoshorts.core.paths import get_assets_dir, get_output_dir
+from autoshorts.core.settings_manager import (
+    apply_settings_update,
+    get_public_settings_payload,
+    get_youtube_oauth_status,
+    run_youtube_oauth_flow,
+    save_youtube_client_secret,
+)
 from autoshorts.core.state_manager import StateManager, get_pt_timezone
+from autoshorts.discovery.url_validator import parse_links_input
 from autoshorts.integrations.spark import parse_spark_import
 from autoshorts.media.encoder_probe import probe_encoder
 from autoshorts.pipeline import ShortsPipeline
@@ -146,6 +154,28 @@ class JobSubmitRequest(BaseModel):
     upload_mode: str | None = Field(default=None)
     auto_upload: bool = Field(default=False)
     immediate_upload: bool = Field(default=False)
+    style_preset: str | None = Field(default=None)
+    privacy_status: str | None = Field(default=None)
+
+
+SubmitJobsRequest = JobSubmitRequest
+
+
+class LinkPreviewRequest(BaseModel):
+    links_text: str = Field(..., description="Raw text containing one or more video URLs")
+
+
+class JobPatchRequest(BaseModel):
+    clip_title: str | None = Field(default=None, description="Updated clip title")
+    hook_text: str | None = Field(default=None, description="Updated hook text")
+    background_category: str | None = Field(default=None, description="Updated background category")
+    dopamine_level: str | None = Field(default=None, description="Updated dopamine level")
+    custom_instructions: str | None = Field(default=None, description="Updated custom instructions")
+
+
+class TestProviderRequest(BaseModel):
+    provider: str = Field(..., description="LLM provider name: 'gemini', 'openrouter', or 'local'")
+    api_key: str | None = Field(default=None, description="Optional temporary API key")
 
 
 class SparkImportRequest(BaseModel):
@@ -254,7 +284,7 @@ def create_app(
 
     app = FastAPI(
         title="AutoShorts Dashboard",
-        version="3.2.0",
+        version="1.0.0",
         description="On-Device Video Clipping and Quota Pacing Orchestrator",
         lifespan=lifespan,
     )
@@ -292,6 +322,69 @@ def create_app(
     # Jobs Management API
     # -------------------------------------------------------------------------
 
+    @app.post("/api/links/preview")
+    async def preview_links(req: LinkPreviewRequest) -> dict[str, Any]:
+        """Parse up to 5 links and fetch title, channel, duration and thumbnail metadata."""
+        if not req.links_text or not req.links_text.strip():
+            return {"previews": []}
+
+        try:
+            parsed = parse_links_input(req.links_text)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse links: {e}") from e
+
+        previews = []
+        for p in parsed[:5]:
+            vid = p.video_id
+            url = p.canonical_url
+            thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+            title = f"YouTube Video ({vid})"
+            channel = "YouTube Creator"
+            duration = 0.0
+
+            # 1. Try pipeline downloader fetch_metadata
+            meta_fetched = False
+            if hasattr(pipe, "downloader") and pipe.downloader is not None:
+                try:
+                    meta = await asyncio.to_thread(pipe.downloader.fetch_metadata, url)
+                    title = meta.title or title
+                    channel = meta.channel or channel
+                    duration = meta.duration or duration
+                    meta_fetched = True
+                except Exception as e:
+                    logger.debug("Downloader metadata fetch failed for %s: %s", vid, e)
+
+            # 2. Fallback to YouTube oEmbed API if downloader was not available or failed
+            if not meta_fetched:
+                try:
+                    import httpx
+
+                    async with httpx.AsyncClient(timeout=4.0) as client:
+                        resp = await client.get(
+                            f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
+                        )
+                        if resp.status_code == 200:
+                            odata = resp.json()
+                            title = odata.get("title", title)
+                            channel = odata.get("author_name", channel)
+                except Exception as e:
+                    logger.debug("oEmbed fallback fetch failed for %s: %s", vid, e)
+
+            custom_instr = p.custom_instructions or p.focus_prompt
+            previews.append(
+                {
+                    "video_id": vid,
+                    "url": url,
+                    "title": title,
+                    "channel": channel,
+                    "duration": duration,
+                    "thumbnail_url": thumb,
+                    "custom_instructions": custom_instr,
+                }
+            )
+
+        return {"previews": previews}
+
     @app.post("/api/jobs/submit")
     async def submit_jobs(
         req: JobSubmitRequest, background_tasks: BackgroundTasks
@@ -324,6 +417,18 @@ def create_app(
                         logger.warning("Could not switch to YouTube API uploader: %s", e)
                 if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
                     pipe.scheduler.uploader = pipe.uploader
+
+        if req.privacy_status:
+            cfg.upload.privacy_status = req.privacy_status
+            cfg.upload.default_privacy_status = req.privacy_status
+            if pipe and pipe.config:
+                pipe.config.upload.privacy_status = req.privacy_status
+                pipe.config.upload.default_privacy_status = req.privacy_status
+
+        if req.style_preset:
+            cfg.subtitles.style_preset = req.style_preset
+            if pipe and pipe.config:
+                pipe.config.subtitles.style_preset = req.style_preset
 
         jobs = pipe.submit_links(
             links_input=req.links,
@@ -366,6 +471,59 @@ def create_app(
         return {
             "job": enrich_job_dict(job, cfg),
             "stages": stages,
+        }
+
+    @app.patch("/api/jobs/{job_id}")
+    async def update_job(job_id: str, req: JobPatchRequest) -> dict[str, Any]:
+        """Update editable metadata of a job prior to rendering or upload."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        if req.custom_instructions is not None:
+            job.custom_instructions = req.custom_instructions
+
+        if job.selected_clips:
+            for sel in job.selected_clips:
+                if req.clip_title is not None:
+                    sel.title = req.clip_title
+                if req.hook_text is not None:
+                    sel.hook_text = req.hook_text
+                if req.background_category is not None:
+                    sel.background_style = req.background_category
+
+        if job.edl:
+            if req.clip_title is not None:
+                job.edl.recommended_title = req.clip_title
+            if req.hook_text is not None:
+                job.edl.recommended_hook = req.hook_text
+            if req.background_category is not None and req.background_category in (
+                "minecraft",
+                "subway",
+                "auto",
+            ):
+                job.edl.background_style_recommendation = req.background_category
+        elif not job.selected_clips and (
+            req.clip_title or req.hook_text or req.background_category
+        ):
+            bg_cat = (
+                req.background_category
+                if req.background_category in ("minecraft", "subway", "auto")
+                else "minecraft"
+            )
+            job.edl = EditDecisionList(
+                recommended_title=req.clip_title or "",
+                recommended_hook=req.hook_text or "",
+                background_style_recommendation=bg_cat,
+            )
+
+        job.updated_at = datetime.now(UTC)
+        state_mgr.save_job(job)
+
+        current_cfg = pipe.config if hasattr(pipe, "config") else cfg
+        return {
+            "success": True,
+            "job": enrich_job_dict(job, current_cfg),
         }
 
     @app.post("/api/jobs/{job_id}/retry")
@@ -424,6 +582,49 @@ def create_app(
             "job_id": job_id,
             "deleted_files": deleted_paths,
             "count": len(deleted_paths),
+        }
+
+    @app.post("/api/jobs/batch-retry")
+    async def batch_retry_jobs(background_tasks: BackgroundTasks) -> dict[str, Any]:
+        """Retry all failed jobs in background worker tasks."""
+        failed_jobs = state_mgr.list_jobs(status=JobStatus.FAILED)
+        for j in failed_jobs:
+            background_tasks.add_task(pipe.retry_job, job_id=j.id)
+        return {
+            "success": True,
+            "count": len(failed_jobs),
+            "message": f"Queued {len(failed_jobs)} failed jobs for retry.",
+        }
+
+    @app.post("/api/jobs/batch-clean")
+    async def batch_clean_jobs() -> dict[str, Any]:
+        """Run safety cleaner on all COMPLETED jobs and purge intermediate work files."""
+        completed_jobs = state_mgr.list_jobs(status=JobStatus.COMPLETED)
+        cleaned_jobs_count = 0
+        cleaned_files_count = 0
+        cleaned_files: list[str] = []
+
+        if hasattr(pipe, "cleaner") and pipe.cleaner is not None:
+            for j in completed_jobs:
+                try:
+                    paths = pipe.cleaner.cleanup_job(j.id, force=True)
+                    cleaned_files_count += len(paths)
+                    cleaned_files.extend(str(p) for p in paths)
+                    cleaned_jobs_count += 1
+                    try:
+                        j.transition_to(JobStatus.CLEANED)
+                        state_mgr.save_job(j)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning("Error cleaning job %s: %s", j.id, e)
+
+        return {
+            "success": True,
+            "cleaned_jobs_count": cleaned_jobs_count,
+            "cleaned_files_count": cleaned_files_count,
+            "count": cleaned_files_count,
+            "cleaned_files": cleaned_files,
         }
 
     # -------------------------------------------------------------------------
@@ -506,6 +707,39 @@ def create_app(
 
         return {
             "paused": pipe.scheduler.is_paused(),
+        }
+
+    @app.get("/api/scheduler/slots")
+    async def get_scheduler_slots() -> dict[str, Any]:
+        """Return pending scheduled upload slots enriched with job metadata."""
+        getter = getattr(
+            state_mgr,
+            "get_pending_slots",
+            getattr(state_mgr, "get_pending_scheduled_slots", None),
+        )
+        slots = getter() if getter else []
+        enriched_slots = []
+        current_cfg = pipe.config if hasattr(pipe, "config") else cfg
+        for s in slots:
+            slot_dict = dict(s)
+            job_id = s.get("job_id")
+            if job_id:
+                job = state_mgr.get_job(job_id)
+                if job:
+                    enriched = enrich_job_dict(job, current_cfg)
+                    slot_dict["title"] = enriched.get("seo_title") or (
+                        job.video_metadata.title if job.video_metadata else "Shorts Clip"
+                    )
+                    slot_dict["video_id"] = (
+                        job.video_metadata.video_id
+                        if job.video_metadata
+                        else (job.upload_result.video_id if job.upload_result else None)
+                    )
+                    slot_dict["source_url"] = job.source_url
+            enriched_slots.append(slot_dict)
+        return {
+            "slots": enriched_slots,
+            "count": len(enriched_slots),
         }
 
     # -------------------------------------------------------------------------
@@ -805,6 +1039,199 @@ def create_app(
             media_type="video/mp4",
             filename=f"{job_id}_master.mp4",
         )
+
+    # -------------------------------------------------------------------------
+    # Settings & YouTube Data API v3 Management API
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/settings")
+    async def get_settings() -> dict[str, Any]:
+        """Return current application settings with masked secrets."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        return get_public_settings_payload(active_cfg)
+
+    @app.post("/api/settings")
+    async def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
+        """Apply updates to config.yaml and .env, reloading subsystems in place."""
+        nonlocal cfg
+
+        try:
+            new_settings = apply_settings_update(payload)
+        except Exception as e:
+            logger.error("Failed to apply settings update: %s", e)
+            raise HTTPException(status_code=400, detail=f"Failed to update settings: {e}") from e
+
+        cfg = new_settings
+        if pipe:
+            pipe.config = new_settings
+
+            # 1. LLM Provider
+            try:
+                from autoshorts.core.providers import get_provider
+
+                pipe.llm_provider = get_provider(settings=pipe.config)
+            except Exception as e:
+                logger.warning("Could not re-initialize LLM provider: %s", e)
+
+            # 2. Uploader
+            try:
+                mode = getattr(pipe.config.upload, "mode", "api")
+                if mode == "studio":
+                    from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+
+                    pipe.uploader = PlaywrightStudioUploader(config=pipe.config)
+                elif mode == "local":
+                    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+                    pipe.uploader = LocalExportUploader(export_dir=get_output_dir())
+                elif mode in ("api", "youtube"):
+                    from autoshorts.uploader.youtube_api import YouTubeApiUploader
+
+                    pipe.uploader = YouTubeApiUploader(
+                        config=pipe.config,
+                        quota_tracker=getattr(pipe, "quota_tracker", None),
+                    )
+                if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
+                    pipe.scheduler.uploader = pipe.uploader
+                    if hasattr(pipe.config, "scheduler"):
+                        pipe.scheduler.config = pipe.config.scheduler
+            except Exception as e:
+                logger.warning("Could not re-initialize uploader: %s", e)
+
+            # 3. Safety Cleaner
+            try:
+                from autoshorts.cleanup.safety_cleaner import SafetyCleaner
+
+                pipe.cleaner = SafetyCleaner(
+                    config=pipe.config,
+                    state_manager=getattr(pipe, "state_manager", state_mgr),
+                )
+                if hasattr(pipe, "scheduler") and pipe.scheduler is not None:
+                    pipe.scheduler.cleaner = pipe.cleaner
+            except Exception as e:
+                logger.warning("Could not re-initialize safety cleaner: %s", e)
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        return {
+            "success": True,
+            "settings": get_public_settings_payload(active_cfg),
+        }
+
+    @app.post("/api/settings/youtube-client-secret")
+    async def upload_youtube_client_secret(
+        request: Request,
+        file: UploadFile | None = None,
+    ) -> dict[str, Any]:
+        """Save and validate YouTube Data API v3 OAuth client_secret.json."""
+        raw_content: str | bytes = ""
+        content_type = request.headers.get("content-type", "")
+
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+                if isinstance(body, dict):
+                    if "client_secret_json" in body:
+                        val = body["client_secret_json"]
+                        raw_content = json.dumps(val) if isinstance(val, dict) else str(val)
+                    else:
+                        raw_content = json.dumps(body)
+                else:
+                    raw_content = str(body)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}") from e
+        elif file is not None:
+            raw_content = await file.read()
+        else:
+            try:
+                form = await request.form()
+                if "file" in form and hasattr(form["file"], "read"):
+                    raw_content = await form["file"].read()
+                elif "client_secret_json" in form:
+                    raw_content = str(form["client_secret_json"])
+                else:
+                    body_bytes = await request.body()
+                    if body_bytes:
+                        raw_content = body_bytes
+                    else:
+                        raise HTTPException(
+                            status_code=400, detail="No client secret data provided"
+                        )
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to parse upload: {e}") from e
+
+        from autoshorts.core.paths import get_data_dir
+
+        dest_path = get_data_dir() / "client_secret.json"
+        try:
+            meta = save_youtube_client_secret(raw_content, dest_path=dest_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error("Failed to save YouTube client secret: %s", e)
+            raise HTTPException(status_code=500, detail=f"Failed to save client secret: {e}") from e
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        return {
+            "success": True,
+            "youtube_oauth": get_youtube_oauth_status(active_cfg),
+            "client_id_masked": meta.get("client_id_masked", ""),
+            "project_id": meta.get("project_id", ""),
+        }
+
+    @app.post("/api/settings/youtube-oauth")
+    async def start_youtube_oauth(background_tasks: BackgroundTasks) -> dict[str, Any]:
+        """Start interactive Google OAuth flow in the background."""
+        from autoshorts.core.paths import get_data_dir
+
+        c_path = get_data_dir() / "client_secret.json"
+        t_path = get_data_dir() / "token.json"
+        if not c_path.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail="Client secret file not found. Upload client_secret.json first.",
+            )
+
+        background_tasks.add_task(
+            run_youtube_oauth_flow,
+            client_secret_path=c_path,
+            token_path=t_path,
+        )
+        return {
+            "success": True,
+            "status": "running",
+            "message": "Google OAuth consent opened in browser.",
+        }
+
+    @app.get("/api/settings/youtube-oauth/status")
+    async def get_youtube_oauth_status_endpoint() -> dict[str, Any]:
+        """Return real-time YouTube Data API v3 OAuth configuration status."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        return get_youtube_oauth_status(active_cfg)
+
+    @app.post("/api/settings/test-provider")
+    async def test_provider(req: TestProviderRequest) -> dict[str, Any]:
+        """Test connectivity and list available models for an LLM provider."""
+        from autoshorts.core.providers import get_provider
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        try:
+            provider = get_provider(
+                name=req.provider,
+                api_key=req.api_key,
+                settings=active_cfg,
+            )
+            models = await asyncio.to_thread(provider.list_models)
+            return {
+                "success": True,
+                "provider": provider.name,
+                "models": models,
+                "privacy_badge": provider.privacy_badge,
+            }
+        except Exception as e:
+            logger.error("Provider test failed for %s: %s", req.provider, e)
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     return app
 

@@ -1,12 +1,19 @@
-// AutoShorts Dashboard Client
+// AutoShorts Dashboard Client (v1.0 Overhaul)
 
 let _jobsCache = [];
 let _ptSecondsRemaining = null;
 let _eventSource = null;
 let _lastQuota = null;
 let _lastScheduler = null;
+let _currentFilter = "all";
+let _settingsCache = {};
+let _oauthPollTimer = null;
+let _timelineCollapsed = false;
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Setup sync between #background-select and legacy #bg-select
+  initBackgroundSelectSync();
+
   refreshHealth();
   refreshQuota();
   refreshScheduler();
@@ -14,20 +21,42 @@ document.addEventListener("DOMContentLoaded", () => {
   refreshBackgrounds();
   initLogStream();
   checkInitialEdgeAuth();
+  checkInitialYouTubeAuth();
+  refreshSchedulerSlots();
+  syncPresetCardHighlight();
 
   // PT Countdown ticking every 1 second
   setInterval(() => {
     tickPtCountdown();
   }, 1000);
 
-  // Auto-refresh metrics and jobs every 4 seconds
+  // Auto-refresh metrics, jobs, scheduler, and auth every 4 seconds
   setInterval(() => {
     refreshQuota();
     refreshScheduler();
     refreshJobs();
     refreshBackgrounds();
+    refreshSchedulerSlots();
+    checkInitialYouTubeAuth();
   }, 4000);
 });
+
+// -----------------------------------------------------------------------------
+// Legacy & Compatibility Helpers
+// -----------------------------------------------------------------------------
+
+function initBackgroundSelectSync() {
+  const bgMain = document.getElementById("background-select");
+  const bgAlias = document.getElementById("bg-select");
+  if (bgMain && bgAlias) {
+    bgMain.addEventListener("change", () => {
+      bgAlias.value = bgMain.value;
+    });
+    bgAlias.addEventListener("change", () => {
+      bgMain.value = bgAlias.value;
+    });
+  }
+}
 
 // -----------------------------------------------------------------------------
 // System Health & Telemetry
@@ -38,9 +67,18 @@ async function refreshHealth() {
     const res = await fetch("/api/health");
     if (!res.ok) return;
     const data = await res.json();
-    if (data.cpu_mode) document.getElementById("cpu-label").textContent = data.cpu_mode;
-    if (data.llm_provider) document.getElementById("provider-label").textContent = `Provider: ${data.llm_provider}`;
-    if (data.ffmpeg_encoder) document.getElementById("encoder-label").textContent = data.ffmpeg_encoder;
+    if (data.cpu_mode) {
+      const cpuEl = document.getElementById("cpu-label");
+      if (cpuEl) cpuEl.textContent = data.cpu_mode;
+    }
+    if (data.llm_provider) {
+      const provEl = document.getElementById("provider-label");
+      if (provEl) provEl.textContent = `Provider: ${data.llm_provider}`;
+    }
+    if (data.ffmpeg_encoder) {
+      const encEl = document.getElementById("encoder-label");
+      if (encEl) encEl.textContent = data.ffmpeg_encoder;
+    }
   } catch (err) {
     console.debug("Health check error:", err);
   }
@@ -67,10 +105,13 @@ async function refreshQuota() {
     }
     const upBarEl = document.getElementById("upload-bar");
     if (upBarEl) upBarEl.style.width = `${upPct}%`;
+    const upRemText = `${q.upload_remaining !== undefined ? q.upload_remaining : 100} free uploads remaining today`;
     const upRemEl = document.getElementById("upload-remaining");
     if (upRemEl) {
-      upRemEl.textContent = `${q.upload_remaining !== undefined ? q.upload_remaining : 100} free uploads remaining today`;
+      upRemEl.textContent = upRemText;
     }
+    const quotaUpTextEl = document.getElementById("quota-upload-text");
+    if (quotaUpTextEl) quotaUpTextEl.textContent = upRemText;
 
     // 2. API Calls Pool
     const genSpend = q.general_spent || 0;
@@ -82,10 +123,13 @@ async function refreshQuota() {
     }
     const genBarEl = document.getElementById("general-bar");
     if (genBarEl) genBarEl.style.width = `${genPct}%`;
+    const genRemText = `${q.general_remaining !== undefined ? q.general_remaining : 10000} units remaining`;
     const genRemEl = document.getElementById("general-remaining");
     if (genRemEl) {
-      genRemEl.textContent = `${q.general_remaining !== undefined ? q.general_remaining : 10000} units remaining`;
+      genRemEl.textContent = genRemText;
     }
+    const quotaGenTextEl = document.getElementById("quota-general-text");
+    if (quotaGenTextEl) quotaGenTextEl.textContent = genRemText;
 
     // 3. Hourly Anti-Spam Pacing
     const rateCount = q.rolling_hour_count !== undefined ? q.rolling_hour_count : 0;
@@ -106,10 +150,13 @@ async function refreshQuota() {
         rateBarEl.style.background = "";
       }
     }
+    const rateFooterText = `${rateCount} / ${rateLimit} uploads in rolling 60 min`;
     const rateFooterEl = document.getElementById("rolling-rate-footer");
     if (rateFooterEl) {
-      rateFooterEl.textContent = `${rateCount} / ${rateLimit} uploads in rolling 60 min`;
+      rateFooterEl.textContent = rateFooterText;
     }
+    const quotaHourlyTextEl = document.getElementById("quota-hourly-text");
+    if (quotaHourlyTextEl) quotaHourlyTextEl.textContent = rateFooterText;
 
     // 4. Daily Cap & Pacific-Time Reset Countdown Sync
     if (q.seconds_until_reset !== undefined) {
@@ -170,25 +217,21 @@ function renderPacingStatus() {
     const total = _ptSecondsRemaining;
     const hours = Math.floor(total / 3600);
     const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
     const resetDate = new Date(Date.now() + total * 1000);
     const localTimeStr = resetDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     secondaryText = `Daily Uploads: ${completed} / ${dailyCap} • Reset in ${hours}h ${String(minutes).padStart(2, "0")}m (${localTimeStr} local)`;
+
+    const countdownTimerEl = document.getElementById("countdown-timer");
+    if (countdownTimerEl) {
+      countdownTimerEl.textContent = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
   }
   if (capEl) capEl.textContent = secondaryText;
-
-  // Fallback clock element if present
-  const clockEl = document.getElementById("pt-countdown-clock");
-  if (clockEl && _ptSecondsRemaining !== null) {
-    const total = Math.max(0, _ptSecondsRemaining);
-    const hours = Math.floor(total / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-    const seconds = total % 60;
-    clockEl.textContent = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
 }
 
 // -----------------------------------------------------------------------------
-// Scheduler Controls
+// Scheduler Controls & Upcoming Timeline
 // -----------------------------------------------------------------------------
 
 async function refreshScheduler() {
@@ -200,21 +243,30 @@ async function refreshScheduler() {
 
     const tag = document.getElementById("scheduler-status-tag");
     const btn = document.getElementById("scheduler-toggle-btn");
+    const label = document.getElementById("scheduler-toggle");
     const pending = document.getElementById("pending-slots-count");
 
     if (s.paused) {
-      tag.textContent = "PAUSED";
-      tag.style.color = "var(--accent-red)";
-      btn.textContent = "Resume Scheduler";
-      btn.className = "btn btn-primary btn-sm";
+      if (tag) {
+        tag.textContent = "PAUSED";
+        tag.style.color = "var(--accent-red)";
+      }
+      if (label) label.textContent = "Resume Scheduler";
+      if (btn) {
+        btn.className = "btn btn-primary btn-sm";
+      }
     } else {
-      tag.textContent = "ACTIVE";
-      tag.style.color = "var(--accent-green)";
-      btn.textContent = "Pause Scheduler";
-      btn.className = "btn btn-secondary btn-sm";
+      if (tag) {
+        tag.textContent = "ACTIVE";
+        tag.style.color = "var(--accent-green)";
+      }
+      if (label) label.textContent = "Pause Scheduler";
+      if (btn) {
+        btn.className = "btn btn-secondary btn-sm";
+      }
     }
 
-    pending.textContent = `${s.pending_count || 0} queued slots`;
+    if (pending) pending.textContent = `${s.pending_count || 0} queued slots`;
     renderPacingStatus();
   } catch (err) {
     console.debug("Scheduler refresh error:", err);
@@ -227,6 +279,57 @@ async function toggleScheduler() {
     if (res.ok) refreshScheduler();
   } catch (err) {
     alert("Failed to toggle scheduler: " + err);
+  }
+}
+
+async function refreshSchedulerSlots() {
+  try {
+    let slots = [];
+    const res = await fetch("/api/scheduler/slots");
+    if (res.ok) {
+      const data = await res.json();
+      slots = data.slots || data.pending_slots || [];
+    } else if (_lastScheduler && _lastScheduler.pending_slots) {
+      slots = _lastScheduler.pending_slots;
+    }
+
+    const countEl = document.getElementById("timeline-count");
+    if (countEl) countEl.textContent = slots.length;
+
+    const listEl = document.getElementById("timeline-slots-list");
+    if (!listEl) return;
+
+    if (slots.length === 0) {
+      listEl.innerHTML = '<div class="timeline-empty">No upcoming scheduled slots.</div>';
+      return;
+    }
+
+    listEl.innerHTML = slots.map(slot => {
+      const timeStr = slot.scheduled_time
+        ? new Date(slot.scheduled_time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })
+        : "Pending next available window";
+      const title = slot.title || `Job #${slot.job_id || "clip"}`;
+      return `
+        <div class="timeline-item">
+          <span class="timeline-item-title" title="${escapeHtml(title)}">🎬 ${escapeHtml(title)}</span>
+          <span class="timeline-item-time">⏰ ${escapeHtml(timeStr)}</span>
+        </div>
+      `;
+    }).join("");
+  } catch (err) {
+    console.debug("Error refreshing scheduler slots:", err);
+  }
+}
+
+function toggleTimelineCollapse() {
+  _timelineCollapsed = !_timelineCollapsed;
+  const listEl = document.getElementById("timeline-slots-list");
+  const chevron = document.getElementById("timeline-chevron");
+  if (listEl) {
+    listEl.classList.toggle("collapsed", _timelineCollapsed);
+  }
+  if (chevron) {
+    chevron.classList.toggle("collapsed", _timelineCollapsed);
   }
 }
 
@@ -307,7 +410,7 @@ function buildStepperHtml(job) {
 }
 
 // -----------------------------------------------------------------------------
-// Job Queue & Rendering
+// Job Queue, Filter Tabs & Rendering
 // -----------------------------------------------------------------------------
 
 async function refreshJobs() {
@@ -322,21 +425,82 @@ async function refreshJobs() {
   }
 }
 
+function setJobFilter(filter) {
+  _currentFilter = filter;
+  document.querySelectorAll(".filter-tab").forEach(tab => {
+    if (tab.getAttribute("data-filter") === filter) {
+      tab.classList.add("active");
+    } else {
+      tab.classList.remove("active");
+    }
+  });
+  renderJobs(_jobsCache);
+}
+
 function renderJobs(jobs) {
   const container = document.getElementById("jobs-container");
-  if (!jobs || jobs.length === 0) {
-    container.innerHTML = '<div class="empty-state">No active clipping jobs. Enter a YouTube URL to get started.</div>';
+  if (!container) return;
+
+  // Compute category counts
+  let countAll = jobs.length;
+  let countActive = 0;
+  let countScheduled = 0;
+  let countCompleted = 0;
+  let countFailed = 0;
+
+  const activeStatuses = new Set([
+    "QUEUED", "METADATA_FETCHED", "TRANSCRIBED", "WINDOWS_SLICED",
+    "SEMIF_EVALUATED", "DOWNLOADING_SECTION", "SUBTITLES_GENERATED",
+    "COMPOSITING", "UPLOADING", "VERIFYING"
+  ]);
+
+  jobs.forEach(j => {
+    const st = j.status;
+    if (activeStatuses.has(st)) countActive++;
+    if (st === "SCHEDULED" || st === "READY_FOR_REVIEW") countScheduled++;
+    if (st === "COMPLETED" || st === "CLEANED") countCompleted++;
+    if (st === "FAILED") countFailed++;
+  });
+
+  const cAllEl = document.getElementById("count-all");
+  const cActEl = document.getElementById("count-active");
+  const cSchEl = document.getElementById("count-scheduled");
+  const cComEl = document.getElementById("count-completed");
+  const cFaiEl = document.getElementById("count-failed");
+
+  if (cAllEl) cAllEl.textContent = countAll;
+  if (cActEl) cActEl.textContent = countActive;
+  if (cSchEl) cSchEl.textContent = countScheduled;
+  if (cComEl) cComEl.textContent = countCompleted;
+  if (cFaiEl) cFaiEl.textContent = countFailed;
+
+  // Filter jobs by current active tab
+  let filteredJobs = jobs;
+  if (_currentFilter === "active") {
+    filteredJobs = jobs.filter(j => activeStatuses.has(j.status));
+  } else if (_currentFilter === "scheduled") {
+    filteredJobs = jobs.filter(j => j.status === "SCHEDULED" || j.status === "READY_FOR_REVIEW");
+  } else if (_currentFilter === "completed") {
+    filteredJobs = jobs.filter(j => j.status === "COMPLETED" || j.status === "CLEANED");
+  } else if (_currentFilter === "failed") {
+    filteredJobs = jobs.filter(j => j.status === "FAILED");
+  }
+
+  if (filteredJobs.length === 0) {
+    container.innerHTML = `<div class="empty-state">No ${_currentFilter !== "all" ? _currentFilter : ""} jobs in queue.</div>`;
     return;
   }
 
-  container.innerHTML = jobs.map(job => {
-    const title = (job.video_metadata && job.video_metadata.title) ? job.video_metadata.title : job.source_url;
+  container.innerHTML = filteredJobs.map(job => {
+    const title = (job.video_metadata && job.video_metadata.title) ? job.video_metadata.title : (job.clip_title || job.source_url);
     const channel = (job.video_metadata && job.video_metadata.channel) ? `by ${job.video_metadata.channel}` : "";
     const hasVideo = job.rendered_video_path || job.preview_video_path;
     const ytId = job.youtube_video_id || (job.upload_result && job.upload_result.video_id);
 
-    // 1. Actions Buttons
+    // Actions Buttons
     let actions = "";
+    actions += `<button class="btn btn-secondary btn-sm" onclick="openEditJobModal('${job.id}')" title="Edit clip title, hook, or gameplay theme">✏️ Edit</button>`;
+
     if (hasVideo) {
       actions += `<button class="btn btn-secondary btn-sm" onclick="openPreview('${job.id}', '${encodeURIComponent(title)}')">▶ Preview</button>`;
     }
@@ -351,7 +515,7 @@ function renderJobs(jobs) {
     }
     actions += `<button class="btn btn-danger btn-sm" onclick="cleanJobFiles('${job.id}')" title="Safely purge intermediate work files">🗑️ Clean Files</button>`;
 
-    // 2. Copy Toolbar (SEO Title, Description, Hashtags)
+    // Copy Toolbar
     let copyToolbar = "";
     if (job.seo_title || job.full_description) {
       copyToolbar = `
@@ -384,7 +548,7 @@ function renderJobs(jobs) {
         <div class="job-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
         <div class="job-meta">
           <span>${escapeHtml(channel)}</span>
-          <span>Updated: ${new Date(job.updated_at).toLocaleTimeString()}</span>
+          <span>Updated: ${new Date(job.updated_at || Date.now()).toLocaleTimeString()}</span>
         </div>
         ${stepperHtml}
         ${copyToolbar}
@@ -393,7 +557,285 @@ function renderJobs(jobs) {
       </div>
     `;
   }).join("");
+
   renderPacingStatus();
+}
+
+// -----------------------------------------------------------------------------
+// Batch Actions: Retry Failed & Clean Completed
+// -----------------------------------------------------------------------------
+
+async function batchRetryFailed() {
+  const failedJobs = _jobsCache.filter(j => j.status === "FAILED");
+  if (failedJobs.length === 0) {
+    showToast("No failed jobs to retry.");
+    return;
+  }
+
+  showToast(`Retrying ${failedJobs.length} failed job(s)...`);
+  try {
+    const res = await fetch("/api/jobs/batch-retry", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      showToast(data.message || `Retried ${data.count || failedJobs.length} job(s)!`);
+      refreshJobs();
+      return;
+    }
+  } catch (e) {
+    console.debug("Batch retry endpoint fallback:", e);
+  }
+
+  // Graceful fallback to sequential retries
+  for (const j of failedJobs) {
+    try {
+      await fetch(`/api/jobs/${j.id}/retry`, { method: "POST" });
+    } catch (e) {}
+  }
+  refreshJobs();
+  showToast(`Triggered retry for ${failedJobs.length} job(s)!`);
+}
+
+async function batchCleanCompleted() {
+  const completedJobs = _jobsCache.filter(j => j.status === "COMPLETED" || j.status === "CLEANED");
+  if (completedJobs.length === 0) {
+    showToast("No completed jobs to clean.");
+    return;
+  }
+
+  if (!confirm(`Purge intermediate files for ${completedJobs.length} completed job(s)? Final master MP4s will be kept.`)) return;
+
+  showToast("Cleaning completed job files...");
+  try {
+    const res = await fetch("/api/jobs/batch-clean", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      showToast(data.message || `Cleaned files for ${data.count || completedJobs.length} job(s)!`);
+      refreshJobs();
+      return;
+    }
+  } catch (e) {
+    console.debug("Batch clean endpoint fallback:", e);
+  }
+
+  // Graceful fallback to individual job cleanup
+  let cleaned = 0;
+  for (const j of completedJobs) {
+    try {
+      await fetch(`/api/jobs/${j.id}`, { method: "DELETE" });
+      cleaned++;
+    } catch (e) {}
+  }
+  refreshJobs();
+  showToast(`Cleaned files for ${cleaned} job(s)!`);
+}
+
+// -----------------------------------------------------------------------------
+// Edit Job Metadata Modal
+// -----------------------------------------------------------------------------
+
+function openEditJobModal(jobId) {
+  const job = _jobsCache.find(j => j.id === jobId);
+  if (!job) return;
+
+  const modal = document.getElementById("edit-job-modal");
+  const modalId = document.getElementById("edit-job-modal-id");
+  const idInput = document.getElementById("edit-job-id");
+  const titleInput = document.getElementById("edit-clip-title");
+  const hookInput = document.getElementById("edit-hook-text");
+  const bgSelect = document.getElementById("edit-background-category");
+  const dopSelect = document.getElementById("edit-dopamine-level");
+
+  if (modalId) modalId.textContent = `#${job.id}`;
+  if (idInput) idInput.value = job.id;
+  if (titleInput) {
+    titleInput.value = job.clip_title || (job.video_metadata ? job.video_metadata.title : "");
+  }
+  if (hookInput) {
+    let hook = "";
+    if (job.selected_clips && job.selected_clips.length > 0) {
+      hook = job.selected_clips[0].hook_text || job.selected_clips[0].title || "";
+    } else if (job.edl && job.edl.recommended_hook) {
+      hook = job.edl.recommended_hook;
+    }
+    hookInput.value = hook;
+  }
+  if (bgSelect && job.background_category) bgSelect.value = job.background_category;
+  if (dopSelect && job.dopamine_level) dopSelect.value = job.dopamine_level;
+
+  if (modal) modal.style.display = "flex";
+}
+
+function closeEditJobModal(e) {
+  const modal = document.getElementById("edit-job-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function saveJobMetadata() {
+  const jobId = document.getElementById("edit-job-id").value;
+  if (!jobId) return;
+
+  const btn = document.getElementById("save-job-edit-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+  }
+
+  const payload = {
+    clip_title: document.getElementById("edit-clip-title").value.trim(),
+    hook_text: document.getElementById("edit-hook-text").value.trim(),
+    background_category: document.getElementById("edit-background-category").value,
+    dopamine_level: document.getElementById("edit-dopamine-level").value,
+  };
+
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      showToast(`Updated metadata for #${jobId}!`);
+      closeEditJobModal();
+      refreshJobs();
+    } else {
+      const err = await res.json();
+      showToast("Update failed: " + (err.detail || "Server error"));
+    }
+  } catch (err) {
+    showToast("Error updating job: " + err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💾 Save Changes";
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Live Links Preview Strip
+// -----------------------------------------------------------------------------
+
+async function previewLinks() {
+  const linksText = document.getElementById("links-input").value.trim();
+  const container = document.getElementById("links-preview-container");
+  const btn = document.getElementById("preview-links-btn");
+
+  if (!linksText) {
+    showToast("Please enter YouTube URL(s) to preview.");
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "🔍 Fetching...";
+  }
+
+  try {
+    const res = await fetch("/api/links/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ links_text: linksText, links: linksText }),
+    });
+
+    let items = [];
+    if (res.ok) {
+      const data = await res.json();
+      items = data.items || data.previews || [];
+    } else {
+      // Fallback: Client-side URL extraction and thumbnail resolution
+      items = parseLinksClientSide(linksText);
+    }
+
+    renderLinksPreview(items);
+  } catch (err) {
+    console.debug("Preview endpoint failed, using fallback:", err);
+    const items = parseLinksClientSide(linksText);
+    renderLinksPreview(items);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔍 Preview Links";
+    }
+  }
+}
+
+function parseLinksClientSide(text) {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  return lines.map((line, idx) => {
+    let url = line;
+    let instructions = "";
+    if (line.includes(" : ")) {
+      const parts = line.split(" : ");
+      url = parts[0].trim();
+      instructions = parts.slice(1).join(" : ").trim();
+    } else if (line.includes(":")) {
+      const firstColon = line.indexOf(":");
+      const secondColon = line.indexOf(":", firstColon + 1);
+      if (secondColon > 0) {
+        url = line.substring(0, secondColon).trim();
+        instructions = line.substring(secondColon + 1).trim();
+      }
+    }
+
+    // Extract YouTube ID
+    let ytId = "";
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    if (match && match[2].length === 11) {
+      ytId = match[2];
+    }
+
+    const thumb = ytId
+      ? `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`
+      : "https://via.placeholder.com/160x90/161b22/8b949e?text=Video";
+
+    return {
+      url: url,
+      title: ytId ? `YouTube Video [${ytId}]` : (url.length > 40 ? url.substring(0, 37) + "..." : url),
+      channel: "YouTube Source",
+      duration_str: "Clip candidate",
+      thumbnail_url: thumb,
+      instructions: instructions,
+    };
+  });
+}
+
+function renderLinksPreview(items) {
+  const container = document.getElementById("links-preview-container");
+  if (!container) return;
+
+  if (!items || items.length === 0) {
+    container.style.display = "none";
+    return;
+  }
+
+  container.style.display = "flex";
+  container.innerHTML = items.map(item => {
+    const thumb = item.thumbnail_url || "https://via.placeholder.com/160x90/161b22/8b949e?text=No+Thumb";
+    const title = item.title || item.url;
+    const channel = item.channel || "Source Video";
+    const duration = item.duration_str || (item.duration ? `${Math.round(item.duration)}s` : "");
+    const instructionsTag = item.instructions
+      ? `<span class="preview-instructions-tag" title="${escapeHtml(item.instructions)}">💡 ${escapeHtml(item.instructions)}</span>`
+      : "";
+
+    return `
+      <div class="preview-link-card">
+        <div class="preview-thumb-wrap">
+          <img src="${escapeHtml(thumb)}" alt="Thumbnail" class="preview-thumb-img" onerror="this.src='https://via.placeholder.com/160x90/161b22/8b949e?text=Video'">
+          ${duration ? `<span class="preview-duration-badge">${escapeHtml(duration)}</span>` : ""}
+        </div>
+        <div class="preview-info">
+          <div class="preview-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
+          <div class="preview-meta-row">
+            <span>${escapeHtml(channel)}</span>
+            ${instructionsTag}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 // -----------------------------------------------------------------------------
@@ -428,7 +870,6 @@ function copyToClipboard(text) {
   if (navigator.clipboard && window.isSecureContext) {
     return navigator.clipboard.writeText(text);
   } else {
-    // Fallback for non-https or restricted environments
     return new Promise((resolve, reject) => {
       const textarea = document.createElement("textarea");
       textarea.value = text;
@@ -483,15 +924,19 @@ function initLogStream() {
   _eventSource = new EventSource("/api/logs/stream");
 
   _eventSource.onopen = () => {
-    dot.className = "log-dot live";
-    badge.textContent = "● Live Stream Connected";
-    badge.style.color = "var(--accent-green)";
+    if (dot) dot.className = "log-dot live";
+    if (badge) {
+      badge.textContent = "● Live Stream Connected";
+      badge.style.color = "var(--accent-green)";
+    }
   };
 
   _eventSource.onerror = () => {
-    dot.className = "log-dot";
-    badge.textContent = "○ Reconnecting...";
-    badge.style.color = "var(--accent-yellow)";
+    if (dot) dot.className = "log-dot";
+    if (badge) {
+      badge.textContent = "○ Reconnecting...";
+      badge.style.color = "var(--accent-yellow)";
+    }
   };
 
   _eventSource.onmessage = (event) => {
@@ -513,19 +958,14 @@ function appendLogMessage(msg) {
   const terminal = document.getElementById("log-terminal");
   if (!terminal) return;
 
-  // Clear initial placeholder if present
   const placeholder = terminal.querySelector(".log-placeholder");
   if (placeholder) placeholder.remove();
 
-  // Determine log level class
   let levelClass = "log-info";
-  let level = "INFO";
   if (msg.includes("[ERROR]") || msg.includes("ERROR:")) {
     levelClass = "log-error";
-    level = "ERROR";
   } else if (msg.includes("[WARNING]") || msg.includes("WARNING:")) {
     levelClass = "log-warning";
-    level = "WARN";
   }
 
   const lineEl = document.createElement("div");
@@ -534,12 +974,10 @@ function appendLogMessage(msg) {
 
   terminal.appendChild(lineEl);
 
-  // Keep max 500 lines
   while (terminal.childNodes.length > 500) {
     terminal.removeChild(terminal.firstChild);
   }
 
-  // Auto-scroll if enabled
   const autoscroll = document.getElementById("log-autoscroll");
   if (!autoscroll || autoscroll.checked) {
     terminal.scrollTop = terminal.scrollHeight;
@@ -641,13 +1079,27 @@ async function submitJobs() {
     return;
   }
 
+  const bgVal = document.getElementById("background-select")
+    ? document.getElementById("background-select").value
+    : (document.getElementById("bg-select") ? document.getElementById("bg-select").value : "minecraft");
+
+  const stylePreset = document.getElementById("style-preset-select")
+    ? document.getElementById("style-preset-select").value
+    : "neon";
+
+  const privacyStatus = document.getElementById("privacy-status-select")
+    ? document.getElementById("privacy-status-select").value
+    : "public";
+
   const payload = {
     links: links,
     provider: document.getElementById("provider-select").value,
-    background: document.getElementById("background-select").value,
+    background: bgVal,
     dopamine: document.getElementById("dopamine-select").value,
     upload_mode: document.getElementById("upload-mode-select").value,
     auto_upload: document.getElementById("auto-upload-toggle").checked,
+    style_preset: stylePreset,
+    privacy_status: privacyStatus,
   };
 
   const btn = document.getElementById("submit-btn");
@@ -668,6 +1120,9 @@ async function submitJobs() {
     }
 
     document.getElementById("links-input").value = "";
+    const previewContainer = document.getElementById("links-preview-container");
+    if (previewContainer) previewContainer.style.display = "none";
+
     refreshJobs();
     showToast("Submitted jobs to pipeline!");
   } catch (err) {
@@ -702,7 +1157,6 @@ async function importSpark() {
     const hints = data.hints || [];
     feedback.textContent = `Successfully parsed ${hints.length} clip hint(s)! Added to links box.`;
 
-    // Append to links input
     const current = document.getElementById("links-input").value;
     const added = hints.map(h => `${h.url} : ${h.topic || h.hook_text || "Spark clip"}`).join("\n");
     document.getElementById("links-input").value = current ? `${current}\n${added}` : added;
@@ -760,6 +1214,535 @@ async function cleanJobFiles(jobId) {
   }
 }
 
+// -----------------------------------------------------------------------------
+// YouTube Data v3 API & Settings Modal
+// -----------------------------------------------------------------------------
+
+async function checkInitialYouTubeAuth() {
+  try {
+    const res = await fetch("/api/settings/youtube-oauth/status");
+    let isAuthorized = false;
+    let secretExists = false;
+
+    if (res.ok) {
+      const data = await res.json();
+      isAuthorized = Boolean(data.authorized || data.status === "authorized");
+      secretExists = Boolean(data.client_secret_exists || data.has_client_secret);
+    } else {
+      // Fallback: check /api/settings
+      const setRes = await fetch("/api/settings");
+      if (setRes.ok) {
+        const s = await setRes.json();
+        isAuthorized = Boolean(s.youtube && s.youtube.oauth_authorized);
+        secretExists = Boolean(s.youtube && s.youtube.client_secret_exists);
+      }
+    }
+
+    const badge = document.getElementById("yt-api-status-badge");
+    const dot = document.getElementById("yt-api-status-dot");
+    const label = document.getElementById("yt-api-status-label");
+
+    if (isAuthorized) {
+      if (dot) dot.className = "dot green";
+      if (label) label.textContent = "YouTube API: Ready";
+      if (badge) {
+        badge.style.borderColor = "var(--accent-green)";
+        badge.title = "YouTube Data API v3 OAuth token authorized and ready for 100 free daily uploads";
+      }
+    } else {
+      if (dot) dot.className = "dot yellow";
+      if (label) label.textContent = secretExists ? "YouTube API: Needs OAuth" : "YouTube API: Not Configured";
+      if (badge) {
+        badge.style.borderColor = "var(--accent-yellow)";
+        badge.title = "Configure YouTube Data API v3 in Settings to unlock 100 free daily uploads";
+      }
+    }
+
+    // Update Badges inside Settings Modal
+    const secretBadge = document.getElementById("badge-client-secret-status");
+    const tokenBadge = document.getElementById("badge-oauth-token-status");
+    if (secretBadge) {
+      if (secretExists) {
+        secretBadge.textContent = "✓ client_secret.json found";
+        secretBadge.className = "badge status-COMPLETED";
+      } else {
+        secretBadge.textContent = "❌ client_secret.json missing";
+        secretBadge.className = "badge status-FAILED";
+      }
+    }
+    if (tokenBadge) {
+      if (isAuthorized) {
+        tokenBadge.textContent = "✓ token.json authorized";
+        tokenBadge.className = "badge status-COMPLETED";
+      } else {
+        tokenBadge.textContent = "⚠️ OAuth unauthorized";
+        tokenBadge.className = "badge status-SCHEDULED";
+      }
+    }
+  } catch (err) {
+    console.debug("YouTube auth status check failed:", err);
+  }
+}
+
+function openSettingsModal() {
+  const modal = document.getElementById("settings-modal");
+  if (modal) modal.style.display = "flex";
+  loadAllSettings();
+  checkInitialYouTubeAuth();
+}
+
+function closeSettingsModal(e) {
+  const modal = document.getElementById("settings-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function switchSettingsTab(tabName) {
+  document.querySelectorAll(".settings-tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.getAttribute("data-tab") === tabName);
+  });
+  document.querySelectorAll(".settings-tab-pane").forEach(pane => {
+    pane.classList.toggle("active", pane.id === `tab-pane-${tabName}`);
+  });
+}
+
+async function loadAllSettings() {
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return;
+    const cfg = await res.json();
+    _settingsCache = cfg;
+
+    // 1. YouTube & Upload Tab
+    const up = cfg.upload || {};
+    const yt = cfg.youtube || {};
+    if (document.getElementById("setting-upload-mode")) {
+      document.getElementById("setting-upload-mode").value = up.mode || "local";
+    }
+    if (document.getElementById("setting-privacy-status")) {
+      document.getElementById("setting-privacy-status").value = up.default_privacy_status || "public";
+    }
+    if (document.getElementById("setting-quota-fallback")) {
+      document.getElementById("setting-quota-fallback").value = up.quota_exhausted_fallback || "studio";
+    }
+    if (document.getElementById("setting-title-template") && up.title_template) {
+      document.getElementById("setting-title-template").value = up.title_template;
+    }
+    if (document.getElementById("setting-desc-template") && up.description_template) {
+      document.getElementById("setting-desc-template").value = up.description_template;
+    }
+    if (document.getElementById("setting-yt-api-key") && yt.api_key) {
+      document.getElementById("setting-yt-api-key").placeholder = "•••••••••••••••••••• (Configured)";
+    }
+
+    // 2. AI Providers Tab
+    const llm = cfg.llm || {};
+    const ep = cfg.edit_planner || {};
+    if (document.getElementById("setting-active-provider")) {
+      document.getElementById("setting-active-provider").value = llm.provider || "local";
+    }
+    if (document.getElementById("setting-active-model")) {
+      document.getElementById("setting-active-model").value = llm.model || "";
+    }
+    if (document.getElementById("setting-gemini-key") && cfg.gemini_api_key_masked) {
+      document.getElementById("setting-gemini-key").placeholder = cfg.gemini_api_key_masked;
+    }
+    if (document.getElementById("setting-openrouter-key") && cfg.openrouter_api_key_masked) {
+      document.getElementById("setting-openrouter-key").placeholder = cfg.openrouter_api_key_masked;
+    }
+    if (document.getElementById("setting-local-gguf-path")) {
+      document.getElementById("setting-local-gguf-path").value = llm.local_gguf_path || "";
+    }
+    if (document.getElementById("setting-edit-planner-toggle")) {
+      document.getElementById("setting-edit-planner-toggle").checked = ep.enabled !== false;
+    }
+
+    // 3. Subtitles & Pacing Tab
+    const subs = cfg.subtitles || {};
+    const jd = cfg.job_defaults || {};
+    const sched = cfg.scheduler || {};
+    if (document.getElementById("setting-style-preset")) {
+      document.getElementById("setting-style-preset").value = subs.style_preset || "neon";
+    }
+    if (document.getElementById("setting-words-per-burst")) {
+      document.getElementById("setting-words-per-burst").value = subs.words_per_burst || 3;
+    }
+    if (document.getElementById("setting-pop-scale")) {
+      document.getElementById("setting-pop-scale").value = subs.karaoke_pop_scale || 1.15;
+    }
+    if (document.getElementById("setting-margin-v")) {
+      document.getElementById("setting-margin-v").value = subs.margin_v || 180;
+    }
+    if (document.getElementById("setting-min-duration")) {
+      document.getElementById("setting-min-duration").value = jd.min_duration_seconds || 30;
+    }
+    if (document.getElementById("setting-max-duration")) {
+      document.getElementById("setting-max-duration").value = jd.max_duration_seconds || 55;
+    }
+    if (document.getElementById("setting-clips-per-video")) {
+      document.getElementById("setting-clips-per-video").value = jd.clips_per_video || 1;
+    }
+    if (document.getElementById("setting-daily-cap")) {
+      document.getElementById("setting-daily-cap").value = sched.daily_upload_cap || 50;
+    }
+    if (document.getElementById("setting-hourly-cap")) {
+      document.getElementById("setting-hourly-cap").value = sched.max_per_rolling_hour || 7;
+    }
+    if (document.getElementById("setting-gap-min")) {
+      document.getElementById("setting-gap-min").value = sched.min_gap_minutes || 5;
+    }
+    if (document.getElementById("setting-gap-max")) {
+      document.getElementById("setting-gap-max").value = sched.max_gap_minutes || 25;
+    }
+    if (document.getElementById("setting-active-start")) {
+      document.getElementById("setting-active-start").value = sched.active_hours_start || "08:00";
+    }
+    if (document.getElementById("setting-active-end")) {
+      document.getElementById("setting-active-end").value = sched.active_hours_end || "23:59";
+    }
+    if (document.getElementById("setting-prevent-sleep")) {
+      document.getElementById("setting-prevent-sleep").checked = sched.prevent_sleep !== false;
+    }
+
+    // 4. Storage Tab
+    const clean = cfg.cleanup || {};
+    if (document.getElementById("setting-cleanup-enabled")) {
+      document.getElementById("setting-cleanup-enabled").checked = clean.enabled !== false;
+    }
+    if (document.getElementById("setting-use-recycle-bin")) {
+      document.getElementById("setting-use-recycle-bin").checked = clean.use_recycle_bin !== false;
+    }
+    if (document.getElementById("setting-keep-master-mp4")) {
+      document.getElementById("setting-keep-master-mp4").checked = clean.keep_master_mp4 !== false;
+    }
+    if (document.getElementById("setting-retention-days")) {
+      document.getElementById("setting-retention-days").value = clean.keep_final_days !== undefined ? clean.keep_final_days : 30;
+    }
+
+    syncPresetCardHighlight();
+  } catch (err) {
+    console.debug("Error loading settings:", err);
+  }
+}
+
+async function saveAllSettings() {
+  const btn = document.getElementById("save-settings-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+  }
+
+  const payload = {
+    upload: {
+      mode: document.getElementById("setting-upload-mode").value,
+      default_privacy_status: document.getElementById("setting-privacy-status").value,
+      quota_exhausted_fallback: document.getElementById("setting-quota-fallback").value,
+      title_template: document.getElementById("setting-title-template").value,
+      description_template: document.getElementById("setting-desc-template").value,
+    },
+    llm: {
+      provider: document.getElementById("setting-active-provider").value,
+      model: document.getElementById("setting-active-model").value.trim() || null,
+      local_gguf_path: document.getElementById("setting-local-gguf-path").value.trim() || null,
+    },
+    edit_planner: {
+      enabled: document.getElementById("setting-edit-planner-toggle").checked,
+      model: null,
+    },
+    subtitles: {
+      style_preset: document.getElementById("setting-style-preset").value,
+      words_per_burst: parseInt(document.getElementById("setting-words-per-burst").value, 10),
+      karaoke_pop_scale: parseFloat(document.getElementById("setting-pop-scale").value),
+      margin_v: parseInt(document.getElementById("setting-margin-v").value, 10),
+    },
+    job_defaults: {
+      min_duration_seconds: parseInt(document.getElementById("setting-min-duration").value, 10),
+      max_duration_seconds: parseInt(document.getElementById("setting-max-duration").value, 10),
+      clips_per_video: parseInt(document.getElementById("setting-clips-per-video").value, 10),
+    },
+    scheduler: {
+      daily_upload_cap: parseInt(document.getElementById("setting-daily-cap").value, 10),
+      max_per_rolling_hour: parseInt(document.getElementById("setting-hourly-cap").value, 10),
+      min_gap_minutes: parseInt(document.getElementById("setting-gap-min").value, 10),
+      max_gap_minutes: parseInt(document.getElementById("setting-gap-max").value, 10),
+      active_hours_start: document.getElementById("setting-active-start").value,
+      active_hours_end: document.getElementById("setting-active-end").value,
+      prevent_sleep: document.getElementById("setting-prevent-sleep").checked,
+    },
+    cleanup: {
+      enabled: document.getElementById("setting-cleanup-enabled").checked,
+      use_recycle_bin: document.getElementById("setting-use-recycle-bin").checked,
+      keep_master_mp4: document.getElementById("setting-keep-master-mp4").checked,
+      keep_final_days: parseInt(document.getElementById("setting-retention-days").value, 10),
+    },
+  };
+
+  const ytKey = document.getElementById("setting-yt-api-key").value.trim();
+  if (ytKey) {
+    payload.youtube = { api_key: ytKey };
+  }
+  const geminiKey = document.getElementById("setting-gemini-key").value.trim();
+  if (geminiKey) {
+    payload.gemini_api_key = geminiKey;
+  }
+  const orKey = document.getElementById("setting-openrouter-key").value.trim();
+  if (orKey) {
+    payload.openrouter_api_key = orKey;
+  }
+
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      showToast("✓ Settings successfully saved!");
+      closeSettingsModal();
+      refreshHealth();
+      refreshQuota();
+    } else {
+      const err = await res.json();
+      showToast("Failed to save settings: " + (err.detail || "Server error"));
+    }
+  } catch (err) {
+    showToast("Network error saving settings: " + err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💾 Save All Settings";
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// YouTube Client Secret & OAuth Flow
+// -----------------------------------------------------------------------------
+
+function handleClientSecretFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const content = event.target.result;
+    document.getElementById("yt-secret-raw-textarea").value = content;
+    saveClientSecretRaw();
+  };
+  reader.readAsText(file);
+}
+
+async function saveClientSecretRaw() {
+  const raw = document.getElementById("yt-secret-raw-textarea").value.trim();
+  const feedback = document.getElementById("yt-oauth-feedback");
+  if (!raw) {
+    if (feedback) feedback.textContent = "Paste raw client_secret.json or select file first.";
+    return;
+  }
+
+  try {
+    JSON.parse(raw); // validate JSON syntax
+  } catch (err) {
+    if (feedback) feedback.textContent = "Invalid JSON format: " + err;
+    return;
+  }
+
+  if (feedback) feedback.textContent = "Saving client_secret.json...";
+
+  try {
+    const res = await fetch("/api/settings/youtube-client-secret", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: raw }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (feedback) feedback.textContent = "✓ Client secret saved successfully!";
+      showToast("Saved client_secret.json to data/!");
+      checkInitialYouTubeAuth();
+    } else {
+      const err = await res.json();
+      if (feedback) feedback.textContent = "Error: " + (err.detail || "Save failed");
+    }
+  } catch (err) {
+    if (feedback) feedback.textContent = "Network error: " + err;
+  }
+}
+
+async function triggerYouTubeOAuth() {
+  const btn = document.getElementById("yt-oauth-authorize-btn");
+  const feedback = document.getElementById("yt-oauth-feedback");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Authorizing...";
+  }
+  if (feedback) feedback.textContent = "Initiating OAuth 2.0 flow...";
+
+  try {
+    const res = await fetch("/api/settings/youtube-oauth", { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json();
+      if (feedback) feedback.textContent = "OAuth error: " + (err.detail || "Failed to start OAuth");
+      return;
+    }
+
+    const data = await res.json();
+    if (data.authorization_url) {
+      window.open(data.authorization_url, "_blank");
+    }
+
+    if (feedback) feedback.textContent = data.message || "Browser opened for Google OAuth sign-in. Waiting for token...";
+    startYouTubeOAuthPolling();
+  } catch (err) {
+    if (feedback) feedback.textContent = "Error: " + err;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔗 Authorize YouTube Account (OAuth 2.0)";
+    }
+  }
+}
+
+function startYouTubeOAuthPolling() {
+  if (_oauthPollTimer) clearInterval(_oauthPollTimer);
+  _oauthPollTimer = setInterval(async () => {
+    try {
+      const res = await fetch("/api/settings/youtube-oauth/status");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.authorized || data.status === "authorized") {
+        clearInterval(_oauthPollTimer);
+        _oauthPollTimer = null;
+        const feedback = document.getElementById("yt-oauth-feedback");
+        if (feedback) feedback.textContent = "✓ YouTube Account Authorized Successfully!";
+        showToast("✓ YouTube Account Authorized!");
+        checkInitialYouTubeAuth();
+      }
+    } catch (e) {}
+  }, 2000);
+}
+
+// -----------------------------------------------------------------------------
+// AI Provider Test & Model Resolution
+// -----------------------------------------------------------------------------
+
+async function testProviderApi(provider) {
+  const keyInput = provider === "gemini"
+    ? document.getElementById("setting-gemini-key")
+    : document.getElementById("setting-openrouter-key");
+
+  const feedback = provider === "gemini"
+    ? document.getElementById("gemini-test-feedback")
+    : document.getElementById("openrouter-test-feedback");
+
+  const dropdownWrap = provider === "gemini"
+    ? document.getElementById("gemini-model-select-wrap")
+    : document.getElementById("openrouter-model-select-wrap");
+
+  const select = provider === "gemini"
+    ? document.getElementById("gemini-model-select")
+    : document.getElementById("openrouter-model-select");
+
+  const apiKey = keyInput ? keyInput.value.trim() : "";
+  if (feedback) feedback.textContent = `Testing ${provider} connection & fetching models...`;
+
+  try {
+    const res = await fetch("/api/settings/test-provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: provider, api_key: apiKey || null }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      if (feedback) feedback.textContent = "Connection test failed: " + (err.detail || "Server error");
+      return;
+    }
+
+    const data = await res.json();
+    const models = data.models || [];
+    if (feedback) feedback.textContent = `✓ Connected! Found ${models.length} model(s).`;
+    showToast(`✓ Fetched ${models.length} models for ${provider}`);
+
+    if (models.length > 0 && select && dropdownWrap) {
+      select.innerHTML = '<option value="">-- Choose Live Model --</option>' +
+        models.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+      dropdownWrap.style.display = "block";
+    }
+  } catch (err) {
+    if (feedback) feedback.textContent = "Error testing provider: " + err;
+  }
+}
+
+function applySelectedModel(provider) {
+  const select = provider === "gemini"
+    ? document.getElementById("gemini-model-select")
+    : document.getElementById("openrouter-model-select");
+
+  if (select && select.value) {
+    const modelInput = document.getElementById("setting-active-model");
+    if (modelInput) modelInput.value = select.value;
+    const providerSelect = document.getElementById("setting-active-provider");
+    if (providerSelect) providerSelect.value = provider;
+    showToast(`Selected model: ${select.value}`);
+  }
+}
+
+function handleActiveProviderChange() {
+  const provider = document.getElementById("setting-active-provider").value;
+  const modelInput = document.getElementById("setting-active-model");
+  if (modelInput && !modelInput.value) {
+    modelInput.placeholder = `${provider} default (Auto-Resolve)`;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Subtitle Style Presets UI
+// -----------------------------------------------------------------------------
+
+function selectPresetOption(preset) {
+  const select = document.getElementById("setting-style-preset");
+  if (select) {
+    select.value = preset;
+    syncPresetCardHighlight();
+  }
+}
+
+function syncPresetCardHighlight() {
+  const select = document.getElementById("setting-style-preset");
+  if (!select) return;
+  const val = select.value || "neon";
+
+  ["neon", "minimal", "pill"].forEach(p => {
+    const card = document.getElementById(`preset-card-${p}`);
+    if (card) {
+      card.classList.toggle("active", p === val);
+    }
+  });
+
+  const mainPreset = document.getElementById("style-preset-select");
+  if (mainPreset && mainPreset.value !== val) {
+    mainPreset.value = val;
+  }
+}
+
+function togglePasswordInput(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  if (input.type === "password") {
+    input.type = "text";
+    if (btn) btn.textContent = "🔒";
+  } else {
+    input.type = "password";
+    if (btn) btn.textContent = "👁️";
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Edge YouTube Studio Automation
+// -----------------------------------------------------------------------------
+
 let _edgeLoginPollTimer = null;
 
 async function checkInitialEdgeAuth() {
@@ -798,7 +1781,7 @@ function openEdgeLoginModal() {
   const dot = document.getElementById("edge-status-dot");
   const statusText = document.getElementById("edge-status-text");
   const errorBox = document.getElementById("edge-login-error");
-  const verifyBtn = document.getElementById("edge-check-status-btn") || document.getElementById("edge-manual-verify-btn");
+  const verifyBtn = document.getElementById("edge-check-status-btn");
 
   if (errorBox) errorBox.style.display = "none";
   if (spinner) spinner.textContent = "🌐";
@@ -808,12 +1791,8 @@ function openEdgeLoginModal() {
     badge.style.borderColor = "";
     badge.style.color = "";
   }
-  if (dot) {
-    dot.className = "dot yellow";
-  }
-  if (statusText) {
-    statusText.textContent = "Opening Microsoft Edge... Please log in to your Google Account.";
-  }
+  if (dot) dot.className = "dot yellow";
+  if (statusText) statusText.textContent = "Opening Microsoft Edge... Please log in to your Google Account.";
   if (verifyBtn) {
     verifyBtn.disabled = false;
     verifyBtn.textContent = "🔍 Check Login Status";
@@ -906,7 +1885,7 @@ function handleEdgeStatusUpdate(data) {
 }
 
 async function checkEdgeLoginNow() {
-  const verifyBtn = document.getElementById("edge-check-status-btn") || document.getElementById("edge-manual-verify-btn");
+  const verifyBtn = document.getElementById("edge-check-status-btn");
   const statusText = document.getElementById("edge-status-text");
   if (verifyBtn) {
     verifyBtn.disabled = true;
@@ -1114,9 +2093,11 @@ function openPreview(jobId, title) {
 function closePreviewModal(e) {
   const modal = document.getElementById("preview-modal");
   const video = document.getElementById("modal-video");
-  video.pause();
-  video.src = "";
-  modal.style.display = "none";
+  if (video) {
+    video.pause();
+    video.src = "";
+  }
+  if (modal) modal.style.display = "none";
 }
 
 function refreshDashboard() {
@@ -1125,6 +2106,8 @@ function refreshDashboard() {
   refreshScheduler();
   refreshJobs();
   refreshBackgrounds();
+  refreshSchedulerSlots();
+  checkInitialYouTubeAuth();
 }
 
 function escapeHtml(str) {

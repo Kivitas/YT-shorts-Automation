@@ -1,6 +1,7 @@
+# AutoShorts v1.0
 app:
   name: "AutoShorts-OnDevice"
-  version: "3.2.0"
+  version: "1.0.0"
   port: 8765
   host: "127.0.0.1"
   auto_open_browser: true
@@ -71,6 +72,7 @@ media:
   generate_lowres_preview: true    # Renders 540x960 fast preview for dashboard
 
 subtitles:
+  style_preset: "neon"             # "neon", "minimal", or "pill"
   font_name: "Montserrat ExtraBold"
   font_size: 76
   words_per_burst: 3
@@ -82,6 +84,7 @@ subtitles:
 
 upload:
   mode: "api"                      # "api" (Data API v3), "studio" (Playwright Edge), "local" (export only)
+  default_privacy_status: "public" # "private", "unlisted", "public"
   privacy_status: "unlisted"       # "private", "unlisted", "public"
   title_template: "{hook} | {channel} #Shorts"
   description_template: |

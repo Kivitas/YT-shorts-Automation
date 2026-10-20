@@ -246,9 +246,16 @@ class ShortsPipeline:
         immediate_upload: bool = False,
         background_category: str | None = None,
         dopamine_level: str | None = None,
+        style_preset: str | None = None,
+        privacy_status: str | None = None,
     ) -> Job:
         """Execute end-to-end processing pipeline for a single job with stage caching."""
         job = self._resolve_job(job_or_id)
+
+        if style_preset is not None:
+            job.style_preset = style_preset
+        if privacy_status is not None:
+            job.privacy_status = privacy_status
 
         # If job is already completed or cleaned, return immediately
         if job.status in (JobStatus.COMPLETED, JobStatus.CLEANED):
@@ -316,6 +323,8 @@ class ShortsPipeline:
         background_category: str | None = None,
         dopamine_level: str | None = None,
         custom_instructions: str | None = None,
+        style_preset: str | None = None,
+        privacy_status: str | None = None,
     ) -> list[Job]:
         """Process a batch of links or Job objects sequentially."""
         if isinstance(jobs_or_links, (str, Path)) or (
@@ -336,6 +345,8 @@ class ShortsPipeline:
                     immediate_upload=immediate_upload,
                     background_category=background_category,
                     dopamine_level=dopamine_level,
+                    style_preset=style_preset,
+                    privacy_status=privacy_status,
                 )
                 results.append(processed)
             except Exception as err:
@@ -352,6 +363,8 @@ class ShortsPipeline:
         immediate_upload: bool = False,
         background_category: str | None = None,
         dopamine_level: str | None = None,
+        style_preset: str | None = None,
+        privacy_status: str | None = None,
     ) -> Job:
         """Reset a failed job to QUEUED and re-execute pipeline."""
         job = self.state_manager.get_job(job_id)
@@ -369,6 +382,8 @@ class ShortsPipeline:
             immediate_upload=immediate_upload,
             background_category=background_category,
             dopamine_level=dopamine_level,
+            style_preset=style_preset,
+            privacy_status=privacy_status,
         )
 
     # -------------------------------------------------------------------------
@@ -682,7 +697,9 @@ class ShortsPipeline:
                 max(1.0, sel.candidate.duration - hook_in) if sel.candidate.duration else None
             )
             jump_cuts = job.edl.jump_cuts if (job.edl and job.edl.jump_cuts) else None
-            style_preset = getattr(self.config.subtitles, "style_preset", "neon")
+            style_preset = getattr(job, "style_preset", None) or getattr(
+                self.config.subtitles, "style_preset", "neon"
+            )
 
             write_ass_file(
                 output_path=ass_path,
@@ -813,12 +830,11 @@ class ShortsPipeline:
         stage_id = self.state_manager.record_stage_start(job.id, "immediate_upload")
         upload_cfg = getattr(self.config, "upload", None)
         fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
-        default_privacy = (
-            getattr(upload_cfg, "default_privacy_status", None)
-            or getattr(upload_cfg, "privacy_status", None)
-            or "unlisted"
+        privacy = (
+            getattr(job, "privacy_status", None)
+            or getattr(self.config.upload, "default_privacy_status", None)
+            or getattr(self.config.upload, "privacy_status", "unlisted")
         )
-        target_privacy = default_privacy
 
         use_uploader = self.uploader
         fell_back_to_studio = False
@@ -848,10 +864,10 @@ class ShortsPipeline:
                     "title": title,
                     "description": desc,
                     "tags": ["Shorts", "AutoShorts"],
-                    "privacy": target_privacy,
+                    "privacy": privacy,
                 }
                 if isinstance(use_uploader, PlaywrightStudioUploader):
-                    kwargs["privacy_status"] = target_privacy
+                    kwargs["privacy_status"] = privacy
                 result = use_uploader.upload(**kwargs)
             except Exception as up_err:
                 is_quota_err = isinstance(up_err, QuotaExhaustedError) or (
@@ -873,8 +889,8 @@ class ShortsPipeline:
                         title=title,
                         description=desc,
                         tags=["Shorts", "AutoShorts"],
-                        privacy=target_privacy,
-                        privacy_status=target_privacy,
+                        privacy=privacy,
+                        privacy_status=privacy,
                     )
                 else:
                     raise
@@ -929,13 +945,19 @@ class ShortsPipeline:
         job.transition_to(JobStatus.SCHEDULED)
         self.state_manager.save_job(job)
 
+        privacy = (
+            getattr(job, "privacy_status", None)
+            or getattr(self.config.upload, "default_privacy_status", None)
+            or getattr(self.config.upload, "privacy_status", "unlisted")
+        )
+
         sched_time = self.scheduler.enqueue(
             job_id=job.id,
             video_path=Path(job.rendered_video_path),  # type: ignore[arg-type]
             title=title,
             description=desc,
             tags=["Shorts", "AutoShorts"],
-            privacy_status=self.config.upload.privacy_status,
+            privacy_status=privacy,
         )
         job.scheduled_time = sched_time
         self.state_manager.save_job(job)

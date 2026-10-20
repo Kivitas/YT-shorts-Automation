@@ -190,6 +190,12 @@ class Job(BaseModel):
         default=None, description="Path to master 1080x1920 MP4"
     )
     preview_video_path: str | None = Field(default=None, description="Path to low-res preview MP4")
+    style_preset: str = Field(
+        default="neon", description="Subtitle visual preset: neon, minimal, or pill"
+    )
+    privacy_status: str | None = Field(
+        default=None, description="Target YouTube privacy status override"
+    )
     scheduled_time: datetime | None = Field(default=None, description="Scheduled upload timestamp")
     upload_result: UploadResult | None = Field(default=None, description="Upload outcome")
     error_message: str | None = Field(default=None, description="Last error message if failed")

@@ -23,7 +23,7 @@ class AppConfig(BaseModel):
     """Application web server and UI parameters."""
 
     name: str = "AutoShorts-OnDevice"
-    version: str = "3.2.0"
+    version: str = "1.0.0"
     port: int = 8765
     host: str = "127.0.0.1"
     auto_open_browser: bool = True
@@ -167,6 +167,9 @@ class SubtitlesConfig(BaseModel):
     primary_color: str = "&H00FFFFFF"
     outline_color: str = "&H00000000"
     safe_zone_margin_v: int = 780
+    style_preset: str = Field(
+        default="neon", description="Subtitle visual preset: neon, minimal, or pill"
+    )
 
 
 class CleanupConfig(BaseModel):
@@ -206,14 +209,21 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
     openrouter_api_key: SecretStr | None = Field(default=None, alias="OPENROUTER_API_KEY")
+    youtube_api_key: SecretStr | None = Field(default=None, alias="YOUTUBE_API_KEY")
     local_gguf_path: str | None = Field(default=None, alias="LOCAL_GGUF_PATH")
 
-    def model_post_init(self, context: Any, /) -> None:
+    def _register_loaded_secrets(self) -> None:
         """Register loaded secrets for automatic redaction in logs."""
         if self.gemini_api_key:
             register_secret(self.gemini_api_key.get_secret_value())
         if self.openrouter_api_key:
             register_secret(self.openrouter_api_key.get_secret_value())
+        if self.youtube_api_key:
+            register_secret(self.youtube_api_key.get_secret_value())
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Register loaded secrets for automatic redaction in logs."""
+        self._register_loaded_secrets()
 
     def get_gemini_api_key_str(self) -> str | None:
         """Return the unmasked Gemini API key string, or None if not set."""
@@ -222,6 +232,10 @@ class Settings(BaseSettings):
     def get_openrouter_api_key_str(self) -> str | None:
         """Return the unmasked OpenRouter API key string, or None if not set."""
         return self.openrouter_api_key.get_secret_value() if self.openrouter_api_key else None
+
+    def get_youtube_api_key_str(self) -> str | None:
+        """Return the unmasked YouTube API key string, or None if not set."""
+        return self.youtube_api_key.get_secret_value() if self.youtube_api_key else None
 
 
 def load_config(config_path: Path | str | None = None) -> Settings:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoShorts On-Device Dashboard</title>
+  <title>AutoShorts On-Device Dashboard v1.0</title>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,11 +14,15 @@
     <div class="logo-area">
       <div class="brand-icon">⚡</div>
       <div>
-        <h1>AutoShorts <span class="badge version">v3.2</span></h1>
+        <h1>AutoShorts <span class="badge version version-badge">v1.0</span></h1>
         <p class="subtitle">On-Device SemIf Video Ingestion &amp; Pacing Orchestrator</p>
       </div>
     </div>
-    <div class="header-badges">
+    <div class="header-badges header-right">
+      <div class="badge yt-badge" id="yt-api-status-badge" title="YouTube Data API v3 Status">
+        <span class="dot yellow" id="yt-api-status-dot"></span>
+        <span id="yt-api-status-label">YouTube API: Checking...</span>
+      </div>
       <div class="badge system-badge" id="cpu-badge">
         <span class="dot green"></span> <span id="cpu-label">CPU int8 (Zero CUDA)</span>
       </div>
@@ -30,6 +34,9 @@
       </div>
       <button id="edge-login-btn" class="btn btn-secondary btn-sm" onclick="triggerEdgeLogin()" title="Sign into YouTube Studio via Microsoft Edge">
         🔑 Edge Sign-In
+      </button>
+      <button id="open-settings-btn" class="btn btn-primary-gradient btn-sm" onclick="openSettingsModal()" title="Open AutoShorts Settings">
+        ⚙️ Settings
       </button>
     </div>
   </header>
@@ -47,7 +54,9 @@
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="upload-bar" style="width: 0%;"></div>
         </div>
-        <div class="metric-footer" id="upload-remaining">100 free uploads remaining today</div>
+        <div class="metric-footer" id="upload-remaining">
+          <span id="quota-upload-text">100 free uploads remaining today</span>
+        </div>
       </div>
 
       <!-- General Bucket -->
@@ -60,7 +69,9 @@
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="general-bar" style="width: 0%;"></div>
         </div>
-        <div class="metric-footer" id="general-remaining">10,000 units remaining</div>
+        <div class="metric-footer" id="general-remaining">
+          <span id="quota-general-text">10,000 units remaining</span>
+        </div>
       </div>
 
       <!-- Rolling Hour Rate Limit Gauge -->
@@ -73,7 +84,9 @@
         <div class="progress-bar-bg">
           <div class="progress-bar-fill gauge-fill" id="rolling-rate-bar" style="width: 0%;"></div>
         </div>
-        <div class="metric-footer" id="rolling-rate-footer">0 / 7 uploads in rolling 60 min</div>
+        <div class="metric-footer" id="rolling-rate-footer">
+          <span id="quota-hourly-text">0 / 7 uploads in rolling 60 min</span>
+        </div>
       </div>
 
       <!-- Daily Cap & PT Reset Clock -->
@@ -88,10 +101,11 @@
         </div>
         <div class="metric-sub-line">
           <span id="daily-cap-val">Daily Uploads: 0 / 50 • Reset in --h --m</span>
+          <span id="countdown-timer" class="countdown-timer" style="display: none;"></span>
         </div>
         <div class="scheduler-actions">
           <button id="scheduler-toggle-btn" class="btn btn-secondary btn-sm" onclick="toggleScheduler()">
-            Pause Scheduler
+            <span id="scheduler-toggle">Pause Scheduler</span>
           </button>
           <span class="pending-badge" id="pending-slots-count">0 queued slots</span>
         </div>
@@ -102,83 +116,117 @@
     <div class="workspace-grid">
       <!-- Left Column: Input Links & Settings -->
       <section class="left-pane">
-        <!-- Links Input Box -->
+        <!-- Links Ingestion Form -->
         <div class="card">
-          <div class="card-title">
-            <span>📥 Video Ingestion Links</span>
-            <span class="hint">1 link per line with optional : instructions</span>
-          </div>
-          <textarea id="links-input" placeholder="https://www.youtube.com/watch?v=... : Focus on the AI debate&#10;https://youtu.be/... : Extract the funniest blooper"></textarea>
+          <form id="submit-jobs-form" onsubmit="event.preventDefault(); submitJobs();">
+            <div class="card-title">
+              <span>📥 Video Ingestion Links</span>
+              <span class="hint">1 link per line with optional : instructions</span>
+            </div>
+            <textarea id="links-input" placeholder="https://www.youtube.com/watch?v=... : Focus on the AI debate&#10;https://youtu.be/... : Extract the funniest blooper"></textarea>
 
-          <div class="accordion">
-            <details>
-              <summary>✨ Spark Companion Import (Paste Markdown/JSON)</summary>
-              <div class="spark-box">
-                <div class="spark-actions-row">
-                  <button class="btn btn-secondary btn-sm" onclick="copySparkPrompt()" title="Copy Gemini Spark prompt template">
-                    📋 Copy Spark Skill Prompt
-                  </button>
+            <div class="accordion">
+              <details>
+                <summary>✨ Spark Companion Import (Paste Markdown/JSON)</summary>
+                <div class="spark-box">
+                  <div class="spark-actions-row">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="copySparkPrompt()" title="Copy Gemini Spark prompt template">
+                      📋 Copy Spark Skill Prompt
+                    </button>
+                  </div>
+                  <textarea id="spark-input" placeholder="Paste Gemini Spark generated clips summary or prompt output here..."></textarea>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="importSpark()">Parse Spark Clips</button>
+                  <div id="spark-feedback" class="feedback"></div>
                 </div>
-                <textarea id="spark-input" placeholder="Paste Gemini Spark generated clips summary or prompt output here..."></textarea>
-                <button class="btn btn-secondary btn-sm" onclick="importSpark()">Parse Spark Clips</button>
-                <div id="spark-feedback" class="feedback"></div>
+              </details>
+            </div>
+
+            <!-- Configuration Controls Grid -->
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="provider-select">LLM Provider</label>
+                <select id="provider-select">
+                  <option value="local" selected>Local (Zero Cloud / Offline)</option>
+                  <option value="gemini">Gemini API (Multimodal Video)</option>
+                  <option value="openrouter">OpenRouter API</option>
+                </select>
               </div>
-            </details>
-          </div>
 
-          <!-- Configuration Controls -->
-          <div class="settings-grid">
-            <div class="control-group">
-              <label for="provider-select">LLM Provider</label>
-              <select id="provider-select">
-                <option value="local" selected>Local (Zero Cloud / Offline)</option>
-                <option value="gemini">Gemini API (Multimodal Video)</option>
-                <option value="openrouter">OpenRouter API</option>
-              </select>
+              <div class="control-group">
+                <label for="background-select">Background Theme</label>
+                <select id="background-select">
+                  <option value="minecraft" selected>Minecraft Parkour</option>
+                  <option value="subway">Subway Surfers</option>
+                  <option value="gta">GTA Car Stunts</option>
+                  <option value="auto">Auto / Procedural</option>
+                </select>
+                <!-- Hidden alias for legacy tests querying #bg-select -->
+                <select id="bg-select" style="display: none;">
+                  <option value="minecraft" selected>Minecraft Parkour</option>
+                  <option value="subway">Subway Surfers</option>
+                  <option value="gta">GTA Car Stunts</option>
+                  <option value="auto">Auto / Procedural</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="dopamine-select">Dopamine Level</label>
+                <select id="dopamine-select">
+                  <option value="low">Low (Clean, minimal)</option>
+                  <option value="medium" selected>Medium (Punch-in, Pop ASS)</option>
+                  <option value="high">High (SFX, Zoom, High Energy)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="upload-mode-select">Upload Target</label>
+                <select id="upload-mode-select">
+                  <option value="local" selected>Local Export Folder (Safe)</option>
+                  <option value="api">YouTube Data API v3</option>
+                  <option value="studio">YouTube Studio (Playwright MS Edge)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="style-preset-select">Caption Style Preset</label>
+                <select id="style-preset-select">
+                  <option value="neon" selected>Neon Pop (Yellow/Cyan)</option>
+                  <option value="minimal">Clean Minimalist (Emerald)</option>
+                  <option value="pill">High-Contrast Pill Box</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="privacy-status-select">YouTube Visibility</label>
+                <select id="privacy-status-select">
+                  <option value="public" selected>Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
             </div>
 
-            <div class="control-group">
-              <label for="background-select">Background Theme</label>
-              <select id="background-select">
-                <option value="minecraft" selected>Minecraft Parkour</option>
-                <option value="subway">Subway Surfers</option>
-                <option value="gta">GTA Car Stunts</option>
-                <option value="auto">Auto / Procedural</option>
-              </select>
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="auto-upload-toggle">
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">Auto-enqueue to Scheduler upon render completion</span>
             </div>
 
-            <div class="control-group">
-              <label for="dopamine-select">Dopamine Level</label>
-              <select id="dopamine-select">
-                <option value="low">Low (Clean, minimal)</option>
-                <option value="medium" selected>Medium (Punch-in, Pop ASS)</option>
-                <option value="high">High (SFX, Zoom, High Energy)</option>
-              </select>
+            <!-- Ingestion Action Buttons -->
+            <div class="action-buttons-row">
+              <button id="preview-links-btn" type="button" class="btn btn-secondary" onclick="previewLinks()">
+                🔍 Preview Links
+              </button>
+              <button id="submit-btn" type="submit" class="btn btn-primary">
+                ⚡ Start Pipeline
+              </button>
             </div>
 
-            <div class="control-group">
-              <label for="upload-mode-select">Upload Target</label>
-              <select id="upload-mode-select">
-                <option value="local" selected>Local Export Folder (Safe)</option>
-                <option value="api">YouTube Data API v3</option>
-                <option value="studio">YouTube Studio (Playwright MS Edge)</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="toggle-row">
-            <label class="toggle-switch">
-              <input type="checkbox" id="auto-upload-toggle">
-              <span class="slider"></span>
-            </label>
-            <span class="toggle-label">Auto-enqueue to Scheduler upon render completion</span>
-          </div>
-
-          <div class="action-buttons">
-            <button id="submit-btn" class="btn btn-primary" onclick="submitJobs()">
-              ⚡ Start Pipeline
-            </button>
-          </div>
+            <!-- Live Links Preview Strip Container -->
+            <div id="links-preview-container" class="links-preview-container" style="display: none;"></div>
+          </form>
         </div>
 
         <!-- Gameplay Backgrounds Panel -->
@@ -215,11 +263,56 @@
 
       <!-- Right Column: Job Queue & Active Progress -->
       <section class="right-pane">
-        <div class="card">
+        <div class="card queue-card">
           <div class="card-title">
             <span>📋 Job Queue &amp; Live Status</span>
             <button class="btn btn-icon btn-sm" onclick="refreshDashboard()" title="Refresh">🔄</button>
           </div>
+
+          <!-- Queue Filter Tabs & Batch Actions -->
+          <div class="queue-toolbar">
+            <div class="queue-filter-tabs">
+              <button class="filter-tab active" data-filter="all" onclick="setJobFilter('all')">
+                All <span class="filter-count" id="count-all">0</span>
+              </button>
+              <button class="filter-tab" data-filter="active" onclick="setJobFilter('active')">
+                Active <span class="filter-count" id="count-active">0</span>
+              </button>
+              <button class="filter-tab" data-filter="scheduled" onclick="setJobFilter('scheduled')">
+                Scheduled <span class="filter-count" id="count-scheduled">0</span>
+              </button>
+              <button class="filter-tab" data-filter="completed" onclick="setJobFilter('completed')">
+                Completed <span class="filter-count" id="count-completed">0</span>
+              </button>
+              <button class="filter-tab" data-filter="failed" onclick="setJobFilter('failed')">
+                Failed <span class="filter-count" id="count-failed">0</span>
+              </button>
+            </div>
+            <div class="batch-actions-group">
+              <button id="batch-retry-btn" class="btn btn-secondary btn-xs" onclick="batchRetryFailed()" title="Retry all failed jobs">
+                🔄 Retry Failed
+              </button>
+              <button id="batch-clean-btn" class="btn btn-secondary btn-xs" onclick="batchCleanCompleted()" title="Clean completed job files">
+                🧹 Clean Completed
+              </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Upcoming Scheduled Uploads Timeline Banner -->
+          <div class="scheduled-timeline-card" id="scheduled-timeline-card">
+            <div class="timeline-header" onclick="toggleTimelineCollapse()">
+              <div class="timeline-title-wrap">
+                <span class="timeline-icon">📅</span>
+                <span class="timeline-title">Upcoming Scheduled Uploads (<span id="timeline-count">0</span>)</span>
+              </div>
+              <span id="timeline-chevron" class="timeline-chevron">▼</span>
+            </div>
+            <div class="timeline-body" id="timeline-slots-list">
+              <div class="timeline-empty">No upcoming scheduled slots.</div>
+            </div>
+          </div>
+
+          <!-- Jobs Container -->
           <div id="jobs-container" class="jobs-list">
             <div class="empty-state">No active clipping jobs. Enter a YouTube URL to get started.</div>
           </div>
@@ -229,7 +322,7 @@
 
     <!-- Real-Time SSE Log Console -->
     <section class="log-console-section">
-      <div class="card log-card">
+      <div class="card log-card" id="log-console">
         <div class="log-header">
           <div class="log-title-area">
             <span class="log-dot live" id="log-status-dot"></span>
@@ -321,6 +414,425 @@
       <div class="modal-footer" id="edge-modal-footer">
         <button id="edge-check-status-btn" class="btn btn-secondary btn-sm" onclick="checkEdgeLoginNow()">🔍 Check Login Status</button>
         <button class="btn btn-primary btn-sm" onclick="closeEdgeLoginModal()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Settings Modal (v1.0) with 4 Tabs -->
+  <div id="settings-modal" class="modal-backdrop" onclick="closeSettingsModal(event)">
+    <div class="modal-content modal-xl settings-modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="settings-modal-title-wrap">
+          <span class="settings-modal-icon">⚙️</span>
+          <h3>AutoShorts Configuration &amp; Settings <span class="badge version">v1.0</span></h3>
+        </div>
+        <button class="btn-close" onclick="closeSettingsModal()">&times;</button>
+      </div>
+
+      <!-- Settings Tabs Navigation -->
+      <div class="settings-nav-tabs">
+        <button type="button" class="settings-tab-btn active" data-tab="youtube" onclick="switchSettingsTab('youtube')">
+          📺 YouTube API &amp; Upload
+        </button>
+        <button type="button" class="settings-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')">
+          🤖 AI Providers &amp; Keys
+        </button>
+        <button type="button" class="settings-tab-btn" data-tab="style" onclick="switchSettingsTab('style')">
+          🎨 Subtitles &amp; Pacing
+        </button>
+        <button type="button" class="settings-tab-btn" data-tab="storage" onclick="switchSettingsTab('storage')">
+          🧹 Storage &amp; Cleanup
+        </button>
+      </div>
+
+      <div class="modal-body settings-modal-body">
+        <!-- Tab 1: YouTube Data v3 API & Upload -->
+        <div class="settings-tab-pane active" id="tab-pane-youtube">
+          <div class="settings-section-card">
+            <div class="section-card-title">
+              <span>YouTube Data API v3 Setup (OAuth 2.0)</span>
+              <span class="hint">Upload client_secret.json or paste credentials</span>
+            </div>
+            <div class="setup-status-row">
+              <div class="setup-status-item">
+                <span class="setup-status-label">Client Secret File:</span>
+                <span id="badge-client-secret-status" class="badge">Checking...</span>
+              </div>
+              <div class="setup-status-item">
+                <span class="setup-status-label">OAuth 2.0 Token:</span>
+                <span id="badge-oauth-token-status" class="badge">Checking...</span>
+              </div>
+            </div>
+
+            <div class="secret-upload-grid">
+              <div class="control-group">
+                <label for="yt-secret-file-input">Upload client_secret.json:</label>
+                <input type="file" id="yt-secret-file-input" accept=".json" onchange="handleClientSecretFileSelect(event)">
+              </div>
+              <div class="control-group">
+                <label>Direct OAuth Authorization:</label>
+                <button type="button" id="yt-oauth-authorize-btn" class="btn btn-primary btn-sm" onclick="triggerYouTubeOAuth()">
+                  🔗 Authorize YouTube Account (OAuth 2.0)
+                </button>
+              </div>
+            </div>
+
+            <details class="paste-secret-details">
+              <summary>Or paste raw client_secret.json contents directly</summary>
+              <div class="paste-secret-box">
+                <textarea id="yt-secret-raw-textarea" placeholder="Paste your Google Cloud client_secret_*.json content here..."></textarea>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="saveClientSecretRaw()">
+                  💾 Save Client Secret
+                </button>
+              </div>
+            </details>
+            <div id="yt-oauth-feedback" class="feedback"></div>
+
+            <div class="control-group password-group">
+              <label for="setting-yt-api-key">Optional YouTube Data API Key (Public Queries):</label>
+              <div class="input-password-wrap">
+                <input type="password" id="setting-yt-api-key" placeholder="AIzaSy... (leave blank to use OAuth only)">
+                <button type="button" class="btn-toggle-eye" onclick="togglePasswordInput('setting-yt-api-key', this)">👁️</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Upload Defaults &amp; Fallback Behavior</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="setting-upload-mode">Default Upload Mode</label>
+                <select id="setting-upload-mode">
+                  <option value="local">Local Export Only</option>
+                  <option value="api">YouTube Data API v3</option>
+                  <option value="studio">Playwright MS Edge YouTube Studio</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-privacy-status">Default Visibility</label>
+                <select id="setting-privacy-status">
+                  <option value="public">Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="setting-quota-fallback">When API Quota / Credits Exhausted</label>
+                <select id="setting-quota-fallback">
+                  <option value="studio">Auto-Fallback to MS Edge YouTube Studio &amp; Publish</option>
+                  <option value="queue_next_day">Queue for Next Day PT Reset</option>
+                  <option value="local">Save Locally</option>
+                </select>
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="setting-title-template">SEO Title Template</label>
+                <input type="text" id="setting-title-template" value="{hook} | {channel} #Shorts">
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="setting-desc-template">Description Template</label>
+                <textarea id="setting-desc-template" rows="3"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: AI Providers & API Keys -->
+        <div class="settings-tab-pane" id="tab-pane-ai">
+          <div class="settings-section-card">
+            <div class="section-card-title">Active AI Brain &amp; Model Selection</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="setting-active-provider">Active LLM Provider</label>
+                <select id="setting-active-provider" onchange="handleActiveProviderChange()">
+                  <option value="local">Local GGUF (CPU/Offline)</option>
+                  <option value="gemini">Google Gemini API</option>
+                  <option value="openrouter">OpenRouter API</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-active-model">Active Model ID</label>
+                <input type="text" id="setting-active-model" placeholder="Provider Default (Auto-Resolve)">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Google Gemini API Configuration</div>
+            <div class="control-group password-group">
+              <label for="setting-gemini-key">GEMINI_API_KEY</label>
+              <div class="input-password-wrap">
+                <input type="password" id="setting-gemini-key" placeholder="AIzaSy... or masked in env">
+                <button type="button" class="btn-toggle-eye" onclick="togglePasswordInput('setting-gemini-key', this)">👁️</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="testProviderApi('gemini')">
+                  🔍 Test &amp; Fetch Models
+                </button>
+              </div>
+              <div id="gemini-test-feedback" class="feedback"></div>
+              <div id="gemini-model-select-wrap" style="display: none; margin-top: 0.5rem;">
+                <label for="gemini-model-select">Select Live Gemini Model:</label>
+                <select id="gemini-model-select" onchange="applySelectedModel('gemini')"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">OpenRouter API Configuration</div>
+            <div class="control-group password-group">
+              <label for="setting-openrouter-key">OPENROUTER_API_KEY</label>
+              <div class="input-password-wrap">
+                <input type="password" id="setting-openrouter-key" placeholder="sk-or-... or masked in env">
+                <button type="button" class="btn-toggle-eye" onclick="togglePasswordInput('setting-openrouter-key', this)">👁️</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="testProviderApi('openrouter')">
+                  🔍 Test &amp; Fetch Models
+                </button>
+              </div>
+              <div id="openrouter-test-feedback" class="feedback"></div>
+              <div id="openrouter-model-select-wrap" style="display: none; margin-top: 0.5rem;">
+                <label for="openrouter-model-select">Select Live OpenRouter Model:</label>
+                <select id="openrouter-model-select" onchange="applySelectedModel('openrouter')"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Local GGUF &amp; Multimodal Planner</div>
+            <div class="settings-grid">
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="setting-local-gguf-path">Local GGUF Model Path (Optional override)</label>
+                <input type="text" id="setting-local-gguf-path" placeholder="models/qwen2.5-0.5b-instruct-q4_k_m.gguf">
+              </div>
+              <div class="toggle-row" style="grid-column: span 2; margin-top: 0.5rem;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-edit-planner-toggle" checked>
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Enable Multimodal Visual Edit Planner</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Subtitles, Style & Pacing -->
+        <div class="settings-tab-pane" id="tab-pane-style">
+          <div class="settings-section-card">
+            <div class="section-card-title">Default Caption Style Preset</div>
+            <div class="preset-badges-grid">
+              <div class="preset-card" id="preset-card-neon" onclick="selectPresetOption('neon')">
+                <div class="preset-preview-box preview-neon">
+                  <span class="word-highlight">NEON</span> POP
+                </div>
+                <div class="preset-card-info">
+                  <strong>Neon Pop</strong>
+                  <span>High-contrast yellow typography with vibrant cyan burst glow.</span>
+                </div>
+              </div>
+
+              <div class="preset-card" id="preset-card-minimal" onclick="selectPresetOption('minimal')">
+                <div class="preset-preview-box preview-minimal">
+                  <span class="word-highlight">CLEAN</span> EMERALD
+                </div>
+                <div class="preset-card-info">
+                  <strong>Clean Minimalist</strong>
+                  <span>Sleek modern white lettering with emerald green active emphasis.</span>
+                </div>
+              </div>
+
+              <div class="preset-card" id="preset-card-pill" onclick="selectPresetOption('pill')">
+                <div class="preset-preview-box preview-pill">
+                  <span class="pill-badge">PILL BOX</span> STYLE
+                </div>
+                <div class="preset-card-info">
+                  <strong>High-Contrast Pill Box</strong>
+                  <span>Solid background badge pill for guaranteed readability on fast gameplays.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-grid" style="margin-top: 1rem;">
+              <div class="control-group">
+                <label for="setting-style-preset">Selected Preset</label>
+                <select id="setting-style-preset" onchange="syncPresetCardHighlight()">
+                  <option value="neon">neon (Neon Pop Yellow/Cyan)</option>
+                  <option value="minimal">minimal (Clean Minimalist Emerald)</option>
+                  <option value="pill">pill (High-Contrast Pill Box)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-words-per-burst">Words Per Burst (2 - 5)</label>
+                <input type="number" id="setting-words-per-burst" min="1" max="6" value="3">
+              </div>
+
+              <div class="control-group">
+                <label for="setting-pop-scale">Karaoke Pop Scale (1.0 - 1.5)</label>
+                <input type="number" id="setting-pop-scale" step="0.05" min="1.0" max="1.5" value="1.15">
+              </div>
+
+              <div class="control-group">
+                <label for="setting-margin-v">Vertical Safe-Zone Margin (MarginV)</label>
+                <input type="number" id="setting-margin-v" min="50" max="400" value="180">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Clip Duration &amp; Generation Bounds</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="setting-min-duration">Min Duration (Seconds)</label>
+                <input type="number" id="setting-min-duration" min="15" max="60" value="30">
+              </div>
+              <div class="control-group">
+                <label for="setting-max-duration">Max Duration (Seconds)</label>
+                <input type="number" id="setting-max-duration" min="30" max="90" value="55">
+              </div>
+              <div class="control-group">
+                <label for="setting-clips-per-video">Clips Per Source Video</label>
+                <input type="number" id="setting-clips-per-video" min="1" max="5" value="1">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Spread Scheduler &amp; Anti-Spam Pacing</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="setting-daily-cap">Daily Upload Cap</label>
+                <input type="number" id="setting-daily-cap" min="1" max="100" value="50">
+              </div>
+              <div class="control-group">
+                <label for="setting-hourly-cap">Max Uploads Per Rolling Hour</label>
+                <input type="number" id="setting-hourly-cap" min="1" max="15" value="7">
+              </div>
+              <div class="control-group">
+                <label for="setting-gap-min">Random Gap Min (Minutes)</label>
+                <input type="number" id="setting-gap-min" min="1" max="60" value="5">
+              </div>
+              <div class="control-group">
+                <label for="setting-gap-max">Random Gap Max (Minutes)</label>
+                <input type="number" id="setting-gap-max" min="2" max="120" value="25">
+              </div>
+              <div class="control-group">
+                <label for="setting-active-start">Active Hours Start (Local)</label>
+                <input type="time" id="setting-active-start" value="08:00">
+              </div>
+              <div class="control-group">
+                <label for="setting-active-end">Active Hours End (Local)</label>
+                <input type="time" id="setting-active-end" value="23:59">
+              </div>
+              <div class="toggle-row" style="grid-column: span 2; margin-top: 0.5rem;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-prevent-sleep" checked>
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Prevent Windows System Sleep During Active Processing/Pacing</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: Storage & Auto-Cleanup -->
+        <div class="settings-tab-pane" id="tab-pane-storage">
+          <div class="settings-section-card">
+            <div class="section-card-title">Automatic Garbage Collection &amp; File Retention</div>
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-cleanup-enabled" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">Auto-delete intermediate source video files after verified upload</span>
+            </div>
+
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-use-recycle-bin" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">Send deleted files to Windows Recycle Bin (Safe recovery)</span>
+            </div>
+
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-keep-master-mp4" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">Always preserve final rendered master Short MP4</span>
+            </div>
+
+            <div class="settings-grid" style="margin-top: 1rem;">
+              <div class="control-group">
+                <label for="setting-retention-days">Final Short Retention Period (Days, 0 = forever)</label>
+                <input type="number" id="setting-retention-days" min="0" max="365" value="30">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Immediate Storage Actions</div>
+            <p class="modal-instructions">
+              Free disk space immediately by purging intermediate working files, audio tracks, and temporary slices across all completed or cleaned jobs.
+            </p>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="batchCleanCompleted()">
+              🧹 Clean Completed Jobs Now
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer settings-modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeSettingsModal()">Cancel</button>
+        <button type="button" id="save-settings-btn" class="btn btn-primary-gradient btn-sm" onclick="saveAllSettings()">
+          💾 Save All Settings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Job Metadata Modal -->
+  <div id="edit-job-modal" class="modal-backdrop" onclick="closeEditJobModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3>✏️ Edit Job Metadata (<span id="edit-job-modal-id">#--</span>)</h3>
+        <button class="btn-close" onclick="closeEditJobModal()">&times;</button>
+      </div>
+      <div class="modal-body edit-job-modal-body">
+        <input type="hidden" id="edit-job-id">
+        <div class="control-group">
+          <label for="edit-clip-title">Short Title</label>
+          <input type="text" id="edit-clip-title" placeholder="Catchy title...">
+        </div>
+        <div class="control-group">
+          <label for="edit-hook-text">Opening Hook Text</label>
+          <input type="text" id="edit-hook-text" placeholder="Hook text displayed on screen...">
+        </div>
+        <div class="settings-grid" style="margin-bottom: 0;">
+          <div class="control-group">
+            <label for="edit-background-category">Background Gameplay</label>
+            <select id="edit-background-category">
+              <option value="minecraft">Minecraft Parkour</option>
+              <option value="subway">Subway Surfers</option>
+              <option value="gta">GTA Car Stunts</option>
+              <option value="auto">Auto / Procedural</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label for="edit-dopamine-level">Dopamine Level</label>
+            <select id="edit-dopamine-level">
+              <option value="low">Low (Clean, minimal)</option>
+              <option value="medium">Medium (Punch-in, Pop ASS)</option>
+              <option value="high">High (SFX, Zoom, High Energy)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="closeEditJobModal()">Cancel</button>
+        <button id="save-job-edit-btn" class="btn btn-primary btn-sm" onclick="saveJobMetadata()">💾 Save Changes</button>
       </div>
     </div>
   </div>
