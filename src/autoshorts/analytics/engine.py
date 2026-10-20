@@ -22,6 +22,7 @@ from autoshorts.analytics.models import (
     AnalyticsOverview,
     VideoAnalyticsRecord,
 )
+from autoshorts.core.config import Settings
 from autoshorts.core.models import Job, JobStatus, UploadResult
 from autoshorts.core.paths import get_data_dir
 from autoshorts.core.state_manager import StateManager
@@ -61,16 +62,21 @@ class AnalyticsEngine:
         edge_profile_dir: Path | str | None = None,
         youtube_service: Any = None,
         analytics_service: Any = None,
+        config: Settings | None = None,
     ) -> None:
         """Initialize AnalyticsEngine with dependencies and optional service overrides."""
         self.state_manager = state_manager
         self.quota_tracker = quota_tracker
+        self.config = config
         data_dir = get_data_dir()
         self.token_path = Path(token_path) if token_path else (data_dir / "token.json")
         self.client_secret_path = (
             Path(client_secret_path) if client_secret_path else (data_dir / "client_secret.json")
         )
-        self.api_key = api_key or os.getenv("YOUTUBE_API_KEY")
+        resolved_api_key = api_key
+        if not resolved_api_key and config is not None:
+            resolved_api_key = config.get_youtube_api_key_str()
+        self.api_key = resolved_api_key or os.getenv("YOUTUBE_API_KEY")
         self.edge_profile_dir = (
             Path(edge_profile_dir) if edge_profile_dir else (data_dir / "edge_profile")
         )
@@ -661,7 +667,7 @@ class AnalyticsEngine:
             return existing
         return self.generate_sample_telemetry()
 
-    def get_overview(self) -> AnalyticsOverview:
+    def get_overview(self, days: int = 30) -> AnalyticsOverview:
         """Compute top-level KPI metrics across all synchronized videos."""
         from autoshorts.analytics.attribution import PerformanceAttributionEngine
 
@@ -679,7 +685,7 @@ class AnalyticsEngine:
                 avg_retention_pct=0.0,
                 avg_viewed_vs_swiped_pct=0.0,
                 total_estimated_revenue_usd=0.0,
-                channel_rpm_usd=0.18,
+                channel_rpm_usd=0.0,
                 top_video=None,
                 winning_recipe=winning_recipe,
                 last_synced_at=None,
@@ -726,6 +732,21 @@ class AnalyticsEngine:
             winning_recipe=winning_recipe,
             last_synced_at=records[0].get("fetched_at") if records else None,
         )
+
+    def get_videos(self, limit: int = 50) -> list[VideoAnalyticsRecord]:
+        """Return recorded video analytics records."""
+        records = self.state_manager.list_video_analytics(limit=limit)
+        res: list[VideoAnalyticsRecord] = []
+        for r in records:
+            try:
+                res.append(VideoAnalyticsRecord.model_validate(r))
+            except Exception:
+                pass
+        return res
+
+    def sync_all(self, force: bool = False) -> dict[str, Any]:
+        """Trigger synchronization of all uploaded Shorts telemetry."""
+        return self.sync_all_uploaded_shorts()
 
 
 __all__ = ["AnalyticsEngine", "parse_iso8601_duration"]

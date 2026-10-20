@@ -719,3 +719,160 @@ def test_pipeline_subtitles_caching_and_customization_forwarding(
     pipeline._run_subtitles_stage(job, use_cached_words=True)
     ass_content = Path(job.subtitles_path).read_text(encoding="utf-8")
     assert "MODIFIED_CAPTION" in ass_content
+
+
+def test_real_ffmpeg_processing_editing_rerender_and_upload(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Real FFmpeg integration test: render video, edit subtitles + layout, re-render, and upload."""
+    import json
+    import subprocess
+
+    import imageio_ffmpeg
+
+    from autoshorts.media.compositor import FFmpegCompositor
+    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+    state_mgr = test_env["state_mgr"]
+    work_dir = test_env["work_dir"]
+    output_dir = test_env["output_dir"]
+    export_dir = output_dir / "export"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.pipeline.get_output_dir", lambda: output_dir)
+    monkeypatch.setattr("autoshorts.core.paths.get_output_dir", lambda: output_dir)
+    monkeypatch.setattr("autoshorts.core.paths.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.cleanup.safety_cleaner.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.cleanup.safety_cleaner.get_output_dir", lambda: output_dir)
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    assert ffmpeg_exe and Path(ffmpeg_exe).is_file()
+
+    job_id = "job_real_render_001"
+    job_work = work_dir / job_id
+    job_work.mkdir(parents=True, exist_ok=True)
+
+    # 1. Generate real 3-second source video (1280x720 25fps) with sine audio
+    raw_video = job_work / f"{job_id}_raw.mp4"
+    gen_cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=1280x720:rate=25",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=1000:sample_rate=44100",
+        "-t",
+        "3.0",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        str(raw_video),
+    ]
+    subprocess.run(gen_cmd, check=True, capture_output=True)
+    assert raw_video.is_file() and raw_video.stat().st_size > 0
+
+    # 2. Generate a real 3-second background video (1080x1920 25fps) for split_50_50
+    bg_video = work_dir / "test_bg.mp4"
+    bg_cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=1080x1920:rate=25",
+        "-t",
+        "3.0",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        str(bg_video),
+    ]
+    subprocess.run(bg_cmd, check=True, capture_output=True)
+    assert bg_video.is_file() and bg_video.stat().st_size > 0
+
+    monkeypatch.setattr("autoshorts.pipeline.pick_background_asset", lambda **kw: (bg_video, 0.0))
+
+    # 3. Create initial Job in DOWNLOADING_SECTION state
+    cand = ClipCandidate(start=0.0, end=3.0, text="real ffmpeg test initial subtitles", score=0.85)
+    sel = ClipSelection(
+        candidate=cand, clip_index=0, hook_text="Initial Hook", title="Initial Title"
+    )
+    job = Job(
+        id=job_id,
+        source_url="https://youtube.com/watch?v=realffmpegtest",
+        status=JobStatus.DOWNLOADING_SECTION,
+        raw_video_path=str(raw_video),
+        selected_clips=[sel],
+        edl=EditDecisionList(hook_in_sec=0.0, hook_out_sec=3.0),
+        layout_mode="split_50_50",
+        style_preset="neon",
+    )
+    state_mgr.save_job(job)
+
+    # 4. Initialize pipeline with real FFmpegCompositor and LocalExportUploader
+    uploader = LocalExportUploader(export_dir=export_dir)
+    compositor = FFmpegCompositor()
+    pipeline = ShortsPipeline(
+        state_manager=state_mgr,
+        compositor=compositor,
+        uploader=uploader,
+    )
+
+    # 5. Execute Stage 7: Subtitles generation
+    pipeline._run_subtitles_stage(job)
+    assert job.status == JobStatus.SUBTITLES_GENERATED
+    assert job.subtitles_path is not None
+    assert Path(job.subtitles_path).is_file()
+    aligned_cache = job_work / "aligned_words.json"
+    assert aligned_cache.is_file()
+
+    # 6. Execute Stage 8: Real FFmpeg compositing (split_50_50)
+    pipeline._run_compositing_stage(job)
+    assert job.status == JobStatus.READY_FOR_REVIEW
+    assert job.rendered_video_path is not None
+    master_path = Path(job.rendered_video_path)
+    assert master_path.is_file() and master_path.stat().st_size > 0
+
+    # 7. Simulate User Editing Transcript & Changing Settings in Modal:
+    # Modify aligned_words.json, change layout_mode to full_blur_bg, change style_preset to hormozi
+    edited_words = [
+        {"word": "HORMOZI_HOOK", "start": 0.0, "end": 1.5, "probability": 1.0},
+        {"word": "REBURN_SUCCESS", "start": 1.5, "end": 3.0, "probability": 1.0},
+    ]
+    with open(aligned_cache, "w", encoding="utf-8") as f:
+        json.dump(edited_words, f)
+
+    # 8. Fast Re-Render (⚡ Fast Re-Burn)
+    rerendered_job = pipeline.rerender_job(
+        job_id,
+        style_preset="hormozi",
+        layout_mode="full_blur_bg",
+        hook_text="Edited Fast Hook",
+    )
+    assert rerendered_job.status == JobStatus.READY_FOR_REVIEW
+    assert rerendered_job.style_preset == "hormozi"
+    assert rerendered_job.layout_mode == "full_blur_bg"
+    new_ass = Path(rerendered_job.subtitles_path).read_text(encoding="utf-8")
+    assert "HORMOZI_HOOK" in new_ass
+    assert "REBURN_SUCCESS" in new_ass
+    assert Path(rerendered_job.rendered_video_path).is_file()
+    assert Path(rerendered_job.rendered_video_path).stat().st_size > 0
+
+    # 9. Upload via LocalExportUploader
+    upload_res = pipeline._run_immediate_upload(rerendered_job)
+    assert upload_res is not None
+    assert upload_res.verified is True
+    assert rerendered_job.status in (JobStatus.COMPLETED, JobStatus.CLEANED)
+    exported_files = list(export_dir.glob("*.mp4"))
+    assert len(exported_files) >= 1
+    assert exported_files[0].stat().st_size > 0

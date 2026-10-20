@@ -12,7 +12,11 @@
 <body>
   <header class="app-header">
     <div class="logo-area">
-      <div class="brand-icon">⚡</div>
+      <div class="brand-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+      </div>
       <div>
         <h1>AutoShorts <span class="badge version version-badge">v1.0</span></h1>
         <p class="subtitle">On-Device SemIf Video Ingestion &amp; Pacing Orchestrator</p>
@@ -33,10 +37,12 @@
         <span class="dot blue"></span> <span id="encoder-label">FFmpeg libx264</span>
       </div>
       <button id="edge-login-btn" class="btn btn-secondary btn-sm" onclick="triggerEdgeLogin()" title="Sign into YouTube Studio via Microsoft Edge">
-        🔑 Edge Sign-In
+        <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+        <span>Edge Sign-In</span>
       </button>
       <button id="open-settings-btn" class="btn btn-primary-gradient btn-sm" onclick="openSettingsModal()" title="Open AutoShorts Settings">
-        ⚙️ Settings
+        <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>Settings</span>
       </button>
     </div>
   </header>
@@ -112,25 +118,33 @@
       </div>
     </section>
 
-    <!-- 🎛️ Top-Level Navigation Mode Switcher Bar -->
+    <!-- Top-Level Navigation Mode Switcher Bar -->
     <nav class="main-view-tabs" id="main-view-tabs" role="tablist">
       <button type="button" class="view-tab-btn active" id="tab-btn-studio" data-view="view-studio" onclick="switchMainView('view-studio')" role="tab" aria-selected="true">
-        <span class="tab-icon">🎬</span>
+        <span class="tab-icon">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+        </span>
         <span class="tab-title">Shorts Studio &amp; Queue</span>
         <span class="tab-badge" id="studio-queue-tab-badge">0</span>
       </button>
       <button type="button" class="view-tab-btn" id="tab-btn-research" data-view="view-research" onclick="switchMainView('view-research')" role="tab" aria-selected="false">
-        <span class="tab-icon">🔥</span>
+        <span class="tab-icon">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>
+        </span>
         <span class="tab-title">Viral Research &amp; Trending Finder</span>
         <span class="tab-badge pulse-badge" id="research-tab-badge">HOT</span>
       </button>
       <button type="button" class="view-tab-btn" id="tab-btn-moneyprinter" data-view="view-moneyprinter" onclick="switchMainView('view-moneyprinter')" role="tab" aria-selected="false">
-        <span class="tab-icon">🎙️</span>
+        <span class="tab-icon">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+        </span>
         <span class="tab-title">Faceless AI Studio</span>
         <span class="tab-badge new-badge">NEURAL</span>
       </button>
       <button type="button" class="view-tab-btn" id="tab-btn-analytics" data-view="view-analytics" onclick="switchMainView('view-analytics')" role="tab" aria-selected="false">
-        <span class="tab-icon">📊</span>
+        <span class="tab-icon">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+        </span>
         <span class="tab-title">YouTube Shorts Analytics</span>
         <span class="tab-badge kpi-badge" id="analytics-tab-badge">LIVE</span>
       </button>
@@ -341,7 +355,7 @@
               </div>
             </div>
 
-            <!-- Configuration Controls Grid -->
+            <!-- Configuration Controls Grid: 6 Core Controls -->
             <div class="settings-grid" style="margin-top: 1rem;">
               <div class="control-group">
                 <label for="provider-select">LLM Provider</label>
@@ -377,62 +391,6 @@
               </div>
 
               <div class="control-group">
-                <label for="subtitle-position-select">Caption Placement</label>
-                <select id="subtitle-position-select" onchange="updatePhoneCanvasPreview()">
-                  <option value="bottom_safe" selected>Bottom Safe-Zone (MarginV 420)</option>
-                  <option value="center">Center / Seam (MarginV 960)</option>
-                  <option value="top_safe">Top Safe-Zone (MarginV 1450)</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="text-transform-select">Text Casing</label>
-                <select id="text-transform-select" onchange="updatePhoneCanvasPreview()">
-                  <option value="uppercase" selected>ALL CAPS (UPPERCASE)</option>
-                  <option value="title">Title Case (Every Word)</option>
-                  <option value="none">As Spoken (No Transform)</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="color-grading-select">Color Grading LUT</label>
-                <select id="color-grading-select" onchange="updatePhoneCanvasPreview()">
-                  <option value="none" selected>None (Pass-through)</option>
-                  <option value="vibrant">Vibrant Pop (+28% Sat, Unsharp)</option>
-                  <option value="cinematic">Cinematic Mood (Teal/Orange Contrast)</option>
-                  <option value="warm">Warm Film Tone (Golden Gamma)</option>
-                  <option value="crisp">Crisp Ultra-Detail (High Acutance)</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="progressbar-pos-select">Progress Bar</label>
-                <select id="progressbar-pos-select" onchange="updatePhoneCanvasPreview()">
-                  <option value="seam">Center Seam</option>
-                  <option value="top">Top Edge</option>
-                  <option value="bottom">Bottom Edge</option>
-                  <option value="none" selected>None / Hidden</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="watermark-input">Channel Watermark</label>
-                <input type="text" id="watermark-input" placeholder="@YourChannel" value="@AutoShorts" oninput="updatePhoneCanvasPreview()">
-              </div>
-
-              <div class="control-group">
-                <label for="category-id-select">YouTube Category</label>
-                <select id="category-id-select">
-                  <option value="20">20 — Gaming</option>
-                  <option value="22" selected>22 — People &amp; Blogs</option>
-                  <option value="23">23 — Comedy</option>
-                  <option value="24">24 — Entertainment</option>
-                  <option value="27">27 — Education</option>
-                  <option value="28">28 — Science &amp; Technology</option>
-                </select>
-              </div>
-
-              <div class="control-group">
                 <label for="background-select">Background Theme</label>
                 <select id="background-select" onchange="updatePhoneCanvasPreview()">
                   <option value="minecraft" selected>Minecraft Parkour</option>
@@ -446,15 +404,6 @@
                   <option value="subway">Subway Surfers</option>
                   <option value="gta">GTA Car Stunts</option>
                   <option value="auto">Auto / Procedural</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="dopamine-select">Dopamine Level</label>
-                <select id="dopamine-select">
-                  <option value="low">Low (Clean, minimal)</option>
-                  <option value="medium" selected>Medium (Punch-in, Pop ASS)</option>
-                  <option value="high">High (SFX, Zoom, High Energy)</option>
                 </select>
               </div>
 
@@ -476,6 +425,77 @@
                 </select>
               </div>
             </div>
+
+            <!-- Sleek Collapsible: 7 Fine-Tuning Controls -->
+            <details class="clay-accordion">
+              <summary>Fine-Tune Visuals, Audio &amp; Branding</summary>
+              <div class="settings-grid accordion-settings-grid" style="margin-top: 0.75rem;">
+                <div class="control-group">
+                  <label for="subtitle-position-select">Caption Placement</label>
+                  <select id="subtitle-position-select" onchange="updatePhoneCanvasPreview()">
+                    <option value="bottom_safe" selected>Bottom Safe-Zone (MarginV 420)</option>
+                    <option value="center">Center / Seam (MarginV 960)</option>
+                    <option value="top_safe">Top Safe-Zone (MarginV 1450)</option>
+                  </select>
+                </div>
+
+                <div class="control-group">
+                  <label for="text-transform-select">Text Casing</label>
+                  <select id="text-transform-select" onchange="updatePhoneCanvasPreview()">
+                    <option value="uppercase" selected>ALL CAPS (UPPERCASE)</option>
+                    <option value="title">Title Case (Every Word)</option>
+                    <option value="none">As Spoken (No Transform)</option>
+                  </select>
+                </div>
+
+                <div class="control-group">
+                  <label for="color-grading-select">Color Grading LUT</label>
+                  <select id="color-grading-select" onchange="updatePhoneCanvasPreview()">
+                    <option value="none" selected>None (Pass-through)</option>
+                    <option value="vibrant">Vibrant Pop (+28% Sat, Unsharp)</option>
+                    <option value="cinematic">Cinematic Mood (Teal/Orange Contrast)</option>
+                    <option value="warm">Warm Film Tone (Golden Gamma)</option>
+                    <option value="crisp">Crisp Ultra-Detail (High Acutance)</option>
+                  </select>
+                </div>
+
+                <div class="control-group">
+                  <label for="progressbar-pos-select">Progress Bar</label>
+                  <select id="progressbar-pos-select" onchange="updatePhoneCanvasPreview()">
+                    <option value="seam">Center Seam</option>
+                    <option value="top">Top Edge</option>
+                    <option value="bottom">Bottom Edge</option>
+                    <option value="none" selected>None / Hidden</option>
+                  </select>
+                </div>
+
+                <div class="control-group">
+                  <label for="watermark-input">Channel Watermark</label>
+                  <input type="text" id="watermark-input" placeholder="@YourChannel" value="@AutoShorts" oninput="updatePhoneCanvasPreview()">
+                </div>
+
+                <div class="control-group">
+                  <label for="category-id-select">YouTube Category</label>
+                  <select id="category-id-select">
+                    <option value="20">20 — Gaming</option>
+                    <option value="22" selected>22 — People &amp; Blogs</option>
+                    <option value="23">23 — Comedy</option>
+                    <option value="24">24 — Entertainment</option>
+                    <option value="27">27 — Education</option>
+                    <option value="28">28 — Science &amp; Technology</option>
+                  </select>
+                </div>
+
+                <div class="control-group" style="grid-column: span 2;">
+                  <label for="dopamine-select">Dopamine Level</label>
+                  <select id="dopamine-select">
+                    <option value="low">Low (Clean, minimal)</option>
+                    <option value="medium" selected>Medium (Punch-in, Pop ASS)</option>
+                    <option value="high">High (SFX, Zoom, High Energy)</option>
+                  </select>
+                </div>
+              </div>
+            </details>
 
             <div class="toggle-row">
               <label class="toggle-switch">
@@ -535,17 +555,18 @@
       <!-- Center Column: 📱 Interactive 9:16 Live Phone Mockup Previewer -->
       <section class="studio-canvas-pane">
         <div class="card phone-canvas-card">
-          <div class="card-title">
+          <div class="card-title phone-canvas-header">
             <div class="canvas-title-wrap">
-              <span>📱 9:16 Live Studio Canvas</span>
+              <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="3"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+              <span>Studio Preview</span>
               <span class="live-pulse-dot" title="Live Preview Synchronized"></span>
             </div>
             <div class="canvas-toolbar">
               <button type="button" id="toggle-caption-anim-btn" class="btn btn-secondary btn-xs active" onclick="toggleCaptionAnimation()" title="Toggle live karaoke caption playback">
-                ⏸ Pause
+                Pause
               </button>
               <button type="button" id="toggle-safezone-btn" class="btn btn-secondary btn-xs active" onclick="toggleSafeZoneOverlay()" title="Toggle YouTube Shorts Safe-Zone HUD">
-                🛡️ HUD
+                HUD
               </button>
             </div>
           </div>
@@ -573,7 +594,9 @@
                 <div id="phone-layout-layer" class="phone-layout-layer">
                   <div class="video-container top-video" id="canvas-top-video">
                     <div class="simulated-video-content">
-                      <div class="video-subject-avatar">🎙️</div>
+                      <div class="video-subject-avatar">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+                      </div>
                       <div class="audio-waves">
                         <span class="wave-bar b1"></span>
                         <span class="wave-bar b2"></span>
@@ -598,7 +621,7 @@
                   <!-- Inset PiP Box (Active in pip_gameplay mode) -->
                   <div class="pip-gameplay-box" id="canvas-pip-box" style="display: none;">
                     <div class="pip-inner">
-                      <span class="pip-tag">🎮 Game PiP</span>
+                      <span class="pip-tag">Game PiP</span>
                     </div>
                   </div>
                 </div>
@@ -610,7 +633,7 @@
 
                 <!-- Layer 4: Hook Title Banner -->
                 <div id="phone-hook-banner" class="phone-hook-banner hook-style-neon_box">
-                  <span class="hook-banner-text" id="canvas-hook-text">WAIT TILL THE END 😱</span>
+                  <span class="hook-banner-text" id="canvas-hook-text">WAIT TILL THE END</span>
                 </div>
 
                 <!-- Layer 5: Live Animated Karaoke Captions -->
@@ -633,23 +656,33 @@
                   <!-- Right Action Stack -->
                   <div class="shorts-action-stack">
                     <div class="action-btn-item">
-                      <div class="action-btn-circle">👍</div>
-                      <span class="action-count">248K</span>
+                      <div class="action-btn-circle">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+                      </div>
+                      <span class="action-count">Like</span>
                     </div>
                     <div class="action-btn-item">
-                      <div class="action-btn-circle">👎</div>
+                      <div class="action-btn-circle">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path></svg>
+                      </div>
                       <span class="action-count">Dislike</span>
                     </div>
                     <div class="action-btn-item">
-                      <div class="action-btn-circle">💬</div>
-                      <span class="action-count">1.4K</span>
+                      <div class="action-btn-circle">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                      </div>
+                      <span class="action-count">Comment</span>
                     </div>
                     <div class="action-btn-item">
-                      <div class="action-btn-circle">↗️</div>
+                      <div class="action-btn-circle">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+                      </div>
                       <span class="action-count">Share</span>
                     </div>
                     <div class="action-btn-item">
-                      <div class="action-btn-disc spinning-disc">💿</div>
+                      <div class="action-btn-disc spinning-disc">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3" fill="#000"></circle></svg>
+                      </div>
                       <span class="action-count">Remix</span>
                     </div>
                   </div>
@@ -1240,11 +1273,16 @@
     <!-- VIEW 4: 📊 YouTube Shorts Analytics & Attribution                     -->
     <!-- ===================================================================== -->
     <div id="view-analytics" class="main-view-container" style="display: none;">
+      <!-- API Key Required Banner Container for Analytics -->
+      <div id="analytics-api-banner-container"></div>
+
       <!-- Top Action Bar -->
       <section class="analytics-header-section">
         <div class="analytics-header-card card">
           <div class="analytics-header-left">
-            <span class="analytics-icon">📊</span>
+            <span class="analytics-icon">
+              <svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+            </span>
             <div>
               <h2>In-App YouTube Shorts Analytics &amp; A/B Telemetry</h2>
               <p class="subtitle">Multi-source waterfall (API v3 + Analytics v2 + yt-dlp + Playwright Studio) with closed-loop winning style attribution</p>
@@ -1253,10 +1291,11 @@
           <div class="analytics-header-right">
             <div class="sync-indicator">
               <span class="sync-dot live"></span>
-              <span id="analytics-last-synced">Last synced: Just now</span>
+              <span id="analytics-last-synced">Last synced: Not yet synced</span>
             </div>
             <button id="analytics-sync-btn" type="button" class="btn btn-primary btn-sm" onclick="syncLiveAnalytics()">
-              🔄 Sync Live YouTube Analytics
+              <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Sync Live Analytics</span>
             </button>
           </div>
         </div>
@@ -1269,9 +1308,9 @@
           <div class="card kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Total Shorts Views</span>
-              <span class="kpi-badge positive">↑ +24.8%</span>
+              <span class="kpi-badge positive" id="kpi-views-trend">0%</span>
             </div>
-            <div class="kpi-value" id="kpi-total-views">1,248,500</div>
+            <div class="kpi-value" id="kpi-total-views">0</div>
             <div class="kpi-footer">Across all published Shorts</div>
           </div>
 
@@ -1279,9 +1318,9 @@
           <div class="card kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Average Retention</span>
-              <span class="kpi-badge high-retention">★ Top Tier</span>
+              <span class="kpi-badge" id="kpi-retention-badge">Awaiting Data</span>
             </div>
-            <div class="kpi-value" id="kpi-avg-retention">84.2%</div>
+            <div class="kpi-value" id="kpi-avg-retention">--</div>
             <div class="kpi-footer">Algorithm recommendation threshold: &gt;75%</div>
           </div>
 
@@ -1289,19 +1328,19 @@
           <div class="card kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Viewed vs. Swiped</span>
-              <span class="kpi-badge positive">78.6% Viewed</span>
+              <span class="kpi-badge" id="kpi-viewed-badge">--</span>
             </div>
-            <div class="kpi-value" id="kpi-viewed-rate">78.6% <span class="kpi-sub">/ 21.4% swipe</span></div>
-            <div class="kpi-footer">High hook conversion rate</div>
+            <div class="kpi-value" id="kpi-viewed-rate">--</div>
+            <div class="kpi-footer">Hook conversion rate</div>
           </div>
 
           <!-- KPI 4: Est. Revenue & RPM -->
           <div class="card kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Est. Revenue &amp; RPM</span>
-              <span class="kpi-badge revenue-badge">$0.33 RPM</span>
+              <span class="kpi-badge revenue-badge" id="kpi-rpm-badge">-- RPM</span>
             </div>
-            <div class="kpi-value" id="kpi-est-revenue">$412.50</div>
+            <div class="kpi-value" id="kpi-est-revenue">--</div>
             <div class="kpi-footer">Ad share + Related Funnel blend</div>
           </div>
 
@@ -1309,51 +1348,53 @@
           <div class="card kpi-card">
             <div class="kpi-header">
               <span class="kpi-title">Top Performing Short</span>
-              <span class="kpi-badge top-badge">👑 #1</span>
+              <span class="kpi-badge top-badge">#1</span>
             </div>
-            <div class="kpi-value kpi-title-val" id="kpi-top-short">OpenAI Just Dropped This...</div>
-            <div class="kpi-footer" id="kpi-top-short-meta">384,200 views • 91.5% retention</div>
+            <div class="kpi-value kpi-title-val" id="kpi-top-short">Awaiting Telemetry</div>
+            <div class="kpi-footer" id="kpi-top-short-meta">0 views • 0% retention</div>
           </div>
         </div>
       </section>
 
-      <!-- 👑 Closed-Loop Winning Style Recipe Banner -->
+      <!-- Closed-Loop Winning Style Recipe Banner -->
       <section class="winning-recipe-section">
         <div class="card winning-recipe-card" id="winning-recipe-banner">
           <div class="recipe-banner-header">
             <div class="recipe-title-group">
-              <span class="recipe-crown">👑</span>
+              <div class="recipe-crown">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14v2H5v-2z"></path></svg>
+              </div>
               <div>
                 <h3 class="recipe-title">Closed-Loop "Winning Style Recipe"</h3>
                 <p class="recipe-subtitle">Statistically proven highest-retention layout, caption preset &amp; background combo</p>
               </div>
             </div>
             <button id="apply-winning-style-btn" type="button" class="btn btn-primary-gradient btn-sm" onclick="applyWinningRecipe()">
-              🎯 1-Click Apply Winning Style to Studio
+              Apply Winning Style to Studio
             </button>
           </div>
 
           <div class="recipe-pills-row">
             <div class="recipe-pill-box">
               <span class="pill-category">Winning Layout</span>
-              <span class="pill-value" id="recipe-layout">⚡ 50/50 Split</span>
+              <span class="pill-value" id="recipe-layout">--</span>
             </div>
             <div class="recipe-pill-box">
               <span class="pill-category">Winning Caption Preset</span>
-              <span class="pill-value" id="recipe-caption">🎨 Hormozi Bold</span>
+              <span class="pill-value" id="recipe-caption">--</span>
             </div>
             <div class="recipe-pill-box">
               <span class="pill-category">Winning Background</span>
-              <span class="pill-value" id="recipe-bg">🎮 Subway Surfers</span>
+              <span class="pill-value" id="recipe-bg">--</span>
             </div>
             <div class="recipe-pill-box score-box">
               <span class="pill-category">Shorts Viral Score</span>
-              <span class="pill-value score-val" id="recipe-stats">SVS 93 / 100</span>
+              <span class="pill-value score-val" id="recipe-stats">-- / 100</span>
             </div>
           </div>
 
           <div class="recipe-rationale" id="recipe-rationale">
-            💡 <strong>Algorithmic Attribution:</strong> High-contrast Hormozi yellow/green typography paired with Subway Surfers split keeps viewer drop-off below 12% in the first 5 seconds, driving 89.4% average retention.
+            Awaiting Real Uploaded Shorts Telemetry. Publish Shorts with YouTube Data API or Studio to generate empirical A/B retention attribution.
           </div>
         </div>
       </section>

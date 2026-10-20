@@ -30,6 +30,7 @@ from autoshorts.research_agent import (
     get_viral_bgm_catalog,
     synthesize_neural_tts,
 )
+from autoshorts.research_agent.models import TrendingSourceVideo
 
 # =============================================================================
 # 1. Viral Scoring & Duration Tests
@@ -78,10 +79,10 @@ def test_compute_viral_score():
 
 
 def test_discover_trending_sources_fallback():
-    """Verify curated seed fallback when yt-dlp is offline or fails."""
+    """Verify curated seed fallback when yt-dlp is offline or fails and allow_seed_fallback=True."""
     # Force failure with timeout or invalid command
     with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="yt-dlp", timeout=1.0)):
-        results = discover_trending_sources(niche="ai_tech", limit=3)
+        results = discover_trending_sources(niche="ai_tech", limit=3, allow_seed_fallback=True)
         assert len(results) >= 1
         top = results[0]
         assert len(top.video_id) == 11
@@ -90,6 +91,18 @@ def test_discover_trending_sources_fallback():
         assert top.viral_score > 0.0
         assert top.score_breakdown is not None
         assert top.suggested_focus_prompt != ""
+
+
+def test_discover_trending_sources_zero_phantom_fallback():
+    """Verify zero phantom data returned when allow_seed_fallback=False and live search fails."""
+    with (
+        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="yt-dlp", timeout=1.0)),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        results = discover_trending_sources(
+            niche="ai_tech", limit=3, allow_seed_fallback=False, api_key=None
+        )
+        assert results == []
 
 
 def test_discover_trending_sources_mocked_live():
@@ -325,13 +338,55 @@ def test_client(tmp_path: Path):
 
 
 def test_api_research_trending(test_client: TestClient):
-    """Verify GET /api/research/trending."""
-    resp = test_client.get("/api/research/trending?niche=ai_tech&limit=3")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["niche"] == "ai_tech"
-    assert len(data["videos"]) >= 1
+    """Verify GET /api/research/trending enforces zero-phantom-data and respects fallback flag."""
+    # 1. Unconfigured API key and allow_seed_fallback=false -> zero phantom data
+    resp_unconfigured = test_client.get(
+        "/api/research/trending?niche=ai_tech&limit=3&allow_seed_fallback=false"
+    )
+    assert resp_unconfigured.status_code == 200
+    data_unc = resp_unconfigured.json()
+    assert data_unc["api_configured"] is False
+    assert data_unc["requires_api_key"] == "YOUTUBE_API_KEY"
+    assert data_unc["videos"] == []
+    assert data_unc["count"] == 0
+
+    # 2. allow_seed_fallback=true -> returns curated seed videos
+    resp_fallback = test_client.get(
+        "/api/research/trending?niche=ai_tech&limit=3&allow_seed_fallback=true"
+    )
+    assert resp_fallback.status_code == 200
+    data_fb = resp_fallback.json()
+    assert data_fb["success"] is True
+    assert data_fb["niche"] == "ai_tech"
+    assert len(data_fb["videos"]) >= 1
+
+    # 3. Configured API -> returns videos
+    with patch("autoshorts.dashboard.app.is_youtube_api_configured", return_value=True):
+        fake_video = TrendingSourceVideo(
+            video_id="live_abc_123",
+            url="https://youtube.com/watch?v=live_abc_123",
+            title="AI Revolution #Shorts",
+            channel="Tech Explorer",
+            channel_url="https://youtube.com/@techexplorer",
+            duration_seconds=180.0,
+            duration_formatted="03:00",
+            view_count=120000,
+            like_count=6000,
+            viral_score=94.0,
+            suggested_focus_prompt="Clip best insight",
+            recommended_studio_profile="hormozi",
+            niche_category="ai_tech",
+        )
+        with patch(
+            "autoshorts.research_agent.trending_sources.discover_trending_sources",
+            return_value=[fake_video],
+        ):
+            resp_live = test_client.get("/api/research/trending?niche=ai_tech&limit=3")
+            assert resp_live.status_code == 200
+            data_live = resp_live.json()
+            assert data_live["success"] is True
+            assert len(data_live["videos"]) == 1
+            assert data_live["videos"][0]["video_id"] == "live_abc_123"
 
 
 def test_api_research_niches(test_client: TestClient):
@@ -353,13 +408,22 @@ def test_api_research_niches(test_client: TestClient):
 
 
 def test_api_research_music(test_client: TestClient):
-    """Verify GET /api/research/music."""
-    resp = test_client.get("/api/research/music?genre=all")
+    """Verify GET /api/research/music returns BGM catalog and respects zero-phantom-data fallback."""
+    # 1. Unconfigured API key and allow_seed_fallback=false -> zero phantom trending audio
+    resp = test_client.get("/api/research/music?genre=all&allow_seed_fallback=false")
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
     assert len(data["bgm_catalog"]) == 8
-    assert len(data["trending_shorts_audio"]) >= 5
+    assert data["trending_shorts_audio"] == []
+    assert data["api_configured"] is False
+
+    # 2. allow_seed_fallback=true -> returns curated trending audio
+    resp_fb = test_client.get("/api/research/music?genre=all&allow_seed_fallback=true")
+    assert resp_fb.status_code == 200
+    data_fb = resp_fb.json()
+    assert data_fb["success"] is True
+    assert len(data_fb["trending_shorts_audio"]) >= 5
 
 
 def test_api_research_music_download(test_client: TestClient):
@@ -441,6 +505,19 @@ def test_api_analytics_endpoints(test_client: TestClient):
     assert r_videos.status_code == 200
     assert r_videos.json()["success"] is True
 
-    r_sync = test_client.post("/api/analytics/sync", json={"force": True})
-    assert r_sync.status_code == 200
-    assert r_sync.json()["success"] is True
+    # 1. Unconfigured API key and no uploaded videos in DB -> returns api_configured: False
+    r_sync_unconfigured = test_client.post("/api/analytics/sync", json={"force": True})
+    assert r_sync_unconfigured.status_code == 200
+    assert r_sync_unconfigured.json()["api_configured"] is False
+
+    # 2. Configured API key -> triggers sync successfully
+    with (
+        patch("autoshorts.dashboard.app.is_youtube_api_configured", return_value=True),
+        patch(
+            "autoshorts.analytics.engine.AnalyticsEngine.sync_all_uploaded_shorts",
+            return_value={"synced_count": 0, "video_ids": []},
+        ),
+    ):
+        r_sync = test_client.post("/api/analytics/sync", json={"force": True})
+        assert r_sync.status_code == 200
+        assert r_sync.json()["success"] is True

@@ -162,6 +162,79 @@ def update_env_file(
 # -----------------------------------------------------------------------------
 
 
+def is_youtube_api_configured(config: Settings | None = None) -> bool:
+    """Return True if YouTube Data API v3 key or OAuth token.json exists."""
+    token_p = get_data_dir() / "token.json"
+    if token_p.is_file() and token_p.stat().st_size > 0:
+        return True
+    key = ""
+    if config is not None:
+        key = config.get_youtube_api_key_str() or ""
+    if not key:
+        key = os.environ.get("YOUTUBE_API_KEY") or ""
+    return bool(key.strip())
+
+
+def check_llm_provider_configured(config: Settings | None) -> tuple[bool, str, str]:
+    """Verify that the active LLM provider has an API key or local model file configured.
+
+    Returns:
+        (is_configured: bool, missing_key_name: str, user_facing_message: str)
+    """
+    if config is None or not hasattr(config, "llm"):
+        return (
+            False,
+            "AI_PROVIDER",
+            "No AI configuration loaded. Please open Settings -> AI Providers & Keys to configure a provider.",
+        )
+
+    provider = (config.llm.provider or "local").lower()
+
+    if provider == "gemini":
+        gemini_key = config.get_gemini_api_key_str() or os.environ.get("GEMINI_API_KEY")
+        if not gemini_key or not str(gemini_key).strip():
+            return (
+                False,
+                "GEMINI_API_KEY",
+                "Gemini API Key is not configured. Please open Settings -> AI Providers & Keys and insert your GEMINI_API_KEY.",
+            )
+        return (True, "", "")
+
+    if provider == "openrouter":
+        openrouter_key = config.get_openrouter_api_key_str() or os.environ.get("OPENROUTER_API_KEY")
+        if not openrouter_key or not str(openrouter_key).strip():
+            return (
+                False,
+                "OPENROUTER_API_KEY",
+                "OpenRouter API Key is not configured. Please open Settings -> AI Providers & Keys and insert your OPENROUTER_API_KEY.",
+            )
+        return (True, "", "")
+
+    if provider == "local":
+        local_p = (
+            config.local_gguf_path
+            or os.environ.get("LOCAL_GGUF_PATH")
+            or getattr(config.llm, "local_model_path", None)
+        )
+        if local_p and Path(local_p).is_file():
+            return (True, "", "")
+
+        # Check data/models/*.gguf
+        models_dir = PROJECT_ROOT / "data" / "models"
+        if models_dir.is_dir():
+            gguf_files = list(models_dir.glob("*.gguf"))
+            if gguf_files:
+                return (True, "", "")
+
+        return (
+            False,
+            "LOCAL_GGUF_PATH",
+            "No local GGUF model is configured and no cloud API key is set. Please open Settings -> AI Providers & Keys to add a Gemini/OpenRouter API key or set a local GGUF model path.",
+        )
+
+    return (True, "", "")
+
+
 def get_youtube_oauth_status(config: Settings | None = None) -> dict[str, Any]:
     """Check configuration and token validity for YouTube Data API v3 OAuth."""
     data_dir = get_data_dir()
@@ -440,7 +513,7 @@ def get_public_settings_payload(
         "cleanup": {
             "enabled": config.cleanup.enabled,
             "use_recycle_bin": config.cleanup.use_recycle_bin,
-            "keep_final_days": getattr(config.cleanup, "keep_final_days", 3),
+            "keep_final_days": getattr(config.cleanup, "keep_final_days", 1),
             "keep_master_mp4": config.cleanup.keep_master_mp4,
             "purge_intermediate_work": config.cleanup.purge_intermediate_work,
             "dry_run": config.cleanup.dry_run,
@@ -673,7 +746,13 @@ def apply_settings_update(
             "dry_run",
         ):
             if k in cl_data and cl_data[k] is not None:
-                raw_yaml["cleanup"][k] = cl_data[k]
+                if k == "keep_final_days":
+                    try:
+                        raw_yaml["cleanup"][k] = int(cl_data[k])
+                    except (ValueError, TypeError):
+                        raw_yaml["cleanup"][k] = 1
+                else:
+                    raw_yaml["cleanup"][k] = cl_data[k]
 
     # Save to config.yaml atomically
     out_yaml = yaml.safe_dump(raw_yaml, sort_keys=False)
@@ -681,11 +760,11 @@ def apply_settings_update(
 
     # Reload new settings
     new_settings = load_config(target_config)
-    # Ensure any non-model config fields (like style_preset or keep_final_days) remain accessible
+    # Ensure any non-model config fields remain accessible
     if "subtitles" in raw_yaml and "style_preset" in raw_yaml["subtitles"]:
         new_settings.subtitles.style_preset = raw_yaml["subtitles"]["style_preset"]
     if "cleanup" in raw_yaml and "keep_final_days" in raw_yaml["cleanup"]:
-        new_settings.cleanup.keep_final_days = raw_yaml["cleanup"]["keep_final_days"]
+        new_settings.cleanup.keep_final_days = int(raw_yaml["cleanup"]["keep_final_days"])
 
     return new_settings
 
@@ -915,11 +994,13 @@ __all__ = [
     "FACTORY_STUDIO_PROFILES",
     "YOUTUBE_OAUTH_STATE",
     "apply_settings_update",
+    "check_llm_provider_configured",
     "get_channel_profiles",
     "get_public_settings_payload",
     "get_studio_profiles",
     "get_youtube_oauth_state",
     "get_youtube_oauth_status",
+    "is_youtube_api_configured",
     "mask_secret",
     "read_env_file",
     "run_youtube_oauth_flow",

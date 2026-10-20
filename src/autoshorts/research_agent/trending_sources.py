@@ -9,14 +9,31 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import subprocess
 import time
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from autoshorts.research_agent.models import TrendingSourceVideo, ViralScoreBreakdown
 
 logger = logging.getLogger("autoshorts.research_agent.trending")
+
+
+def parse_iso8601_duration(duration_str: str) -> float:
+    """Parse an ISO 8601 duration string (e.g., 'PT1M15S', 'PT45S') to seconds."""
+    if not duration_str or not duration_str.startswith("PT"):
+        return 0.0
+    match = re.match(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$", duration_str)
+    if not match:
+        return 0.0
+    hours = float(match.group(1) or 0)
+    minutes = float(match.group(2) or 0)
+    seconds = float(match.group(3) or 0)
+    return hours * 3600.0 + minutes * 60.0 + seconds
 
 
 def format_duration(duration_seconds: float) -> str:
@@ -428,18 +445,146 @@ def _build_curated_seed_results(niche: str) -> list[TrendingSourceVideo]:
     return results
 
 
+def _fetch_live_youtube_api(
+    query: str,
+    api_key: str,
+    limit: int = 9,
+    norm_niche: str = "ai_tech",
+) -> list[TrendingSourceVideo]:
+    """Fetch 100% real live view counts, like counts, and metadata from official YouTube Data API v3."""
+    try:
+        search_url = "https://www.googleapis.com/youtube/v3/search"
+        search_params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "videoDuration": "medium",
+            "order": "viewCount",
+            "maxResults": min(max(limit, 5), 25),
+            "key": api_key,
+        }
+        with httpx.Client(timeout=10.0) as client:
+            s_resp = client.get(search_url, params=search_params)
+            if s_resp.status_code != 200:
+                logger.warning(
+                    "YouTube search API returned status %d: %s", s_resp.status_code, s_resp.text
+                )
+                return []
+            s_data = s_resp.json()
+            items = s_data.get("items", [])
+            video_ids = [
+                item["id"]["videoId"]
+                for item in items
+                if isinstance(item.get("id"), dict) and "videoId" in item["id"]
+            ]
+            if not video_ids:
+                return []
+
+            v_url = "https://www.googleapis.com/youtube/v3/videos"
+            v_params = {
+                "part": "snippet,statistics,contentDetails",
+                "id": ",".join(video_ids),
+                "key": api_key,
+            }
+            v_resp = client.get(v_url, params=v_params)
+            if v_resp.status_code != 200:
+                logger.warning(
+                    "YouTube videos API returned status %d: %s", v_resp.status_code, v_resp.text
+                )
+                return []
+            v_data = v_resp.json()
+
+            results: list[TrendingSourceVideo] = []
+            now_dt = datetime.now(UTC)
+
+            for v_item in v_data.get("items", []):
+                vid = v_item.get("id")
+                if not vid:
+                    continue
+                snippet = v_item.get("snippet", {})
+                stats = v_item.get("statistics", {})
+                content_details = v_item.get("contentDetails", {})
+
+                title = snippet.get("title", "Untitled")
+                channel = snippet.get("channelTitle", "YouTube Creator")
+                channel_id = snippet.get("channelId", "")
+                ch_url = (
+                    f"https://www.youtube.com/channel/{channel_id}"
+                    if channel_id
+                    else "https://youtube.com"
+                )
+
+                views = int(stats.get("viewCount", 0))
+                likes = int(stats.get("likeCount", 0))
+                dur = parse_iso8601_duration(content_details.get("duration", ""))
+
+                pub_str = snippet.get("publishedAt", "")
+                hours_since = 48.0
+                if pub_str:
+                    try:
+                        pub_dt = datetime.fromisoformat(pub_str)
+                        hours_since = max(0.5, (now_dt - pub_dt).total_seconds() / 3600.0)
+                    except Exception:
+                        hours_since = 48.0
+
+                vph = round(views / max(0.5, hours_since), 1)
+                v_score, breakdown = compute_viral_score(
+                    views=views, likes=likes, duration_sec=dur, hours_since_upload=hours_since
+                )
+
+                thumb = (
+                    snippet.get("thumbnails", {}).get("high", {}).get("url")
+                    or snippet.get("thumbnails", {}).get("medium", {}).get("url")
+                    or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                )
+
+                results.append(
+                    TrendingSourceVideo(
+                        video_id=vid,
+                        url=f"https://www.youtube.com/watch?v={vid}",
+                        title=title,
+                        channel=channel,
+                        channel_url=ch_url,
+                        duration_seconds=dur,
+                        duration_formatted=format_duration(dur),
+                        view_count=views,
+                        like_count=likes,
+                        hours_since_upload=round(hours_since, 1),
+                        views_per_hour=vph,
+                        thumbnail_url=thumb,
+                        viral_score=v_score,
+                        score_breakdown=breakdown,
+                        suggested_focus_prompt=f"Clip peak high-impact insight from {channel}.",
+                        recommended_studio_profile="hormozi"
+                        if "ai" in norm_niche
+                        else "podcast_70_30",
+                        niche_category=norm_niche,
+                    )
+                )
+
+            results.sort(key=lambda x: x.viral_score, reverse=True)
+            return results[:limit]
+    except Exception as e:
+        logger.warning("Live YouTube API fetch failed (%s); continuing waterfall.", e)
+        return []
+
+
 def discover_trending_sources(
     niche: str = "ai_tech",
     custom_query: str | None = None,
     limit: int = 9,
     timeout_sec: float = 15.0,
+    allow_seed_fallback: bool = True,
+    api_key: str | None = None,
 ) -> list[TrendingSourceVideo]:
     """Discover real trending videos and podcasts for YouTube Shorts clipping.
 
-    Uses `yt-dlp --dump-json --flat-playlist --skip-download "ytsearch{limit}:{query}"`.
-    Falls back gracefully to the curated seeds on subprocess failure, timeout, or offline mode.
+    1. Checks if YouTube Data API v3 key is provided/configured, and queries live metrics.
+    2. Falls back to yt-dlp search.
+    3. If allow_seed_fallback=True, falls back to curated catalog. If False, returns empty.
     """
     norm_niche = niche.lower().replace("-", "_").replace(" ", "_")
+    key = api_key or os.getenv("YOUTUBE_API_KEY")
 
     # Construct search query
     if custom_query and custom_query.strip():
@@ -456,6 +601,14 @@ def discover_trending_sources(
             "gaming": "gaming documentary esports deep dive episode",
         }
         search_query = niche_queries.get(norm_niche, f"{niche} podcast full episode")
+
+    # 1. Query official YouTube Data API v3 if API key is present
+    if key and key.strip():
+        live_yt = _fetch_live_youtube_api(
+            query=search_query, api_key=key.strip(), limit=limit, norm_niche=norm_niche
+        )
+        if live_yt:
+            return live_yt
 
     cmd = [
         "yt-dlp",
@@ -547,14 +700,15 @@ def discover_trending_sources(
                 except Exception as parse_err:
                     logger.debug("Failed parsing yt-dlp entry: %s", parse_err)
     except Exception as run_err:
-        logger.info(
-            "yt-dlp live search failed or timed out (%s); using curated seed catalog.", run_err
-        )
+        logger.info("yt-dlp live search failed or timed out (%s); checking fallback mode.", run_err)
 
     # If live search returned results, sort by viral_score descending and return
     if discovered:
         discovered.sort(key=lambda x: x.viral_score, reverse=True)
         return discovered[:limit]
+
+    if not allow_seed_fallback:
+        return []
 
     # Resilient fallback: return curated seeds
     seeds = _build_curated_seed_results(norm_niche)

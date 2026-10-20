@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import struct
 import subprocess
 import wave
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from autoshorts.core.paths import get_assets_dir
 from autoshorts.research_agent.models import TrendingShortsAudio, ViralBGMTrack
@@ -360,8 +363,66 @@ def download_viral_bgm(
     }
 
 
-def get_trending_shorts_audio(genre: str = "all") -> list[TrendingShortsAudio]:
+def fetch_live_trending_music(api_key: str, limit: int = 10) -> list[TrendingShortsAudio]:
+    """Fetch live trending commercial music videos from YouTube Data API v3."""
+    url = "https://www.googleapis.com/youtube/v3/videos"
+    params = {
+        "part": "snippet,statistics",
+        "chart": "mostPopular",
+        "videoCategoryId": "10",  # Music category
+        "maxResults": min(max(limit, 5), 25),
+        "key": api_key,
+    }
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(url, params=params)
+            if resp.status_code != 200:
+                logger.warning(
+                    "YouTube trending music API returned %d: %s", resp.status_code, resp.text
+                )
+                return []
+            data = resp.json()
+            items = data.get("items", [])
+            results: list[TrendingShortsAudio] = []
+            for rank, item in enumerate(items, start=1):
+                vid = item.get("id")
+                snippet = item.get("snippet", {})
+                title = snippet.get("title", "Trending Sound")
+                artist = snippet.get("channelTitle", "YouTube Artist")
+                results.append(
+                    TrendingShortsAudio(
+                        sound_id=f"yt_music_{vid}",
+                        title=title,
+                        artist=artist,
+                        bpm=120,
+                        vibe=f"Live YouTube Music Trend #{rank}",
+                        trending_rank=rank,
+                        best_fit_niche="all",
+                        youtube_shorts_sound_url=f"https://www.youtube.com/watch?v={vid}",
+                        usage_tip=f"Trending commercial release #{rank}. Recommended for viral sync cuts.",
+                    )
+                )
+            return results
+    except Exception as e:
+        logger.warning("Failed to fetch live trending music: %s", e)
+        return []
+
+
+def get_trending_shorts_audio(
+    genre: str = "all",
+    api_key: str | None = None,
+    allow_seed_fallback: bool = True,
+) -> list[TrendingShortsAudio]:
     """Return top trending commercial YouTube Shorts sounds and edit tips."""
+    key = api_key or os.getenv("YOUTUBE_API_KEY")
+    if key and key.strip():
+        live_music = fetch_live_trending_music(api_key=key.strip())
+        if live_music:
+            return live_music
+
+    if not allow_seed_fallback:
+        return []
+
     results = [TrendingShortsAudio(**item) for item in TRENDING_SHORTS_SOUNDS]
     if genre and genre.lower() != "all":
         norm_genre = genre.lower()
@@ -377,6 +438,7 @@ __all__ = [
     "CURATED_VIRAL_BGM",
     "TRENDING_SHORTS_SOUNDS",
     "download_viral_bgm",
+    "fetch_live_trending_music",
     "get_trending_shorts_audio",
     "get_viral_bgm_catalog",
 ]

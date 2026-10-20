@@ -444,12 +444,13 @@ def test_seed_demo_analytics_and_overview(tmp_path: Path):
     sm = StateManager(tmp_path / "demo_test.db")
     engine = AnalyticsEngine(state_manager=sm)
 
-    # Overview when empty returns clean defaults
+    # Overview when empty returns clean defaults (zero phantom data)
     overview_empty = engine.get_overview()
     assert overview_empty.total_videos == 0
     assert overview_empty.total_views == 0
+    assert overview_empty.channel_rpm_usd == 0.0
     assert overview_empty.winning_recipe.layout_mode == "split_50_50"
-    assert overview_empty.winning_recipe.confidence == "default"
+    assert overview_empty.winning_recipe.confidence in ("none", "default")
 
     # Seed demo telemetry
     seeded = engine.seed_demo_analytics_if_empty()

@@ -88,7 +88,7 @@ def test_reserve_retries_and_fresh_cap(state_mgr: StateManager):
 
 def test_daily_upload_cap_respected(state_mgr: StateManager):
     """Test that completed uploads reaching daily_upload_cap (50) blocks further uploads."""
-    fixed_time = datetime(2026, 10, 19, 16, 0, tzinfo=UTC)
+    fixed_time = datetime.now(UTC)
     sched_cfg = SchedulerConfig(daily_upload_cap=5)  # small cap for testing
     quota_cfg = QuotaConfig(upload_bucket_daily=100, reserve_retries=50)
     tracker = QuotaTracker(
@@ -129,7 +129,7 @@ def test_general_bucket_stop_threshold(state_mgr: StateManager):
     assert tracker.get_general_spend() == 900
     assert tracker.can_verify(units=1) is False  # 900 + 1 > 1000 - 100 = 900
 
-    tracker.state_manager.reset_quota_for_date()
+    tracker.state_manager.reset_quota_for_date(tracker.get_current_pt_date())
     tracker.record_general(899)
     assert tracker.can_verify(units=1) is True
 

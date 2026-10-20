@@ -7,11 +7,12 @@ and provides redaction capabilities.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from autoshorts.core.exceptions import ConfigError
@@ -32,6 +33,8 @@ HookBannerStyle = Literal["neon_box", "pill", "minimal", "none"]
 class AppConfig(BaseModel):
     """Application web server and UI parameters."""
 
+    model_config = ConfigDict(extra="ignore")
+
     name: str = "AutoShorts-OnDevice"
     version: str = "1.0.0"
     port: int = 8765
@@ -41,6 +44,8 @@ class AppConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     """LLM provider parameters. Model MUST default to None (zero hardcoding)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     provider: Literal["local", "gemini", "openrouter"] = "local"
     model: str | None = None  # None = dynamically resolved at runtime
@@ -52,18 +57,23 @@ class LLMConfig(BaseModel):
 class JobDefaultsConfig(BaseModel):
     """Default parameters applied to newly submitted video clipping jobs."""
 
+    model_config = ConfigDict(extra="ignore")
+
     clips_per_video: int = Field(default=1, ge=1)
     min_duration_seconds: int = Field(default=30, ge=10)
     max_duration_seconds: int = Field(default=50, le=60)
     window_stride_seconds: int = Field(default=15, ge=5)
     focus_prompt: str = "Identify the most compelling, high-retention standalone insight or moment."
     background_category: str = "minecraft"
+    background_style: str = "minecraft"
     dopamine_level: Literal["low", "medium", "high"] = "medium"
     auto_approve: bool = False
 
 
 class EditPlannerConfig(BaseModel):
     """Multimodal AI edit planning stage configuration."""
+
+    model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
     provider: str = "gemini_video"
@@ -75,6 +85,8 @@ class EditPlannerConfig(BaseModel):
 class ActiveWindowConfig(BaseModel):
     """Daily daytime active window during which uploads may be dispatched."""
 
+    model_config = ConfigDict(extra="ignore")
+
     start: str = "08:00"
     end: str = "23:59"
     timezone: str = "local"
@@ -82,6 +94,8 @@ class ActiveWindowConfig(BaseModel):
 
 class UploadConfig(BaseModel):
     """YouTube upload protocol, visibility, and attribution templates."""
+
+    model_config = ConfigDict(extra="ignore")
 
     mode: Literal["api", "studio", "local"] = "api"
     privacy_status: Literal["private", "unlisted", "public"] = "unlisted"
@@ -97,6 +111,7 @@ class UploadConfig(BaseModel):
     link_related_video: bool = True
     schedule_strategy: str = "local_scheduler"
     active_channel_profile: str = "default"
+    made_for_kids: bool = False
     title_template: str = "{hook} | {channel} #Shorts"
     description_template: str = (
         "{hook}\n\n"
@@ -126,6 +141,8 @@ class UploadConfig(BaseModel):
 class SchedulerConfig(BaseModel):
     """Daily Cap and Persistent Spread Scheduler configuration."""
 
+    model_config = ConfigDict(extra="ignore")
+
     enabled: bool = True
     daily_upload_cap: int = Field(default=50, ge=1, le=100)
     max_per_rolling_hour: int = Field(default=7, ge=1, le=20)
@@ -143,6 +160,8 @@ class SchedulerConfig(BaseModel):
 class QuotaConfig(BaseModel):
     """YouTube API granular quota bucket tracking parameters."""
 
+    model_config = ConfigDict(extra="ignore")
+
     upload_bucket_daily: int = Field(default=100, description="Dedicated videos.insert calls/day")
     general_bucket_daily: int = Field(default=10000, description="Shared general units/day")
     reserve_retries: int = Field(
@@ -159,6 +178,8 @@ class QuotaConfig(BaseModel):
 class SparkConfig(BaseModel):
     """Gemini Spark companion inbox configuration."""
 
+    model_config = ConfigDict(extra="ignore")
+
     inbox_dir: str = "inbox"
     watch_inbox: bool = True
     poll_interval_sec: int = 10
@@ -166,6 +187,8 @@ class SparkConfig(BaseModel):
 
 class MediaConfig(BaseModel):
     """Video encoding, whisper transcription, and compositing parameters."""
+
+    model_config = ConfigDict(extra="ignore")
 
     preferred_encoder: Literal["auto", "h264_qsv", "libx264"] = "auto"
     whisper_model: str = "base.en"
@@ -178,6 +201,8 @@ class MediaConfig(BaseModel):
 
 class VisualBrandingConfig(BaseModel):
     """Visual framing, color grading, watermark, and progress bar branding options."""
+
+    model_config = ConfigDict(extra="ignore")
 
     layout_mode: str = "split_50_50"
     color_grading: str = "none"
@@ -194,6 +219,8 @@ class VisualBrandingConfig(BaseModel):
 class AudioMasteringConfig(BaseModel):
     """Audio mastering, voice boost EQ, and sound effect parameters."""
 
+    model_config = ConfigDict(extra="ignore")
+
     voice_boost: bool = True
     target_lufs: float = Field(default=-14.0, ge=-24.0, le=-9.0)
     bg_music_volume: float = Field(default=0.20, ge=0.0, le=0.50)
@@ -202,6 +229,8 @@ class AudioMasteringConfig(BaseModel):
 
 class SubtitlesConfig(BaseModel):
     """Karaoke ASS subtitle styling and safe-zone positioning."""
+
+    model_config = ConfigDict(extra="ignore")
 
     font_name: str = "Montserrat ExtraBold"
     font_size: int = 76
@@ -226,9 +255,12 @@ class SubtitlesConfig(BaseModel):
 class CleanupConfig(BaseModel):
     """Intermediate file purge and safety retention parameters."""
 
+    model_config = ConfigDict(extra="ignore")
+
     enabled: bool = True
     use_recycle_bin: bool = True
     keep_master_mp4: bool = True
+    keep_final_days: int = Field(default=1, ge=0)
     purge_intermediate_work: bool = True
     dry_run: bool = False
 
@@ -280,15 +312,21 @@ class Settings(BaseSettings):
 
     def get_gemini_api_key_str(self) -> str | None:
         """Return the unmasked Gemini API key string, or None if not set."""
-        return self.gemini_api_key.get_secret_value() if self.gemini_api_key else None
+        if self.gemini_api_key:
+            return self.gemini_api_key.get_secret_value()
+        return os.environ.get("GEMINI_API_KEY")
 
     def get_openrouter_api_key_str(self) -> str | None:
         """Return the unmasked OpenRouter API key string, or None if not set."""
-        return self.openrouter_api_key.get_secret_value() if self.openrouter_api_key else None
+        if self.openrouter_api_key:
+            return self.openrouter_api_key.get_secret_value()
+        return os.environ.get("OPENROUTER_API_KEY")
 
     def get_youtube_api_key_str(self) -> str | None:
         """Return the unmasked YouTube API key string, or None if not set."""
-        return self.youtube_api_key.get_secret_value() if self.youtube_api_key else None
+        if self.youtube_api_key:
+            return self.youtube_api_key.get_secret_value()
+        return os.environ.get("YOUTUBE_API_KEY")
 
 
 def load_config(config_path: Path | str | None = None) -> Settings:

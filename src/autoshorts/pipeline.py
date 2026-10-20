@@ -17,6 +17,7 @@ import json
 import logging
 import threading
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,7 @@ from autoshorts.media.compositor import (
 )
 from autoshorts.media.dopamine_effects import pick_background_asset
 from autoshorts.media.downloader import Downloader as MediaDownloader
+from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
 from autoshorts.transcript.fetcher import TranscriptFetcher
@@ -660,7 +662,7 @@ class ShortsPipeline:
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
 
-    def _run_subtitles_stage(self, job: Job, use_cached_words: bool = True) -> None:
+    def _run_subtitles_stage(self, job: Job, use_cached_words: bool = False) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "subtitles_generation")
         try:
             sel = job.selected_clips[0]
@@ -690,7 +692,7 @@ class ShortsPipeline:
             if not words and raw_cut_path and raw_cut_path.is_file():
                 try:
                     wav_path = work_dir / f"{job.id}_cut.wav"
-                    extract_16khz_mono_wav(raw_cut_path, wav_path)
+                    extract_16khz_mono_wav(raw_cut_path, wav_path, ffmpeg_binary=get_ffmpeg_path())
                     aligned = self.transcriber.align_words(wav_path)
                     if aligned:
                         words = aligned
@@ -772,6 +774,8 @@ class ShortsPipeline:
             write_ass_file(**ass_kwargs)
 
             job.subtitles_path = str(ass_path)
+            if job.status not in (JobStatus.DOWNLOADING_SECTION, JobStatus.SUBTITLES_GENERATED):
+                job.status = JobStatus.DOWNLOADING_SECTION
             job.transition_to(JobStatus.SUBTITLES_GENERATED)
             self.state_manager.record_stage_complete(
                 stage_id,
@@ -795,6 +799,8 @@ class ShortsPipeline:
     ) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "compositing")
         try:
+            if job.status not in (JobStatus.SUBTITLES_GENERATED, JobStatus.COMPOSITING):
+                job.status = JobStatus.SUBTITLES_GENERATED
             job.transition_to(JobStatus.COMPOSITING)
             self.state_manager.save_job(job)
 
@@ -817,6 +823,7 @@ class ShortsPipeline:
             bg_file, _ = pick_background_asset(category=bg_style)
 
             branding_cfg = getattr(self.config, "branding", None)
+            audio_cfg = getattr(self.config, "audio_mastering", None)
             layout_mode = (
                 getattr(job, "layout_mode", None)
                 or getattr(branding_cfg, "layout_mode", None)
@@ -833,9 +840,18 @@ class ShortsPipeline:
             watermark_position = getattr(job, "watermark_position", None) or getattr(
                 branding_cfg, "watermark_position", "top_right"
             )
+            watermark_opacity = getattr(job, "watermark_opacity", None) or getattr(
+                branding_cfg, "watermark_opacity", 0.65
+            )
             progress_bar_position = getattr(job, "progress_bar_position", None) or getattr(
                 branding_cfg, "progress_bar_position", "seam"
             )
+            progress_bar_color = getattr(job, "progress_bar_color", None) or getattr(
+                branding_cfg, "progress_bar_color", "#FFE600"
+            )
+            voice_boost = getattr(audio_cfg, "voice_boost", True)
+            target_lufs = getattr(audio_cfg, "target_lufs", -14.0)
+            bg_music_volume = getattr(audio_cfg, "bg_music_volume", 0.20)
 
             comp_kwargs: dict[str, Any] = {
                 "job_id": job.id,
@@ -851,7 +867,12 @@ class ShortsPipeline:
                 "color_grading": color_grading,
                 "watermark_text": watermark_text,
                 "watermark_position": watermark_position,
+                "watermark_opacity": watermark_opacity,
                 "progress_bar_position": progress_bar_position,
+                "progress_bar_color": progress_bar_color,
+                "voice_boost": voice_boost,
+                "target_lufs": target_lufs,
+                "bg_music_volume": bg_music_volume,
             }
             try:
                 c_sig = inspect.signature(self.compositor.compose)
@@ -891,6 +912,8 @@ class ShortsPipeline:
                 except Exception as p_err:
                     logger.warning("Job %s: Low-res preview generation failed: %s", job.id, p_err)
 
+            if job.status not in (JobStatus.COMPOSITING, JobStatus.READY_FOR_REVIEW):
+                job.status = JobStatus.COMPOSITING
             job.transition_to(JobStatus.READY_FOR_REVIEW)
             self.state_manager.record_stage_complete(
                 stage_id,
@@ -987,15 +1010,22 @@ class ShortsPipeline:
         self.state_manager.save_job(job)
 
         with self._render_lock:
-            # Re-run Stage 7: Subtitle (.ass) Generation (using cached aligned_words.json if present)
-            self._run_subtitles_stage(job, use_cached_words=True)
+            try:
+                # Re-run Stage 7: Subtitle (.ass) Generation (using cached aligned_words.json if present)
+                self._run_subtitles_stage(job, use_cached_words=True)
 
-            # Re-run Stage 8: Compositing
-            self._run_compositing_stage(
-                job,
-                background_category=overrides.get("background_category"),
-                dopamine_level=overrides.get("dopamine_level"),
-            )
+                # Re-run Stage 8: Compositing
+                self._run_compositing_stage(
+                    job,
+                    background_category=overrides.get("background_category"),
+                    dopamine_level=overrides.get("dopamine_level"),
+                )
+            except Exception as re_err:
+                logger.exception("Job %s fast re-render failed", job.id)
+                job.status = JobStatus.FAILED
+                job.error_message = str(re_err)
+                self.state_manager.save_job(job)
+                raise
 
         self.state_manager.save_job(job)
         logger.info("Job %s fast re-render complete; ready for review.", job.id)
@@ -1033,6 +1063,8 @@ class ShortsPipeline:
 
     def _run_immediate_upload(self, job: Job) -> UploadResult:
         title, desc = self._prepare_upload_metadata(job)
+        if job.status not in (JobStatus.READY_FOR_REVIEW, JobStatus.SCHEDULED):
+            job.status = JobStatus.READY_FOR_REVIEW
         job.transition_to(JobStatus.UPLOADING)
         self.state_manager.save_job(job)
 
@@ -1066,17 +1098,62 @@ class ShortsPipeline:
             use_uploader = PlaywrightStudioUploader(config=self.config)
             fell_back_to_studio = True
 
+        category_id = getattr(job, "category_id", None) or getattr(upload_cfg, "category_id", "24")
+        default_language = getattr(job, "default_language", None) or getattr(
+            upload_cfg, "default_language", "en"
+        )
+        altered_content = getattr(job, "altered_content", None)
+        if altered_content is None:
+            altered_content = getattr(upload_cfg, "altered_content", False)
+        custom_tags = getattr(job, "custom_tags", None) or getattr(upload_cfg, "custom_tags", [])
+        auto_pin_comment = getattr(job, "auto_pin_comment", None)
+        if auto_pin_comment is None:
+            auto_pin_comment = getattr(upload_cfg, "auto_pin_comment", False)
+        link_related_video = getattr(job, "link_related_video", None)
+        if link_related_video is None:
+            link_related_video = getattr(upload_cfg, "link_related_video", True)
+        publish_at = getattr(job, "publish_at", None) or getattr(upload_cfg, "publish_at", None)
+
+        tags = ["Shorts", "AutoShorts"]
+        if custom_tags:
+            for ct in custom_tags:
+                if ct not in tags:
+                    tags.append(ct)
+
         try:
             try:
                 kwargs: dict[str, Any] = {
                     "path": Path(job.rendered_video_path),  # type: ignore[arg-type]
                     "title": title,
                     "description": desc,
-                    "tags": ["Shorts", "AutoShorts"],
+                    "tags": tags,
                     "privacy": privacy,
                 }
                 if isinstance(use_uploader, PlaywrightStudioUploader):
                     kwargs["privacy_status"] = privacy
+
+                extra_upload_kwargs = {
+                    "category_id": category_id,
+                    "default_language": default_language,
+                    "altered_content": altered_content,
+                    "custom_tags": custom_tags,
+                    "auto_pin_comment": auto_pin_comment,
+                    "publish_at": publish_at,
+                }
+                if link_related_video and getattr(job, "source_url", None):
+                    extra_upload_kwargs["related_video_url"] = job.source_url
+
+                try:
+                    sig = inspect.signature(use_uploader.upload)
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    )
+                    for k, v in extra_upload_kwargs.items():
+                        if v is not None and (has_varkw or k in sig.parameters):
+                            kwargs[k] = v
+                except Exception:
+                    pass
+
                 result = use_uploader.upload(**kwargs)
             except Exception as up_err:
                 is_quota_err = isinstance(up_err, QuotaExhaustedError) or (
@@ -1093,14 +1170,19 @@ class ShortsPipeline:
                     self.state_manager.record_stage_start(job.id, "studio_fallback")
                     use_uploader = PlaywrightStudioUploader(config=self.config)
                     fell_back_to_studio = True
-                    result = use_uploader.upload(
-                        path=Path(job.rendered_video_path),  # type: ignore[arg-type]
-                        title=title,
-                        description=desc,
-                        tags=["Shorts", "AutoShorts"],
-                        privacy=privacy,
-                        privacy_status=privacy,
-                    )
+                    studio_kwargs: dict[str, Any] = {
+                        "path": Path(job.rendered_video_path),  # type: ignore[arg-type]
+                        "title": title,
+                        "description": desc,
+                        "tags": tags,
+                        "privacy": privacy,
+                        "privacy_status": privacy,
+                        "altered_content": altered_content,
+                        "publish_at": publish_at,
+                    }
+                    if link_related_video and getattr(job, "source_url", None):
+                        studio_kwargs["related_video_url"] = job.source_url
+                    result = use_uploader.upload(**studio_kwargs)
                 else:
                     raise
 
@@ -1151,6 +1233,8 @@ class ShortsPipeline:
 
     def _run_schedule_upload(self, job: Job) -> None:
         title, desc = self._prepare_upload_metadata(job)
+        if job.status not in (JobStatus.READY_FOR_REVIEW, JobStatus.SCHEDULED):
+            job.status = JobStatus.READY_FOR_REVIEW
         job.transition_to(JobStatus.SCHEDULED)
         self.state_manager.save_job(job)
 
@@ -1159,15 +1243,49 @@ class ShortsPipeline:
             or getattr(self.config.upload, "default_privacy_status", None)
             or getattr(self.config.upload, "privacy_status", "unlisted")
         )
-
-        sched_time = self.scheduler.enqueue(
-            job_id=job.id,
-            video_path=Path(job.rendered_video_path),  # type: ignore[arg-type]
-            title=title,
-            description=desc,
-            tags=["Shorts", "AutoShorts"],
-            privacy_status=privacy,
+        custom_tags = getattr(job, "custom_tags", None) or getattr(
+            getattr(self.config, "upload", None), "custom_tags", []
         )
+        tags = ["Shorts", "AutoShorts"]
+        if custom_tags:
+            for ct in custom_tags:
+                if ct not in tags:
+                    tags.append(ct)
+
+        sched_kwargs: dict[str, Any] = {
+            "job_id": job.id,
+            "video_path": Path(job.rendered_video_path),  # type: ignore[arg-type]
+            "title": title,
+            "description": desc,
+            "tags": tags,
+            "privacy_status": privacy,
+        }
+
+        # Handle publish_at target time if specified
+        target_time = None
+        pub_at = getattr(job, "publish_at", None) or getattr(
+            getattr(self.config, "upload", None), "publish_at", None
+        )
+        if pub_at:
+            try:
+                target_time = datetime.fromisoformat(pub_at)
+            except Exception:
+                pass
+
+        try:
+            s_sig = inspect.signature(self.scheduler.enqueue)
+            has_varkw = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in s_sig.parameters.values()
+            )
+            if target_time is not None and (has_varkw or "target_time" in s_sig.parameters):
+                sched_kwargs["target_time"] = target_time
+        except Exception:
+            if target_time is not None:
+                sched_kwargs["target_time"] = target_time
+
+        sched_time = self.scheduler.enqueue(**sched_kwargs)
         job.scheduled_time = sched_time
+        self.state_manager.save_job(job)
+        logger.info("Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat())
         self.state_manager.save_job(job)
         logger.info("Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat())

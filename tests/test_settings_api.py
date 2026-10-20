@@ -346,6 +346,89 @@ def test_api_post_settings_update(settings_client: dict[str, Any]):
     assert settings["secrets"]["gemini_api_key_masked"] == "••••••••1234"
 
 
+def test_api_post_settings_complete_modal_payload(settings_client: dict[str, Any]):
+    """Verify POST /api/settings processes the full Settings Modal payload with all sub-configs."""
+    client: TestClient = settings_client["client"]
+
+    complete_modal_payload = {
+        "cleanup": {
+            "enabled": True,
+            "keep_final_days": 14,
+            "keep_master_mp4": True,
+            "purge_intermediate_work": True,
+            "use_recycle_bin": True,
+        },
+        "branding": {
+            "layout_mode": "full_blur_bg",
+            "color_grading": "cinematic",
+            "watermark_text": "@AutoShortsHub",
+            "watermark_position": "top_right",
+            "watermark_opacity": 0.8,
+            "progress_bar_position": "bottom",
+            "progress_bar_color": "#00FFCC",
+            "progress_bar_height": 14,
+            "hook_opener": "flash",
+        },
+        "audio_mastering": {
+            "voice_boost": True,
+            "target_lufs": -16.0,
+            "bg_music_volume": 0.15,
+            "enable_sfx": True,
+        },
+        "subtitles": {
+            "font_name": "Montserrat ExtraBold",
+            "font_size": 80,
+            "words_per_burst": 2,
+            "style_preset": "hormozi",
+            "text_transform": "uppercase",
+            "position": "center",
+            "hook_banner_style": "yellow_highlight",
+            "enable_emojis": True,
+        },
+        "upload": {
+            "mode": "local",
+            "privacy_status": "unlisted",
+            "category_id": "27",
+            "default_language": "en",
+            "altered_content": True,
+            "custom_tags": ["Shorts", "Viral", "Education"],
+            "auto_pin_comment": True,
+            "link_related_video": True,
+        },
+        "scheduler": {
+            "enabled": True,
+            "daily_upload_cap": 20,
+            "max_per_rolling_hour": 3,
+            "min_gap_minutes": 90,
+            "max_gap_minutes": 180,
+            "active_hours_start": "09:00",
+            "active_hours_end": "22:00",
+            "prevent_system_sleep": True,
+        },
+        "secrets": {
+            "gemini_api_key": "AIzaSyCompleteModalKey9999",
+        },
+    }
+
+    resp = client.post("/api/settings", json=complete_modal_payload)
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["success"] is True
+
+    settings = res_data["settings"]
+    assert settings["cleanup"]["keep_final_days"] == 14
+    assert settings["branding"]["layout_mode"] == "full_blur_bg"
+    assert settings["branding"]["color_grading"] == "cinematic"
+    assert settings["branding"]["watermark_text"] == "@AutoShortsHub"
+    assert settings["audio_mastering"]["voice_boost"] is True
+    assert settings["audio_mastering"]["target_lufs"] == -16.0
+    assert settings["subtitles"]["style_preset"] == "hormozi"
+    assert settings["upload"]["mode"] == "local"
+    assert settings["upload"]["category_id"] == "27"
+    assert settings["scheduler"]["daily_upload_cap"] == 20
+    assert settings["secrets"]["gemini_api_key_set"] is True
+
+
 def test_api_youtube_client_secret_json_and_multipart(settings_client: dict[str, Any]):
     """Verify POST /api/settings/youtube-client-secret handles JSON and file upload."""
     client: TestClient = settings_client["client"]

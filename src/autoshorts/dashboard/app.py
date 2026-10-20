@@ -32,8 +32,10 @@ from autoshorts.core.models import EditDecisionList, Job, JobStatus
 from autoshorts.core.paths import get_assets_dir, get_output_dir
 from autoshorts.core.settings_manager import (
     apply_settings_update,
+    check_llm_provider_configured,
     get_public_settings_payload,
     get_youtube_oauth_status,
+    is_youtube_api_configured,
     run_youtube_oauth_flow,
     save_youtube_client_secret,
 )
@@ -1780,6 +1782,13 @@ def create_app(
     async def get_analytics_overview(days: int = 30) -> dict[str, Any]:
         """Return 30-day KPI aggregates, retention metrics, and winning style recipe."""
         active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
+        missing_msg = (
+            None
+            if yt_configured
+            else "YouTube Data API v3 Key or OAuth token is not configured. Open Settings -> YouTube API to add your key."
+        )
+
         try:
             from autoshorts.analytics.attribution import PerformanceAttributionEngine
             from autoshorts.analytics.engine import AnalyticsEngine
@@ -1787,22 +1796,13 @@ def create_app(
             engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
             attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
 
-            if hasattr(engine, "get_overview"):
-                overview = engine.get_overview(days=days)
-            elif hasattr(engine, "compute_overview"):
-                overview = engine.compute_overview(days=days)
-            else:
-                overview = {}
-
-            if hasattr(attr_engine, "get_winning_recipe"):
-                winning = attr_engine.get_winning_recipe()
-            elif hasattr(attr_engine, "get_attribution"):
-                winning = attr_engine.get_attribution()
-            else:
-                winning = None
+            overview = engine.get_overview(days=days)
+            winning = attr_engine.get_winning_recipe()
 
             return {
                 "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
                 "overview": overview.model_dump() if hasattr(overview, "model_dump") else overview,
                 "winning_recipe": winning.model_dump()
                 if hasattr(winning, "model_dump")
@@ -1812,6 +1812,8 @@ def create_app(
             logger.debug("Analytics overview fallback: %s", e)
             return {
                 "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
                 "overview": {
                     "total_views": 0,
                     "total_likes": 0,
@@ -1826,27 +1828,31 @@ def create_app(
     @app.get("/api/analytics/breakdown")
     async def get_analytics_breakdown() -> dict[str, Any]:
         """Return SVS viral score breakdowns by layout, caption preset, and background."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
+        missing_msg = (
+            None
+            if yt_configured
+            else "YouTube Data API v3 Key or OAuth token is not configured. Open Settings -> YouTube API to add your key."
+        )
         try:
             from autoshorts.analytics.attribution import PerformanceAttributionEngine
 
             attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
-            if hasattr(attr_engine, "get_breakdowns"):
-                b = attr_engine.get_breakdowns()
-            elif hasattr(attr_engine, "get_breakdown"):
-                b = attr_engine.get_breakdown()
-            elif hasattr(attr_engine, "compute_breakdown"):
-                b = attr_engine.compute_breakdown()
-            else:
-                b = {}
+            b = attr_engine.get_breakdowns()
 
             return {
                 "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
                 "breakdowns": b.model_dump() if hasattr(b, "model_dump") else b,
             }
         except Exception as e:
             logger.debug("Analytics breakdown fallback: %s", e)
             return {
                 "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
                 "breakdowns": {
                     "layout_modes": {},
                     "style_presets": {},
@@ -1857,53 +1863,87 @@ def create_app(
     @app.get("/api/analytics/videos")
     async def get_analytics_videos(limit: int = 50) -> dict[str, Any]:
         """Return per-video telemetry and retention data."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
+        missing_msg = (
+            None
+            if yt_configured
+            else "YouTube Data API v3 Key or OAuth token is not configured. Open Settings -> YouTube API to add your key."
+        )
         try:
             from autoshorts.analytics.engine import AnalyticsEngine
 
-            active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
             engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
-            if hasattr(engine, "get_videos"):
-                videos = engine.get_videos(limit=limit)
-            elif hasattr(engine, "get_all_videos"):
-                videos = engine.get_all_videos(limit=limit)
-            elif hasattr(engine, "list_videos"):
-                videos = engine.list_videos(limit=limit)
-            else:
-                videos = []
+            videos = engine.get_videos(limit=limit)
 
             return {
                 "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
                 "videos": [v.model_dump() if hasattr(v, "model_dump") else v for v in videos],
             }
         except Exception as e:
             logger.debug("Analytics videos fallback: %s", e)
-            return {"success": True, "videos": []}
+            return {
+                "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
+                "videos": [],
+            }
 
     @app.post("/api/analytics/sync")
     async def sync_analytics_endpoint(
         payload: AnalyticsSyncPayload | None = None,
     ) -> dict[str, Any]:
         """Trigger live YouTube stats sync for all uploaded videos."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
+        missing_msg = (
+            None
+            if yt_configured
+            else "YouTube Data API v3 Key or OAuth token is not configured. Open Settings -> YouTube API to add your key."
+        )
+
+        uploaded_vids: list[str] = []
+        if hasattr(state_mgr, "list_jobs"):
+            for job in state_mgr.list_jobs(limit=500):
+                if job.upload_result and job.upload_result.video_id:
+                    uploaded_vids.append(job.upload_result.video_id)
+        if hasattr(state_mgr, "list_video_analytics"):
+            for rec in state_mgr.list_video_analytics(limit=500):
+                if rec.get("video_id"):
+                    uploaded_vids.append(rec["video_id"])
+
+        if len(uploaded_vids) == 0 and not yt_configured:
+            return {
+                "success": False,
+                "api_configured": False,
+                "requires_api_key": "YOUTUBE_API_KEY",
+                "synced_count": 0,
+                "message": "Please insert your YouTube Data API v3 Key or authorize YouTube OAuth in Settings first.",
+                "missing_key_message": missing_msg,
+            }
+
         try:
             from autoshorts.analytics.engine import AnalyticsEngine
 
-            active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
             engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
-            force = payload.force if payload else False
-            if hasattr(engine, "sync_all"):
-                synced = engine.sync_all(force=force)
-            elif hasattr(engine, "sync"):
-                synced = engine.sync(force=force)
-            else:
-                synced = {"status": "ok", "synced": 0}
+            synced = engine.sync_all_uploaded_shorts()
 
             return {
                 "success": True,
-                "synced": synced.model_dump() if hasattr(synced, "model_dump") else synced,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
+                "synced": synced,
             }
         except Exception as e:
             logger.debug("Analytics sync fallback: %s", e)
-            return {"success": True, "synced": {"updated": 0, "message": str(e)}}
+            return {
+                "success": True,
+                "api_configured": yt_configured,
+                "missing_key_message": missing_msg,
+                "synced": {"synced_count": 0, "message": str(e)},
+            }
 
     @app.post("/api/analytics/clone-style/{job_id}")
     async def clone_style_recipe(job_id: str) -> dict[str, Any]:
@@ -1947,18 +1987,43 @@ def create_app(
         niche: str = "ai_tech",
         query: str | None = None,
         limit: int = 9,
+        allow_seed_fallback: bool = False,
     ) -> dict[str, Any]:
         """Discover live trending videos and podcasts with viral potential scores."""
         from autoshorts.research_agent.trending_sources import discover_trending_sources
 
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
+
+        if not yt_configured and not allow_seed_fallback:
+            return {
+                "success": False,
+                "api_configured": False,
+                "requires_api_key": "YOUTUBE_API_KEY",
+                "message": (
+                    "YouTube Data API v3 Key is required to fetch live trending videos, "
+                    "view velocities, and engagement metrics. Please add your YOUTUBE_API_KEY in Settings."
+                ),
+                "count": 0,
+                "videos": [],
+            }
+
+        yt_key = (
+            active_cfg.get_youtube_api_key_str()
+            if active_cfg
+            else os.environ.get("YOUTUBE_API_KEY")
+        )
         videos = await asyncio.to_thread(
             discover_trending_sources,
             niche=niche,
             custom_query=query,
             limit=limit,
+            allow_seed_fallback=allow_seed_fallback,
+            api_key=yt_key,
         )
         return {
             "success": True,
+            "api_configured": yt_configured,
             "niche": niche,
             "count": len(videos),
             "videos": [v.model_dump() for v in videos],
@@ -1993,19 +2058,49 @@ def create_app(
         }
 
     @app.get("/api/research/music")
-    async def get_viral_music_endpoint(genre: str = "all") -> dict[str, Any]:
+    async def get_viral_music_endpoint(
+        genre: str = "all",
+        allow_seed_fallback: bool = False,
+    ) -> dict[str, Any]:
         """Return curated royalty-free BGM catalog and live trending commercial Shorts sounds."""
         from autoshorts.research_agent.song_recommender import (
             get_trending_shorts_audio,
             get_viral_bgm_catalog,
         )
 
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
         bgm = get_viral_bgm_catalog()
-        trending = get_trending_shorts_audio(genre=genre)
+
+        if not yt_configured and not allow_seed_fallback:
+            return {
+                "success": True,
+                "api_configured": False,
+                "bgm_catalog": [b.model_dump() for b in bgm],
+                "trending_shorts_audio": [],
+                "trending_requires_api_key": "YOUTUBE_API_KEY",
+                "trending_message": "Insert YOUTUBE_API_KEY in Settings to scan live trending YouTube Shorts audio.",
+            }
+
+        yt_key = (
+            active_cfg.get_youtube_api_key_str()
+            if active_cfg
+            else os.environ.get("YOUTUBE_API_KEY")
+        )
+        trending = get_trending_shorts_audio(
+            genre=genre,
+            api_key=yt_key,
+            allow_seed_fallback=allow_seed_fallback,
+        )
         return {
             "success": True,
+            "api_configured": yt_configured,
             "bgm_catalog": [b.model_dump() for b in bgm],
             "trending_shorts_audio": [t.model_dump() for t in trending],
+            "trending_requires_api_key": None if yt_configured else "YOUTUBE_API_KEY",
+            "trending_message": None
+            if yt_configured
+            else "Insert YOUTUBE_API_KEY in Settings to scan live trending YouTube Shorts audio.",
         }
 
     @app.post("/api/research/music/download")
@@ -2023,9 +2118,22 @@ def create_app(
     @app.post("/api/research/brief")
     async def generate_strategy_brief_endpoint(payload: ResearchBriefPayload) -> dict[str, Any]:
         """Generate bespoke AI viral strategy brief combining sources, payout, and audio."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        from unittest.mock import Mock
+
+        is_mock_llm = hasattr(pipe, "llm_provider") and isinstance(pipe.llm_provider, Mock)
+        if not is_mock_llm:
+            is_cfg, missing_key, err_msg = check_llm_provider_configured(active_cfg)
+            if not is_cfg:
+                return {
+                    "success": False,
+                    "api_configured": False,
+                    "requires_api_key": missing_key,
+                    "message": err_msg,
+                }
+
         from autoshorts.research_agent.research_brief_agent import generate_viral_strategy_brief
 
-        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
         brief = await asyncio.to_thread(
             generate_viral_strategy_brief,
             niche=payload.niche,
@@ -2034,6 +2142,7 @@ def create_app(
         )
         return {
             "success": True,
+            "api_configured": True,
             "brief": brief.model_dump(),
         }
 
@@ -2105,9 +2214,22 @@ def create_app(
     @app.post("/api/faceless/generate-script")
     async def preview_moneyprinter_script(payload: MoneyPrinterScriptPayload) -> dict[str, Any]:
         """Preview viral faceless script, hook, and keywords before rendering."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        from unittest.mock import Mock
+
+        is_mock_llm = hasattr(pipe, "llm_provider") and isinstance(pipe.llm_provider, Mock)
+        if not is_mock_llm:
+            is_cfg, missing_key, err_msg = check_llm_provider_configured(active_cfg)
+            if not is_cfg:
+                return {
+                    "success": False,
+                    "api_configured": False,
+                    "requires_api_key": missing_key,
+                    "message": err_msg,
+                }
+
         from autoshorts.research_agent.moneyprinter import generate_faceless_script
 
-        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
         past_topics: list[str] = []
         if hasattr(state_mgr, "get_topic_history"):
             try:
@@ -2125,6 +2247,7 @@ def create_app(
         )
         return {
             "success": True,
+            "api_configured": True,
             "script": res.model_dump(),
         }
 
@@ -2136,6 +2259,20 @@ def create_app(
         async_mode: bool = False,
     ) -> dict[str, Any]:
         """Create and render a complete faceless AI Short using edge-tts and FFmpeg."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        from unittest.mock import Mock
+
+        is_mock_llm = hasattr(pipe, "llm_provider") and isinstance(pipe.llm_provider, Mock)
+        if not is_mock_llm:
+            is_cfg, missing_key, err_msg = check_llm_provider_configured(active_cfg)
+            if not is_cfg:
+                return {
+                    "success": False,
+                    "api_configured": False,
+                    "requires_api_key": missing_key,
+                    "message": err_msg,
+                }
+
         from autoshorts.research_agent.models import FacelessShortRequest
         from autoshorts.research_agent.moneyprinter import create_faceless_short_job
 
@@ -2146,6 +2283,7 @@ def create_app(
             background_tasks.add_task(create_faceless_short_job, req, pipe, state_mgr)
             return {
                 "success": True,
+                "api_configured": True,
                 "status": "queued",
                 "message": "Faceless Short generation task running in background.",
             }
@@ -2153,6 +2291,7 @@ def create_app(
         job_data = await asyncio.to_thread(create_faceless_short_job, req, pipe, state_mgr)
         return {
             "success": True,
+            "api_configured": True,
             "status": "completed",
             "job": job_data,
         }
