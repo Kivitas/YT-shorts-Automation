@@ -56,6 +56,7 @@ For the exhaustive engineering specification and architecture, see **[PLAN.md](P
 > Windows SmartScreen and security software often flag downloaded `.bat` files from the internet as suspicious. To avoid security prompts, create your own local `start.bat` file in this directory.
 
 ### Creating Your Local `start.bat` (Step-by-Step)
+*(Full standalone copy-paste guide also available in [bat.md](file:///c:/Users/Sirisha%20Rajana/Desktop/New%20folder/Automation/bat.md))*
 
 1. In this project folder, right-click an empty space and choose **New** &rarr; **Text Document**.
 2. Rename the file to **`start.bat`** (ensure file name extensions are visible in File Explorer view settings so it is named `start.bat` rather than `start.bat.txt`).
