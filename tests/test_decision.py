@@ -343,3 +343,55 @@ def test_generative_helpers():
     provider.completion_text = "#Shorts #Mindset #Productivity"
     tags = decider.generate_hashtags("Mindset habits")
     assert "#Shorts" in tags
+
+
+def test_decider_heatmap_and_hook_score_fusion_and_title_variants():
+    """Verify multi-signal fusion (0.72 * semif + 0.18 * heatmap + 0.10 * hook) and 3 title_variants."""
+    from autoshorts.core.models import CandidateClip, SelectedClip
+    from autoshorts.decider.semif_decider import SemIfDecider as DeciderCls
+
+    provider = MockProvider(
+        scores_to_return={"A": 0.80, "B": 0.20},
+        completion_text="Brain Plasticity Secret #Shorts",
+    )
+    decider = DeciderCls(provider=provider, scoring_approach="binary")
+
+    candidates = [
+        CandidateClip(
+            start=0.0,
+            end=45.0,
+            text="Standard segment without heatmap spike.",
+            heatmap_score=0.0,
+            hook_strength=0.0,
+        ),
+        CandidateClip(
+            start=60.0,
+            end=105.0,
+            text="Why do 99% of people miss this secret?",
+            heatmap_score=1.0,
+            hook_strength=0.90,
+            chapter_title="Brain Secret",
+        ),
+    ]
+
+    scored = decider.score_candidates(candidates)
+    assert len(scored) == 2
+
+    # Candidate with heatmap=1.0, hook=0.90, semif=0.80 -> 0.72*0.80 + 0.18*1.0 + 0.10*0.90 = 0.846
+    top = scored[0]
+    assert top.start == 60.0
+    assert top.score == pytest.approx(0.72 * 0.80 + 0.18 * 1.0 + 0.10 * 0.90, 0.0001)
+    assert top.chapter_title == "Brain Secret"
+
+    # Candidate with heatmap=0.0, hook=0.0 -> exact semif_score = 0.80
+    second = scored[1]
+    assert second.start == 0.0
+    assert second.score == 0.80
+
+    selections = decider.select_clips(scored, count=1)
+    assert len(selections) == 1
+    sel = selections[0]
+    assert isinstance(sel, SelectedClip)
+    assert len(sel.title_variants) == 3
+    assert len(set(sel.title_variants)) == 3
+    assert all(v.endswith("#Shorts") for v in sel.title_variants)

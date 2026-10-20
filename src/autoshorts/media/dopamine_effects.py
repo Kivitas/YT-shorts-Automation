@@ -354,6 +354,30 @@ def find_user_audio_assets(
     return [p for p in target_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_exts]
 
 
+def build_speaker_crop_filter(
+    width: int,
+    height: int,
+    crop_focus: str = "center",
+) -> str:
+    """Build FFmpeg crop filter expression for speaker framing.
+
+    Supports:
+    - 'center': standard centered crop (crop=w:h)
+    - 'left': left-speaker focused crop (crop=w:h:x='(in_w-out_w)*0.22':y='(in_h-out_h)/2')
+    - 'right': right-speaker focused crop (crop=w:h:x='(in_w-out_w)*0.78':y='(in_h-out_h)/2')
+    - 'dynamic': slow sinusoidal horizontal pan across speakers
+      (crop=w:h:x='(in_w-out_w)*(0.5+0.25*sin(t*0.35))':y='(in_h-out_h)/2')
+    """
+    focus = (crop_focus or "center").strip().lower()
+    if focus == "left":
+        return f"crop={width}:{height}:x='(in_w-out_w)*0.22':y='(in_h-out_h)/2'"
+    if focus == "right":
+        return f"crop={width}:{height}:x='(in_w-out_w)*0.78':y='(in_h-out_h)/2'"
+    if focus == "dynamic":
+        return f"crop={width}:{height}:x='(in_w-out_w)*(0.5+0.25*sin(t*0.35))':y='(in_h-out_h)/2'"
+    return f"crop={width}:{height}"
+
+
 def build_complex_filtergraph(
     source_clip_has_audio: bool,
     subtitles_path: Path | str,
@@ -377,6 +401,7 @@ def build_complex_filtergraph(
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
+    crop_focus: str = "center",
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -408,10 +433,11 @@ def build_complex_filtergraph(
         # 70/30 split: top 70% (1344 @ 1080p), bottom 30% (576 @ 1080p)
         top_h = int(height * 0.70) // 2 * 2
         bottom_h = height - top_h
+        speaker_crop = build_speaker_crop_filter(width, top_h, crop_focus=crop_focus)
 
         filter_stages.append(
             f"[0:v]scale={width}:{top_h}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{top_h},setsar=1,fps={fps}[top_scaled]"
+            f"{speaker_crop},setsar=1,fps={fps}[top_scaled]"
         )
 
         if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
@@ -502,10 +528,11 @@ def build_complex_filtergraph(
         current_v = "stacked"
 
     elif mode == "full_center_crop":
-        # Single-source: full 9:16 vertical center crop
+        # Single-source: full 9:16 vertical crop with speaker focus
+        speaker_crop = build_speaker_crop_filter(width, height, crop_focus=crop_focus)
         filter_stages.append(
             f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},setsar=1,fps={fps}[full_scaled]"
+            f"{speaker_crop},setsar=1,fps={fps}[full_scaled]"
         )
 
         if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
@@ -543,9 +570,10 @@ def build_complex_filtergraph(
 
     elif mode == "pip_gameplay":
         # Full primary video with bordered PiP inset from gameplay [1:v]
+        speaker_crop = build_speaker_crop_filter(width, height, crop_focus=crop_focus)
         filter_stages.append(
             f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},setsar=1,fps={fps}[main_scaled]"
+            f"{speaker_crop},setsar=1,fps={fps}[main_scaled]"
         )
 
         if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
@@ -595,10 +623,11 @@ def build_complex_filtergraph(
         # Default split_50_50
         top_h = height // 2
         bottom_h = height - top_h
+        speaker_crop = build_speaker_crop_filter(width, top_h, crop_focus=crop_focus)
 
         filter_stages.append(
             f"[0:v]scale={width}:{top_h}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{top_h},setsar=1,fps={fps}[top_scaled]"
+            f"{speaker_crop},setsar=1,fps={fps}[top_scaled]"
         )
 
         if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:

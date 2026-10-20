@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-10-20
+
+### Added
+- **Smart Video Identification & Resilient Clipping Pipeline**:
+  - **YouTube "Most Replayed" Heatmap Peak Fusion**: Ingests YouTube retention curve heatmap telemetry (`0.0–1.0`), fusing audience replay density with SemIf token-probability scoring, hook curiosity ratings, and chapter boundaries for high-confidence viral clip identification.
+  - **SponsorBlock Ad/Intro/Outro Auto-Skipping**: Integrated SponsorBlock API segment querying during window slicing to automatically detect and discard non-content sponsor spots, self-promos, previews, intros, and outros (`skip_sponsors: true`).
+  - **Chapter Boundary Alignment**: Extracts native video chapters and snaps candidate slice windows to logical thematic boundaries, preventing abrupt topic truncation or mid-sentence cuts.
+  - **Hook Curiosity Scoring**: Multi-signal scoring engine prioritizing narrative tension, curiosity gaps, and opening 3–5 second viewer retention hooks.
+  - **Multi-Client `yt-dlp` Resilience**: Resilient fallback cascade (`default` &rarr; `android` &rarr; `web` player clients) to circumvent YouTube bot-detection blocks and format restrictions, combined with keyframe-accurate section extraction.
+- **Advanced Video Editing & Smart Publishing**:
+  - **Dead-Air Silence Auto-Trimmer (`detect_dead_air_cuts`)**: Whisper-powered word-gap pause detection that identifies dead-air intervals (`> 0.45s`) and automatically converts them into frame-accurate `JumpCut` ranges, injecting dynamic `ZoomPunch` camera emphasis on high-energy speech bursts (`auto_trim_silence: true`).
+  - **Speaker Crop Focus Reframing (`crop_focus`)**: Added support for horizontal crop reframing in vertical 9:16 canvas with `center`, `left`, `right`, and `dynamic_pan` speaker tracking.
+  - **Auto-Extracted Peak Hook Thumbnail**: FFmpeg-powered frame extraction of high-retention hook frames (`thumbnail.jpg`) and direct integration with YouTube Data API v3 `thumbnails().set` for automated custom thumbnail uploads.
+  - **3-Way A/B Viral Title Variants (`generate_title_variants`)**: Generates 3 distinct viral angle variants for every clip—*Curiosity Hook*, *Contrarian Contrasting*, and *Stat/Number Shock*.
+- **Analytics 2.0 & Closed-Loop Auto-Tuning**:
+  - **Viral Outlier Multiplier Badges (`outlier_multiplier`)**: Calculates view velocity against channel median benchmarks to highlight breakout hits (`1.5x`, `3.0x+` Outlier badges).
+  - **Best Publish Hour & Day Insights**: Computes historical velocity heatmaps and recommends optimal publishing windows tailored to the channel's specific audience.
+  - **1-Click Closed-Loop Auto-Tune (`POST /api/analytics/auto-tune`)**: Automatically adopts winning attributes (crop focus, caption preset, background category, dopamine pacing) from top-performing Shorts directly into pipeline defaults.
+  - **CSV & JSON Telemetry Exporter (`GET /api/analytics/export?format=csv|json`)**: Full programmatic export of all channel Shorts performance, engagement ratios, and attribution metadata.
+  - **Strict Zero-Phantom Data Policy**: Guarantees all analytics and telemetry strictly stem from real credentials and official endpoints (`YOUTUBE_API_KEY`, OAuth `token.json`, `yt-dlp`, Playwright Studio scraper), with zero synthetic or placeholder metrics.
+- **Glassmorphic & Claymorphic Studio UI**:
+  - Complete dashboard aesthetic evolution featuring frosted glass panels (`backdrop-filter: blur`), semi-translucent borders, claymorphic card elevation, and tactile interactive elements.
+  - **Candidate Inspector & Editor**: Interactive clip selection modal equipped with Heatmap/SponsorBlock badges, one-click `✂️ Auto-Remove Silence` trimmer, Speaker Crop Focus dropdown, and A/B title variant selector.
+  - **Analytics 2.0 Command Center**: Live outlier badges (`🔥 3.2x Outlier`), Best Upload Hour insights panel, `⚡ Auto-Tune Studio from Analytics` action button, and 1-click CSV/JSON telemetry downloaders.
+
+---
+
 ## [1.0.0] - 2026-10-20
 
 ### Added

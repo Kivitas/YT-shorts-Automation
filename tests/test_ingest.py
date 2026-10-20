@@ -631,3 +631,222 @@ def test_windows_process_tree_cleanup_taskkill():
             capture_output=True,
             check=False,
         )
+
+
+# =============================================================================
+# 6. Heatmap, Chapters, SponsorBlock & Multi-Client Resilient Downloading Tests
+# =============================================================================
+
+
+def test_models_heatmap_chapters_sponsor_and_job_defaults():
+    """Verify HeatmapPoint, VideoChapter, SponsorSegment, and expanded Job/Clip models."""
+    from autoshorts.core.models import (
+        CandidateClip,
+        HeatmapPoint,
+        Job,
+        SelectedClip,
+        SponsorSegment,
+        VideoChapter,
+    )
+
+    hp = HeatmapPoint(start_time=10.0, end_time=20.0, value=0.92)
+    assert hp.start_time == 10.0
+    assert hp.value == 0.92
+
+    ch = VideoChapter(title="The Secret Technique", start_time=0.0, end_time=60.0)
+    assert ch.title == "The Secret Technique"
+
+    sp = SponsorSegment(category="sponsor", start_time=30.0, end_time=60.0)
+    assert sp.category == "sponsor"
+
+    cand = CandidateClip(
+        start=0.0,
+        end=45.0,
+        text="Why do 99% of people fail at this?",
+        heatmap_score=0.85,
+        hook_strength=0.9,
+        chapter_title="Intro",
+    )
+    assert cand.heatmap_score == 0.85
+    assert cand.hook_strength == 0.9
+    assert cand.chapter_title == "Intro"
+
+    sel = SelectedClip(
+        candidate=cand,
+        title="Why People Fail #Shorts",
+        title_variants=["A #Shorts", "B #Shorts", "C #Shorts"],
+        thumbnail_path="thumb.jpg",
+    )
+    assert len(sel.title_variants) == 3
+    assert sel.thumbnail_path == "thumb.jpg"
+
+    job = Job(source_url="https://youtu.be/dQw4w9WgXcQ")
+    assert job.crop_focus == "center"
+    assert job.auto_trim_silence is True
+    assert job.skip_sponsors is True
+
+
+def test_fetch_metadata_parses_heatmap_chapters_and_sponsors():
+    """Verify YtDlpDownloader.fetch_metadata parses heatmap, chapters, and SponsorBlock segments."""
+    from autoshorts.ingestion.downloader import YtDlpDownloader, fetch_sponsor_segments
+
+    fake_ytdlp_json = json.dumps(
+        {
+            "id": "dQw4w9WgXcQ",
+            "title": "Deep Dive Video",
+            "uploader": "ScienceChannel",
+            "channel_url": "https://www.youtube.com/@ScienceChannel",
+            "duration": 300.0,
+            "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "heatmap": [
+                {"start_time": 0.0, "end_time": 50.0, "value": 0.4},
+                {"start_time": 50.0, "end_time": 100.0, "value": 1.35},  # Clamped to 1.0
+            ],
+            "chapters": [
+                {"title": "Hook & Intro", "start_time": 0.0, "end_time": 60.0},
+                {"title": "Main Discovery", "start_time": 60.0, "end_time": 180.0},
+            ],
+        }
+    )
+
+    mock_sb_resp = MagicMock()
+    mock_sb_resp.status_code = 200
+    mock_sb_resp.json.return_value = [
+        {"category": "sponsor", "segment": [120.0, 160.0]},
+        {"category": "selfpromo", "start_time": 250.0, "end_time": 280.0},
+    ]
+
+    dl = YtDlpDownloader()
+    with (
+        patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=fake_ytdlp_json, stderr=""
+            ),
+        ),
+        patch("httpx.get", return_value=mock_sb_resp),
+    ):
+        meta = dl.fetch_metadata("https://youtu.be/dQw4w9WgXcQ")
+        assert len(meta.heatmap) == 2
+        assert meta.heatmap[0].value == 0.4
+        assert meta.heatmap[1].value == 1.0  # Clamped
+        assert len(meta.chapters) == 2
+        assert meta.chapters[1].title == "Main Discovery"
+        assert len(meta.sponsor_segments) == 2
+        assert meta.sponsor_segments[0].category == "sponsor"
+        assert meta.sponsor_segments[0].start_time == 120.0
+        assert meta.sponsor_segments[0].end_time == 160.0
+
+    # Verify fetch_sponsor_segments returns [] gracefully on 404 or timeout
+    with patch("httpx.get", side_effect=TimeoutError("Offline")):
+        assert fetch_sponsor_segments("dQw4w9WgXcQ") == []
+
+
+def test_downloader_multiclient_fallback_and_probe(tmp_path: Path):
+    """Verify download_section retries with youtube:player_client=android,web on failure and probes video info."""
+    from autoshorts.ingestion.downloader import YtDlpDownloader, probe_video_stream_info
+
+    target = tmp_path / "cut.mp4"
+    calls: list[list[str]] = []
+
+    def side_effect_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=1, stdout="", stderr="HTTP Error 403: Forbidden"
+            )
+        o_idx = cmd.index("-o")
+        temp_file = Path(cmd[o_idx + 1].replace("%(ext)s", "mp4"))
+        temp_file.write_bytes(b"mp4 content")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    dl = YtDlpDownloader(max_retries=2, retry_delay_sec=0.01)
+    with patch("subprocess.run", side_effect=side_effect_run):
+        res = dl.download_section("https://youtu.be/dQw4w9WgXcQ", 10.0, 50.0, target)
+        assert res == target
+        assert len(calls) == 2
+        assert "--extractor-args" not in calls[0]
+        assert "--extractor-args" in calls[1]
+        assert "youtube:player_client=android,web" in calls[1]
+
+    # Test probe_video_stream_info
+    ffprobe_json = json.dumps(
+        {
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080, "duration": "40.0"},
+                {"codec_type": "audio", "duration": "40.0"},
+            ],
+            "format": {"duration": "40.0"},
+        }
+    )
+    with patch(
+        "subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=ffprobe_json, stderr=""
+        ),
+    ):
+        info = probe_video_stream_info(target)
+        assert info["width"] == 1920
+        assert info["height"] == 1080
+        assert info["resolution"] == "1920x1080"
+        assert info["duration"] == 40.0
+        assert info["has_video"] is True
+        assert info["has_audio"] is True
+
+
+def test_slicer_heatmap_hook_and_sponsor_filtering():
+    """Verify compute_window_heatmap_score, compute_hook_curiosity_score, overlaps_sponsor_segment, and generate_candidate_windows."""
+    from autoshorts.core.models import HeatmapPoint, SponsorSegment, VideoChapter
+    from autoshorts.slicer.window_generator import (
+        compute_hook_curiosity_score,
+        compute_window_heatmap_score,
+        generate_candidate_windows,
+        overlaps_sponsor_segment,
+    )
+
+    heatmap = [
+        HeatmapPoint(start_time=0.0, end_time=50.0, value=0.2),
+        HeatmapPoint(start_time=50.0, end_time=100.0, value=0.9),
+    ]
+    assert compute_window_heatmap_score(0.0, 45.0, None) == 0.0
+    assert compute_window_heatmap_score(0.0, 45.0, []) == 0.0
+    assert compute_window_heatmap_score(50.0, 95.0, heatmap) == pytest.approx(0.9, 0.01)
+
+    strong_hook = "Why do 99% of people make this secret mistake? Here is the explanation."
+    weak_hook = "We will now continue reviewing the standard quarterly schedule."
+    assert compute_hook_curiosity_score(strong_hook) > 0.6
+    assert compute_hook_curiosity_score(weak_hook) < 0.3
+
+    sponsors = [SponsorSegment(category="sponsor", start_time=0.0, end_time=45.0)]
+    assert overlaps_sponsor_segment(0.0, 45.0, sponsors, max_overlap_ratio=0.25) is True
+    assert overlaps_sponsor_segment(50.0, 95.0, sponsors, max_overlap_ratio=0.25) is False
+
+    chapters = [
+        VideoChapter(title="Sponsor Read", start_time=0.0, end_time=50.0),
+        VideoChapter(title="Secret Formula", start_time=50.0, end_time=120.0),
+    ]
+    transcript = [
+        {"start": 0.0, "end": 20.0, "text": "This video is sponsored by Acme VPN."},
+        {"start": 20.0, "end": 45.0, "text": "Use code ACME for fifty percent off today."},
+        {"start": 45.0, "end": 70.0, "text": "Why do 99% of people fail at habits?"},
+        {"start": 70.0, "end": 95.0, "text": "Because they never change their environment!"},
+    ]
+
+    windows = generate_candidate_windows(
+        transcript,
+        window_duration_seconds=45.0,
+        stride_seconds=15.0,
+        min_duration_seconds=30.0,
+        max_duration_seconds=60.0,
+        heatmap=heatmap,
+        chapters=chapters,
+        sponsor_segments=sponsors,
+        skip_sponsors=True,
+    )
+    assert len(windows) >= 1
+    for w in windows:
+        # The sponsor window [0, 45] should be filtered out
+        assert not overlaps_sponsor_segment(w.start, w.end, sponsors)
+        assert w.heatmap_score > 0.5
+        assert w.hook_strength > 0.5
+        assert w.chapter_title == "Secret Formula"

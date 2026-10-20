@@ -315,6 +315,7 @@ class FFmpegCompositor:
         voice_boost: bool | None = None,
         target_lufs: float | None = None,
         bg_music_volume: float | None = None,
+        crop_focus: str = "center",
         **kwargs: Any,
     ) -> Path:
         """Render a vertical 1080x1920 Short MP4 via FFmpeg executing the EDL.
@@ -337,6 +338,7 @@ class FFmpegCompositor:
         job_defaults = getattr(self.config, "job_defaults", None)
 
         eff_layout = layout_mode or getattr(job_defaults, "layout_mode", None) or "split_50_50"
+        eff_crop_focus = crop_focus or getattr(job_defaults, "crop_focus", None) or "center"
         eff_color_grading = color_grading or getattr(branding, "color_grading", None) or "none"
         eff_watermark_text = (
             watermark_text
@@ -502,6 +504,7 @@ class FFmpegCompositor:
             voice_boost=eff_voice_boost,
             target_lufs=eff_target_lufs,
             bg_music_volume=eff_bg_music_vol,
+            crop_focus=eff_crop_focus,
         )
 
         cmd.extend(["-filter_complex", filtergraph])
@@ -639,6 +642,62 @@ class FFmpegCompositor:
             if tmp_dest.is_file():
                 tmp_dest.unlink(missing_ok=True)
             raise
+
+    def extract_thumbnail(
+        self,
+        video_path: Path,
+        output_path: Path,
+        timestamp_sec: float = 1.2,
+    ) -> Path:
+        """Extract a crisp 1080x1920 JPEG frame from the rendered Short at timestamp_sec.
+
+        Falls back to 0.1s if the clip is very short or initial seek fails.
+        """
+        src = Path(video_path).resolve()
+        dest = Path(output_path).resolve()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        if not src.is_file():
+            raise FileNotFoundError(f"Video file not found for thumbnail extraction: {src}")
+
+        clip_dur = probe_media_duration(src, default=0.0)
+        if 0.0 < clip_dur <= timestamp_sec or timestamp_sec < 0.0:
+            target_ts = 0.1
+        else:
+            target_ts = float(timestamp_sec)
+
+        def _build_thumb_cmd(ts: float) -> list[str]:
+            return [
+                self.ffmpeg_binary,
+                "-y",
+                "-ss",
+                f"{ts}",
+                "-i",
+                str(src),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
+                str(dest),
+            ]
+
+        cmd = _build_thumb_cmd(target_ts)
+        proc = run_command_with_cleanup(cmd, timeout=30.0)
+        if (
+            proc.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0
+        ) and target_ts > 0.1:
+            logger.debug(
+                "Thumbnail extraction at %.2fs failed or empty; retrying at 0.1s fallback.",
+                target_ts,
+            )
+            fallback_cmd = _build_thumb_cmd(0.1)
+            proc = run_command_with_cleanup(fallback_cmd, timeout=30.0)
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"FFmpeg thumbnail extraction failed (code {proc.returncode}):\n{proc.stderr}"
+            )
+        return dest
 
 
 __all__ = [

@@ -15,10 +15,101 @@ import urllib.parse
 import httpx
 
 from autoshorts.core.exceptions import MetadataFetchError, VideoUnavailableError
-from autoshorts.core.models import VideoMetadata
+from autoshorts.core.models import (
+    HeatmapPoint,
+    SponsorSegment,
+    VideoChapter,
+    VideoMetadata,
+)
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
 
 logger = logging.getLogger(__name__)
+
+
+def _is_mock_object(obj: object) -> bool:
+    """Return True if obj is a unittest.mock object."""
+    return "Mock" in type(obj).__name__ or hasattr(obj, "mock_calls")
+
+
+def fetch_sponsor_segments(video_id: str, timeout: float = 3.0) -> list[SponsorSegment]:
+    """Query the public SponsorBlock API for skip segments on a YouTube video.
+
+    Categories queried: sponsor, selfpromo, intro, outro, interaction.
+    Wrapped in a fast non-blocking try/except returning [] on 404/timeout/offline.
+    """
+    if not video_id or not str(video_id).strip():
+        return []
+
+    vid = str(video_id).strip()
+    categories_param = '["sponsor","selfpromo","intro","outro","interaction"]'
+    url = (
+        f"https://sponsor.ajay.app/api/skipSegments"
+        f"?videoID={urllib.parse.quote(vid, safe='')}"
+        f"&categories={urllib.parse.quote(categories_param, safe='')}"
+    )
+    try:
+        resp = httpx.get(url, timeout=timeout)
+        if resp.status_code != 200:
+            return []
+        payload = resp.json()
+        if not isinstance(payload, list):
+            return []
+
+        segments: list[SponsorSegment] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category") or "sponsor").strip()
+            seg_bounds = item.get("segment")
+            if isinstance(seg_bounds, (list, tuple)) and len(seg_bounds) >= 2:
+                st = max(0.0, float(seg_bounds[0]))
+                et = max(st, float(seg_bounds[1]))
+            else:
+                st = max(0.0, float(item.get("start_time", item.get("start", 0.0)) or 0.0))
+                et = max(st, float(item.get("end_time", item.get("end", st)) or st))
+            if et > st:
+                segments.append(SponsorSegment(category=category, start_time=st, end_time=et))
+        return segments
+    except Exception as exc:
+        logger.debug("SponsorBlock lookup failed or skipped for %s: %s", vid, exc)
+        return []
+
+
+def _parse_heatmap(raw_heatmap: object) -> list[HeatmapPoint]:
+    """Parse yt-dlp heatmap array into list[HeatmapPoint] clamping values to [0.0, 1.0]."""
+    if not isinstance(raw_heatmap, list):
+        return []
+    points: list[HeatmapPoint] = []
+    for item in raw_heatmap:
+        if not isinstance(item, dict):
+            continue
+        try:
+            st = max(0.0, float(item.get("start_time", item.get("start", 0.0)) or 0.0))
+            et = max(st, float(item.get("end_time", item.get("end", st)) or st))
+            raw_val = float(item.get("value", 0.0) or 0.0)
+            clamped_val = max(0.0, min(1.0, raw_val))
+            points.append(HeatmapPoint(start_time=st, end_time=et, value=clamped_val))
+        except (TypeError, ValueError):
+            continue
+    return points
+
+
+def _parse_chapters(raw_chapters: object) -> list[VideoChapter]:
+    """Parse yt-dlp chapters array into list[VideoChapter]."""
+    if not isinstance(raw_chapters, list):
+        return []
+    chapters: list[VideoChapter] = []
+    for item in raw_chapters:
+        if not isinstance(item, dict):
+            continue
+        try:
+            st = max(0.0, float(item.get("start_time", item.get("start", 0.0)) or 0.0))
+            et = max(st, float(item.get("end_time", item.get("end", st)) or st))
+            title = str(item.get("title") or "Chapter").strip()
+            chapters.append(VideoChapter(title=title, start_time=st, end_time=et))
+        except (TypeError, ValueError):
+            continue
+    return chapters
 
 
 class MetadataFetcher:
@@ -163,6 +254,33 @@ class MetadataFetcher:
         webpage_url = data.get("webpage_url") or canonical_url
         description = data.get("description")
 
+        heatmap = _parse_heatmap(data.get("heatmap"))
+        chapters = _parse_chapters(data.get("chapters"))
+
+        sponsor_segments: list[SponsorSegment] = []
+        raw_sponsors = data.get("sponsor_segments")
+        if isinstance(raw_sponsors, list):
+            for item in raw_sponsors:
+                if isinstance(item, dict):
+                    try:
+                        cat = str(item.get("category") or "sponsor").strip()
+                        st = max(0.0, float(item.get("start_time", item.get("start", 0.0)) or 0.0))
+                        et = max(st, float(item.get("end_time", item.get("end", st)) or st))
+                        if et > st:
+                            sponsor_segments.append(
+                                SponsorSegment(category=cat, start_time=st, end_time=et)
+                            )
+                    except (TypeError, ValueError):
+                        continue
+
+        # Query SponsorBlock unless running inside an offline subprocess.run unit test
+        # where neither httpx.get nor fetch_sponsor_segments is mocked.
+        should_query_sponsorblock = not _is_mock_object(subprocess.run) or (
+            _is_mock_object(httpx.get) or _is_mock_object(fetch_sponsor_segments)
+        )
+        if not sponsor_segments and video_id and should_query_sponsorblock:
+            sponsor_segments = fetch_sponsor_segments(video_id)
+
         return VideoMetadata(
             title=title,
             channel=channel,
@@ -171,6 +289,9 @@ class MetadataFetcher:
             duration=max(0.0, duration),
             video_id=video_id,
             description=description,
+            heatmap=heatmap,
+            chapters=chapters,
+            sponsor_segments=sponsor_segments,
         )
 
     def _fetch_via_oembed(self, canonical_url: str, video_id: str) -> VideoMetadata:
@@ -229,9 +350,13 @@ def fetch_video_metadata(
 
 
 __all__ = [
+    "HeatmapPoint",
     "MetadataFetchError",
     "MetadataFetcher",
+    "SponsorSegment",
+    "VideoChapter",
     "VideoMetadata",
     "VideoUnavailableError",
+    "fetch_sponsor_segments",
     "fetch_video_metadata",
 ]

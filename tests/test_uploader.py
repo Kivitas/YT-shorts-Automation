@@ -710,3 +710,73 @@ def test_studio_playwright_diagnostic_screenshot_on_failure(
     mock_page.screenshot.assert_called_once()
     call_path = mock_page.screenshot.call_args[1]["path"]
     assert "studio_error_" in call_path
+
+
+def test_generate_title_variants():
+    """Verify generate_title_variants returns 3 <100-char variants with expected styles and #Shorts."""
+    from autoshorts.uploader.metadata_builder import generate_title_variants
+
+    variants = generate_title_variants(
+        hook="Sleep deprivation <destroys> neural plasticity",
+        channel="Huberman Lab",
+        title="Master Your Sleep & Focus",
+    )
+    assert len(variants) == 3
+    assert variants[0]["style"] == "curiosity"
+    assert variants[0]["label"] == "Curiosity Gap"
+    assert variants[1]["style"] == "contrarian"
+    assert variants[1]["label"] == "Contrarian / Truth"
+    assert variants[2]["style"] == "punchy"
+    assert variants[2]["label"] == "Direct Viral Hook"
+
+    for v in variants:
+        t = v["title"]
+        assert len(t) < 100
+        assert "#shorts" in t.lower()
+        assert "<" not in t and ">" not in t
+
+
+def test_youtube_api_upload_thumbnail_success_and_non_fatal_failure(
+    dummy_video: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """Verify upload_thumbnail succeeds when permitted and logs non-fatal warning on failure."""
+    thumb_file = tmp_path / "thumb.jpg"
+    thumb_file.write_bytes(b"\xff\xd8\xff\xe0JPEG")
+
+    mock_service = MagicMock()
+    mock_thumb_req = MagicMock()
+    mock_thumb_req.execute.return_value = {"items": [{}]}
+    mock_service.thumbnails().set.return_value = mock_thumb_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    assert uploader.upload_thumbnail("vid_thumb_1", thumb_file) is True
+    mock_service.thumbnails().set.assert_called_once()
+    call_kwargs = mock_service.thumbnails().set.call_args[1]
+    assert call_kwargs["videoId"] == "vid_thumb_1"
+
+    # Non-fatal failure when channel lacks custom thumbnail permission
+    mock_thumb_req.execute.side_effect = RuntimeError(
+        "403 Forbidden: custom thumbnails not enabled"
+    )
+    with caplog.at_level(logging.WARNING):
+        assert uploader.upload_thumbnail("vid_thumb_2", thumb_file) is False
+        assert "Failed to upload custom thumbnail" in caplog.text
+
+    # Also verify upload() calls upload_thumbnail when thumbnail_path is provided
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.return_value = (
+        None,
+        {"id": "vid_with_thumb", "status": {"privacyStatus": "unlisted"}},
+    )
+    mock_service.videos().insert.return_value = mock_insert_req
+    mock_thumb_req.execute.side_effect = None
+
+    res = uploader.upload(
+        path=dummy_video,
+        title="Thumb Integration",
+        description="desc",
+        tags=["test"],
+        thumbnail_path=thumb_file,
+    )
+    assert res.video_id == "vid_with_thumb"
+    assert mock_service.thumbnails().set.call_args[1]["videoId"] == "vid_with_thumb"

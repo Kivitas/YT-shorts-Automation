@@ -876,3 +876,143 @@ def test_real_ffmpeg_processing_editing_rerender_and_upload(
     exported_files = list(export_dir.glob("*.mp4"))
     assert len(exported_files) >= 1
     assert exported_files[0].stat().st_size > 0
+
+
+def test_pipeline_auto_trim_silence_smart_crop_and_candidates_endpoints(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Verify auto_trim_job_silence, crop_focus/auto-thumbnail forwarding, and candidate/silence API endpoints."""
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from autoshorts.dashboard.app import create_app
+
+    state_mgr = test_env["state_mgr"]
+    work_dir = test_env["work_dir"]
+    output_dir = test_env["output_dir"]
+
+    monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.pipeline.get_output_dir", lambda: output_dir)
+    monkeypatch.setattr("autoshorts.core.paths.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.core.paths.get_output_dir", lambda: output_dir)
+
+    job_id = "job_autotrim_001"
+    job_work = work_dir / job_id
+    job_work.mkdir(parents=True, exist_ok=True)
+    raw_video = job_work / f"{job_id}_raw.mp4"
+    raw_video.write_bytes(b"\x00\x00\x00 fake video")
+    sub_file = job_work / f"{job_id}.ass"
+    sub_file.write_text("[Script Info]\nTitle: Test\n", encoding="utf-8")
+
+    # Write aligned_words.json with two silences >= 0.48s (0.5 -> 1.3s and 2.0 -> 2.8s)
+    words = [
+        {"word": "Hello", "start": 0.0, "end": 0.5, "probability": 0.99},
+        {"word": "world", "start": 1.3, "end": 2.0, "probability": 0.99},
+        {"word": "today", "start": 2.8, "end": 3.4, "probability": 0.99},
+    ]
+    (job_work / "aligned_words.json").write_text(json.dumps(words), encoding="utf-8")
+
+    cand1 = ClipCandidate(
+        start=0.0, end=35.0, text="First candidate window text", score=0.91, reason="Top Hook"
+    )
+    cand2 = ClipCandidate(
+        start=40.0, end=80.0, text="Second candidate window text", score=0.84, reason="Runner Up"
+    )
+    sel = ClipSelection(
+        candidate=cand1,
+        clip_index=0,
+        target_duration=35.0,
+        hook_text="UNBELIEVABLE SECRET",
+        title="Unbelievable Secret #Shorts",
+    )
+    job = Job(
+        id=job_id,
+        source_url="https://youtube.com/watch?v=autotrim1",
+        status=JobStatus.SUBTITLES_GENERATED,
+        raw_video_path=str(raw_video),
+        subtitles_path=str(sub_file),
+        candidate_windows=[cand1, cand2],
+        selected_clips=[sel],
+        video_metadata=VideoMetadata(
+            title="Deep Dive Podcast",
+            channel="Tech Insider",
+            channel_url="https://youtube.com/@techinsider",
+            video_url="https://youtube.com/watch?v=autotrim1",
+            duration=120.0,
+        ),
+    )
+    job.__dict__["crop_focus"] = "face"
+    state_mgr.save_job(job)
+
+    mock_compositor = MagicMock()
+
+    def fake_compose(
+        job_id, source_clip, edl, background_path, subtitles_path, output_path, **kwargs
+    ):
+        p = Path(output_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x00\x00\x00 master video")
+        return p
+
+    def fake_extract_thumb(video_path, output_path, **kwargs):
+        p = Path(output_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\xff\xd8\xff fake jpeg")
+        return p
+
+    mock_compositor.compose.side_effect = fake_compose
+    mock_compositor.extract_thumbnail.side_effect = fake_extract_thumb
+
+    pipe = ShortsPipeline(state_manager=state_mgr, compositor=mock_compositor)
+
+    # 1. Test auto_trim_job_silence directly
+    trim_res = pipe.auto_trim_job_silence(job_id, min_gap_sec=0.48)
+    assert trim_res["job_id"] == job_id
+    assert trim_res["jump_cuts_added"] == 2
+    assert len(trim_res["jump_cuts"]) == 2
+    assert trim_res["jump_cuts"][0]["cut_start"] == 0.5
+    assert trim_res["jump_cuts"][0]["cut_end"] == 1.3
+
+    # 2. Test _run_compositing_stage forwards crop_focus and extracts thumbnail
+    reloaded = state_mgr.get_job(job_id)
+    assert reloaded is not None
+    reloaded.__dict__["crop_focus"] = "face"
+    pipe._run_compositing_stage(reloaded)
+    comp_kwargs = mock_compositor.compose.call_args[1]
+    assert comp_kwargs.get("crop_focus") == "face"
+    mock_compositor.extract_thumbnail.assert_called_once()
+    assert getattr(reloaded.selected_clips[0], "thumbnail_path", None) == str(
+        job_work / f"thumb_{job_id}.jpg"
+    )
+
+    # 3. Test FastAPI endpoints for candidates, select-clip, and auto-trim-silence
+    app = create_app(pipeline=pipe, state_manager=state_mgr, run_scheduler_worker=False)
+    client = TestClient(app)
+
+    r_cands = client.get(f"/api/jobs/{job_id}/candidates")
+    assert r_cands.status_code == 200
+    cands_data = r_cands.json()
+    assert cands_data["success"] is True
+    assert len(cands_data["candidates"]) == 2
+    assert len(cands_data["candidates"][0]["title_variants"]) == 3
+    assert len(cands_data["title_variants"]) == 3
+
+    # Switch active clip to candidate index 1 and apply a title variant
+    chosen_variant = cands_data["candidates"][1]["title_variants"][1]
+    r_sel = client.post(
+        f"/api/jobs/{job_id}/select-clip",
+        json={"candidate_index": 1, "title": chosen_variant},
+    )
+    assert r_sel.status_code == 200
+    sel_data = r_sel.json()
+    assert sel_data["selected_clip"]["clip_index"] == 1
+    assert sel_data["selected_clip"]["title"] == chosen_variant
+
+    # Call auto-trim-silence endpoint
+    r_trim = client.post(
+        f"/api/jobs/{job_id}/auto-trim-silence",
+        json={"min_gap_sec": 0.5},
+    )
+    assert r_trim.status_code == 200
+    assert r_trim.json()["jump_cuts_added"] == 2

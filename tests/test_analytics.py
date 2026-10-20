@@ -25,8 +25,10 @@ from unittest.mock import MagicMock, patch
 from autoshorts.analytics.attribution import PerformanceAttributionEngine
 from autoshorts.analytics.engine import AnalyticsEngine, parse_iso8601_duration
 from autoshorts.analytics.models import (
+    PublishWindowInsight,
     VideoAnalyticsRecord,
 )
+from autoshorts.core.config import Settings
 from autoshorts.core.models import ClipSelection, Job, JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
@@ -465,3 +467,226 @@ def test_seed_demo_analytics_and_overview(tmp_path: Path):
     assert overview_seeded.top_video is not None
     assert overview_seeded.top_video["views"] >= 80000
     assert overview_seeded.winning_recipe.layout_mode == "split_50_50"
+
+
+# -----------------------------------------------------------------------------
+# 5. Analytics 2.0: Outliers, Best Publish Windows, Auto-Tune & Export
+# -----------------------------------------------------------------------------
+
+
+def test_analytics_2_0_outliers_publish_windows_autotune_and_export(tmp_path: Path):
+    """Verify compute_outlier_scores, get_best_publish_windows, auto_tune_config_from_winners, and export_telemetry."""
+    sm = StateManager(tmp_path / "analytics_v2.db")
+    attr = PerformanceAttributionEngine(state_manager=sm)
+    engine = AnalyticsEngine(state_manager=sm)
+    cfg = Settings()
+
+    # Zero-phantom data check on empty DB
+    assert attr.compute_outlier_scores() == []
+    assert attr.get_best_publish_windows() == []
+    empty_tune = attr.auto_tune_config_from_winners(cfg)
+    assert empty_tune["applied"] is False
+    assert "Sync live YouTube analytics first" in empty_tune["reason"]
+
+    # Check new model fields and PublishWindowInsight
+    rec_default = VideoAnalyticsRecord(video_id="v_def")
+    assert rec_default.outlier_multiplier == 1.0
+    assert rec_default.velocity_views_per_hour == 0.0
+    pwi = PublishWindowInsight(
+        hour_utc=15,
+        day_of_week="Wednesday",
+        sample_count=2,
+        avg_views=45000.0,
+        avg_retention_pct=92.5,
+    )
+    assert pwi.hour_utc == 15
+
+    # Seed 3 real uploaded video records with jobs
+    j1 = Job(
+        id="j_v2_1",
+        source_url="https://youtube.com/watch?v=v2_1",
+        status=JobStatus.COMPLETED,
+        layout_mode="full_blur_bg",
+        style_preset="cinematic",
+        color_grading="vibrant",
+        selected_clips=[
+            ClipSelection(
+                candidate={"start": 0, "end": 40, "text": "clip 1"},
+                background_style="subway",
+            )
+        ],
+        upload_result=UploadResult(video_id="vid_v2_1", url="https://youtube.com/shorts/vid_v2_1"),
+    )
+    j2 = Job(
+        id="j_v2_2",
+        source_url="https://youtube.com/watch?v=v2_2",
+        status=JobStatus.COMPLETED,
+        layout_mode="full_blur_bg",
+        style_preset="cinematic",
+        color_grading="vibrant",
+        selected_clips=[
+            ClipSelection(
+                candidate={"start": 0, "end": 40, "text": "clip 2"},
+                background_style="subway",
+            )
+        ],
+        upload_result=UploadResult(video_id="vid_v2_2", url="https://youtube.com/shorts/vid_v2_2"),
+    )
+    sm.save_job(j1)
+    sm.save_job(j2)
+
+    sm.upsert_video_analytics(
+        {
+            "video_id": "vid_v2_1",
+            "job_id": j1.id,
+            "title": "Outlier Smash #Shorts",
+            "views": 60000,
+            "likes": 5000,
+            "comments": 300,
+            "shares": 400,
+            "avg_view_percentage": 96.0,
+            "published_at": "2026-04-01T14:00:00Z",
+            "fetched_at": "2026-04-02T14:00:00Z",
+        }
+    )
+    sm.upsert_video_analytics(
+        {
+            "video_id": "vid_v2_2",
+            "job_id": j2.id,
+            "title": "Median Baseline #Shorts",
+            "views": 20000,
+            "likes": 1200,
+            "comments": 80,
+            "shares": 100,
+            "avg_view_percentage": 84.0,
+            "published_at": "2026-04-01T14:30:00Z",
+            "fetched_at": "2026-04-02T14:30:00Z",
+        }
+    )
+    sm.upsert_video_analytics(
+        {
+            "video_id": "vid_v2_3",
+            "job_id": "",
+            "title": "Low Views #Shorts",
+            "views": 10000,
+            "likes": 400,
+            "comments": 20,
+            "shares": 15,
+            "avg_view_percentage": 62.0,
+            "published_at": "2026-04-03T08:00:00Z",
+            "fetched_at": "2026-04-04T08:00:00Z",
+        }
+    )
+
+    # 1. Outlier scores: median of [60000, 20000, 10000] is 20000
+    outliers = attr.compute_outlier_scores()
+    assert len(outliers) == 3
+    assert outliers[0]["video_id"] == "vid_v2_1"
+    assert outliers[0]["outlier_multiplier"] == 3.0
+    assert outliers[0]["is_outlier"] is True
+    assert outliers[1]["video_id"] == "vid_v2_2"
+    assert outliers[1]["outlier_multiplier"] == 1.0
+    assert outliers[1]["is_outlier"] is False
+
+    # 2. Best publish windows: two videos at 14:00 UTC Wednesday averaging 40,000 views
+    windows = attr.get_best_publish_windows()
+    assert len(windows) == 2
+    assert windows[0]["hour_utc"] == 14
+    assert windows[0]["day_of_week"] == "Wednesday"
+    assert windows[0]["sample_count"] == 2
+    assert windows[0]["avg_views"] == 40000.0
+
+    # 3. Auto-tune config from winners
+    tune_res = attr.auto_tune_config_from_winners(cfg)
+    assert tune_res["applied"] is True
+    assert cfg.branding.layout_mode == "full_blur_bg"
+    assert cfg.subtitles.style_preset == "cinematic"
+    assert cfg.job_defaults.background_category == "subway"
+    assert cfg.branding.color_grading == "vibrant"
+
+    # 4. Telemetry export (JSON and CSV)
+    json_payload, json_mime = engine.export_telemetry("json")
+    assert json_mime == "application/json"
+    parsed_json = json.loads(json_payload)
+    assert len(parsed_json) == 3
+
+    csv_payload, csv_mime = engine.export_telemetry("csv")
+    assert csv_mime == "text/csv"
+    assert "video_id,job_id,title,views" in csv_payload
+    assert "vid_v2_1" in csv_payload
+    assert "Outlier Smash #Shorts" in csv_payload
+
+
+def test_dashboard_analytics_v2_endpoints(tmp_path: Path):
+    """Verify /api/analytics/insights, /api/analytics/auto-tune, and /api/analytics/export endpoints."""
+    from fastapi.testclient import TestClient
+
+    from autoshorts.dashboard.app import create_app
+    from autoshorts.pipeline import ShortsPipeline
+
+    sm = StateManager(tmp_path / "dash_analytics_v2.db")
+    cfg = Settings()
+    pipe = ShortsPipeline(config=cfg, state_manager=sm)
+    app = create_app(pipeline=pipe, state_manager=sm, config=cfg, run_scheduler_worker=False)
+    client = TestClient(app)
+
+    # Empty state: auto-tune returns applied=False
+    r_tune_empty = client.post("/api/analytics/auto-tune")
+    assert r_tune_empty.status_code == 200
+    assert r_tune_empty.json()["applied"] is False
+
+    # Seed a winning job and analytics row
+    job = Job(
+        id="j_dash_1",
+        source_url="https://youtube.com/watch?v=dash1",
+        status=JobStatus.COMPLETED,
+        layout_mode="pip_gameplay",
+        style_preset="mrbeast",
+        color_grading="crisp",
+        selected_clips=[
+            ClipSelection(
+                candidate={"start": 0, "end": 35, "text": "test"},
+                background_style="minecraft",
+            )
+        ],
+        upload_result=UploadResult(
+            video_id="vid_dash_1", url="https://youtube.com/shorts/vid_dash_1"
+        ),
+    )
+    sm.save_job(job)
+    sm.upsert_video_analytics(
+        {
+            "video_id": "vid_dash_1",
+            "job_id": job.id,
+            "title": "Dashboard Winner #Shorts",
+            "views": 75000,
+            "likes": 6200,
+            "avg_view_percentage": 95.0,
+            "published_at": "2026-04-05T18:00:00Z",
+        }
+    )
+
+    r_insights = client.get("/api/analytics/insights")
+    assert r_insights.status_code == 200
+    ins_data = r_insights.json()
+    assert ins_data["success"] is True
+    assert len(ins_data["outliers"]) == 1
+    assert len(ins_data["best_publish_windows"]) == 1
+    assert ins_data["best_publish_windows"][0]["hour_utc"] == 18
+
+    r_tune = client.post("/api/analytics/auto-tune")
+    assert r_tune.status_code == 200
+    tune_data = r_tune.json()
+    assert tune_data["applied"] is True
+    assert pipe.config.branding.layout_mode == "pip_gameplay"
+    assert pipe.config.subtitles.style_preset == "mrbeast"
+
+    r_csv = client.get("/api/analytics/export?format=csv")
+    assert r_csv.status_code == 200
+    assert "text/csv" in r_csv.headers["content-type"]
+    assert "vid_dash_1" in r_csv.text
+
+    r_json = client.get("/api/analytics/export?format=json")
+    assert r_json.status_code == 200
+    assert "application/json" in r_json.headers["content-type"]
+    assert json.loads(r_json.text)[0]["video_id"] == "vid_dash_1"

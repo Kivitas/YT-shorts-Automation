@@ -61,12 +61,23 @@ def dashboard_client(tmp_path: Path):
 
 
 def test_dashboard_index_html(dashboard_client: dict[str, Any]):
-    """Verify GET / returns 200 and loads HTML template."""
+    """Verify GET / returns 200 and loads HTML template with UI 2.0 controls."""
     client: TestClient = dashboard_client["client"]
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "AutoShorts" in response.text
+    html = response.text
+    assert "AutoShorts" in html
+    assert 'id="crop-focus-select"' in html
+    assert 'id="skip-sponsors-toggle"' in html
+    assert 'id="auto-trim-silence-toggle"' in html
+    assert 'id="btn-auto-trim-silence"' in html
+    assert 'id="btn-analytics-autotune"' in html
+    assert 'id="btn-export-csv"' in html
+    assert 'id="btn-export-json"' in html
+    assert 'id="edit-job-crop-focus"' in html
+    assert 'id="edit-job-title-variants"' in html
+    assert 'id="edit-job-candidates-list"' in html
 
 
 def test_dashboard_health_endpoint(dashboard_client: dict[str, Any]):

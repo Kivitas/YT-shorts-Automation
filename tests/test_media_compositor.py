@@ -702,3 +702,88 @@ def test_extract_16khz_mono_wav(tmp_path: Path):
     assert "-vn" in cmd_str
     assert "-ss 2.000" in cmd_str
     assert "-t 30.000" in cmd_str
+
+
+def test_smart_speaker_crop_focus_modes():
+    """Verify crop_focus ('center', 'left', 'right', 'dynamic') in build_complex_filtergraph."""
+    preset = get_dopamine_preset("medium")
+
+    fg_center, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="split_50_50",
+        crop_focus="center",
+    )
+    assert "crop=1080:960,setsar=1" in fg_center
+
+    fg_left, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="split_50_50",
+        crop_focus="left",
+    )
+    assert "crop=1080:960:x='(in_w-out_w)*0.22':y='(in_h-out_h)/2'" in fg_left
+
+    fg_right, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="split_70_30",
+        crop_focus="right",
+    )
+    assert "crop=1080:1344:x='(in_w-out_w)*0.78':y='(in_h-out_h)/2'" in fg_right
+
+    fg_dyn, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="full_center_crop",
+        crop_focus="dynamic",
+    )
+    assert "crop=1080:1920:x='(in_w-out_w)*(0.5+0.25*sin(t*0.35))':y='(in_h-out_h)/2'" in fg_dyn
+
+
+def test_compositor_extract_thumbnail_and_short_clip_fallback(tmp_path: Path):
+    """Verify FFmpegCompositor.extract_thumbnail extracts at 1.2s and falls back to 0.1s for short clips."""
+    video_file = tmp_path / "short.mp4"
+    video_file.write_bytes(b"rendered short")
+    thumb_out = tmp_path / "thumb.jpg"
+
+    comp = FFmpegCompositor()
+    captured_cmds: list[list[str]] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        captured_cmds.append(list(cmd))
+        Path(cmd[-1]).write_bytes(b"\xff\xd8\xff\xe0JPEG")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    # 1. Normal clip duration (30s) -> extracts at 1.2s
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
+    ):
+        res = comp.extract_thumbnail(video_file, thumb_out, timestamp_sec=1.2)
+    assert res == thumb_out
+    assert thumb_out.is_file()
+    cmd_str = " ".join(captured_cmds[-1])
+    assert "-ss 1.2" in cmd_str
+    assert "-frames:v 1" in cmd_str
+    assert "-q:v 2" in cmd_str
+
+    # 2. Very short clip (0.8s <= 1.2s) -> falls back to 0.1s
+    thumb_short = tmp_path / "thumb_short.jpg"
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=0.8),
+    ):
+        res_short = comp.extract_thumbnail(video_file, thumb_short, timestamp_sec=1.2)
+    assert res_short == thumb_short
+    assert "-ss 0.1" in " ".join(captured_cmds[-1])

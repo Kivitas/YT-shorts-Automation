@@ -261,6 +261,32 @@ class YouTubeApiUploader:
             logger.warning("Failed to post comment to video %s: %s", video_id, e)
             return None
 
+    def upload_thumbnail(self, video_id: str, thumbnail_path: Path) -> bool:
+        """Upload a custom JPEG thumbnail for a video via thumbnails.set.
+
+        Wrapped in non-fatal try/except so unverified channels without custom thumbnail
+        permission simply log a warning and never fail the video upload.
+        """
+        if not video_id or not thumbnail_path:
+            return False
+        thumb_file = Path(thumbnail_path)
+        if not thumb_file.is_file():
+            logger.warning("Thumbnail file does not exist for video %s: %s", video_id, thumb_file)
+            return False
+        try:
+            service = self.get_service()
+            _, _, _, _, _, MediaFileUpload = _get_google_libraries()
+            req = service.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(str(thumb_file), mimetype="image/jpeg"),
+            )
+            req.execute()
+            logger.info("Custom thumbnail uploaded for video %s (%s).", video_id, thumb_file)
+            return True
+        except Exception as e:
+            logger.warning("Failed to upload custom thumbnail for video %s: %s", video_id, e)
+            return False
+
     def upload(
         self,
         path: Path | None = None,
@@ -275,6 +301,7 @@ class YouTubeApiUploader:
         playlist_id: str | None = None,
         auto_pin_comment: bool | None = None,
         pin_comment_text: str | None = None,
+        thumbnail_path: Path | str | None = None,
         *,
         video_path: Path | None = None,
         privacy_status: str | None = None,
@@ -416,6 +443,11 @@ class YouTubeApiUploader:
         returned_privacy = response.get("status", {}).get("privacyStatus", status["privacyStatus"])
 
         # Post-upload actions
+        if thumbnail_path is not None:
+            thumb_p = Path(thumbnail_path)
+            if thumb_p.is_file():
+                self.upload_thumbnail(video_id, thumb_p)
+
         eff_playlist = playlist_id or getattr(self.config, "playlist_id", None)
         if eff_playlist:
             self.add_to_playlist(video_id, str(eff_playlist))

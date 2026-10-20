@@ -61,6 +61,30 @@ def can_transition(current: JobStatus, target: JobStatus) -> bool:
     return target in VALID_TRANSITIONS.get(current, set())
 
 
+class HeatmapPoint(BaseModel):
+    """A single point/bucket from YouTube's 'Most Replayed' retention heatmap."""
+
+    start_time: float = Field(..., ge=0.0, description="Start time in seconds")
+    end_time: float = Field(..., ge=0.0, description="End time in seconds")
+    value: float = Field(default=0.0, ge=0.0, le=1.0, description="Retention intensity (0.0 - 1.0)")
+
+
+class VideoChapter(BaseModel):
+    """A chapter marker extracted from YouTube video metadata."""
+
+    title: str = Field(..., description="Chapter title")
+    start_time: float = Field(..., ge=0.0, description="Start time in seconds")
+    end_time: float = Field(..., ge=0.0, description="End time in seconds")
+
+
+class SponsorSegment(BaseModel):
+    """A sponsor, intro, outro, or self-promo segment from SponsorBlock."""
+
+    category: str = Field(default="sponsor", description="Segment category")
+    start_time: float = Field(..., ge=0.0, description="Start time in seconds")
+    end_time: float = Field(..., ge=0.0, description="End time in seconds")
+
+
 class VideoMetadata(BaseModel):
     """Metadata extracted from the source YouTube video without downloading video bytes."""
 
@@ -71,6 +95,15 @@ class VideoMetadata(BaseModel):
     duration: float = Field(..., ge=0.0, description="Total video duration in seconds")
     video_id: str | None = Field(default=None, description="YouTube 11-char ID")
     description: str | None = Field(default=None, description="Original video description")
+    heatmap: list[HeatmapPoint] = Field(
+        default_factory=list, description="YouTube Most Replayed retention heatmap"
+    )
+    chapters: list[VideoChapter] = Field(
+        default_factory=list, description="Extracted video chapters"
+    )
+    sponsor_segments: list[SponsorSegment] = Field(
+        default_factory=list, description="SponsorBlock skip segments"
+    )
 
 
 class ClipCandidate(BaseModel):
@@ -83,11 +116,23 @@ class ClipCandidate(BaseModel):
         default=0.0, ge=0.0, le=1.0, description="SemIf retention score (0.0 - 1.0)"
     )
     reason: str | None = Field(default=None, description="Scoring rationale or topic label")
+    heatmap_score: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="YouTube Most Replayed retention score (0.0 - 1.0)"
+    )
+    hook_strength: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Opening sentence curiosity hook score (0.0 - 1.0)"
+    )
+    chapter_title: str | None = Field(
+        default=None, description="Overlapping video chapter title if present"
+    )
 
     @property
     def duration(self) -> float:
         """Calculate duration of candidate window in seconds."""
         return max(0.0, self.end - self.start)
+
+
+CandidateClip = ClipCandidate
 
 
 class ClipSelection(BaseModel):
@@ -99,6 +144,16 @@ class ClipSelection(BaseModel):
     background_style: str = Field(default="minecraft", description="Selected background theme")
     hook_text: str = Field(default="", description="First 3-second hook question/card")
     title: str = Field(default="", description="Recommended Shorts title with hashtag")
+    title_variants: list[str] = Field(
+        default_factory=list,
+        description="3 viral title angles (Curiosity, Contrarian, Direct Punch)",
+    )
+    thumbnail_path: str | None = Field(
+        default=None, description="Path to extracted or rendered thumbnail image"
+    )
+
+
+SelectedClip = ClipSelection
 
 
 class JumpCut(BaseModel):
@@ -226,6 +281,9 @@ class Job(BaseModel):
     link_related_video: bool = True
     publish_at: str | None = None
     channel_profile_id: str = "default"
+    crop_focus: str = "center"
+    auto_trim_silence: bool = True
+    skip_sponsors: bool = True
     scheduled_time: datetime | None = Field(default=None, description="Scheduled upload timestamp")
     upload_result: UploadResult | None = Field(default=None, description="Upload outcome")
     error_message: str | None = Field(default=None, description="Last error message if failed")
@@ -244,15 +302,20 @@ class Job(BaseModel):
 
 __all__ = [
     "VALID_TRANSITIONS",
+    "CandidateClip",
     "CaptionCorrection",
     "ChannelProfile",
     "ClipCandidate",
     "ClipSelection",
     "EditDecisionList",
+    "HeatmapPoint",
     "Job",
     "JobStatus",
     "JumpCut",
+    "SelectedClip",
+    "SponsorSegment",
     "UploadResult",
+    "VideoChapter",
     "VideoMetadata",
     "ZoomPunchIn",
     "can_transition",

@@ -9,6 +9,8 @@ Provides unified telemetry synchronization across 4 waterfall tiers:
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import os
@@ -747,6 +749,40 @@ class AnalyticsEngine:
     def sync_all(self, force: bool = False) -> dict[str, Any]:
         """Trigger synchronization of all uploaded Shorts telemetry."""
         return self.sync_all_uploaded_shorts()
+
+    def export_telemetry(self, fmt: str = "json") -> tuple[str, str]:
+        """Export all recorded video analytics records as formatted JSON or CSV."""
+        records = self.state_manager.list_video_analytics(limit=5000)
+        norm_fmt = (fmt or "json").strip().lower()
+
+        if norm_fmt == "csv":
+            fieldnames = [
+                "video_id",
+                "job_id",
+                "title",
+                "views",
+                "likes",
+                "comments",
+                "shares",
+                "avg_view_duration_sec",
+                "avg_view_percentage",
+                "viewed_vs_swiped_pct",
+                "shown_in_feed",
+                "subscribers_gained",
+                "estimated_revenue_usd",
+                "rpm_usd",
+                "source_tier",
+                "published_at",
+                "fetched_at",
+            ]
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for r in records:
+                writer.writerow({k: r.get(k, "") for k in fieldnames})
+            return buf.getvalue(), "text/csv"
+
+        return json.dumps(records, indent=2), "application/json"
 
 
 __all__ = ["AnalyticsEngine", "parse_iso8601_duration"]

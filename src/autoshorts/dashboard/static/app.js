@@ -814,14 +814,16 @@ async function rerenderJob() {
     btn.textContent = "⚡ Starting Fast Re-Burn...";
   }
 
+  const titleEl = document.getElementById("edit-clip-title") || document.getElementById("edit-job-title");
   const payload = {
     layout_mode: document.getElementById("edit-layout-mode") ? document.getElementById("edit-layout-mode").value : "split_50_50",
+    crop_focus: document.getElementById("edit-job-crop-focus") ? document.getElementById("edit-job-crop-focus").value : "center",
     style_preset: document.getElementById("edit-style-preset") ? document.getElementById("edit-style-preset").value : "neon",
     color_grading: document.getElementById("edit-color-grading") ? document.getElementById("edit-color-grading").value : "none",
     watermark: document.getElementById("edit-watermark") ? document.getElementById("edit-watermark").value : "@AutoShorts",
     background: document.getElementById("edit-background-category") ? document.getElementById("edit-background-category").value : "minecraft",
     dopamine: document.getElementById("edit-dopamine-level") ? document.getElementById("edit-dopamine-level").value : "medium",
-    clip_title: document.getElementById("edit-clip-title") ? document.getElementById("edit-clip-title").value.trim() : "",
+    clip_title: titleEl ? titleEl.value.trim() : "",
     hook_text: document.getElementById("edit-hook-text") ? document.getElementById("edit-hook-text").value.trim() : "",
   };
 
@@ -858,12 +860,14 @@ function openEditJobModal(jobId) {
   const modalId = document.getElementById("edit-job-modal-id");
   const idInput = document.getElementById("edit-job-id");
   const titleInput = document.getElementById("edit-clip-title");
+  const jobTitleInput = document.getElementById("edit-job-title");
   const hookInput = document.getElementById("edit-hook-text");
   const bgSelect = document.getElementById("edit-background-category");
   const dopSelect = document.getElementById("edit-dopamine-level");
 
   // Tab 1: Layout & Style controls
   const layoutSelect = document.getElementById("edit-layout-mode");
+  const cropFocusSelect = document.getElementById("edit-job-crop-focus");
   const styleSelect = document.getElementById("edit-style-preset");
   const gradeSelect = document.getElementById("edit-color-grading");
   const wmInput = document.getElementById("edit-watermark");
@@ -883,9 +887,10 @@ function openEditJobModal(jobId) {
 
   if (modalId) modalId.textContent = `#${job.id}`;
   if (idInput) idInput.value = job.id;
-  if (titleInput) {
-    titleInput.value = job.clip_title || (job.video_metadata ? job.video_metadata.title : "");
-  }
+  const resolvedTitle = job.clip_title || (job.selected_clips && job.selected_clips[0] && job.selected_clips[0].title) || (job.video_metadata ? job.video_metadata.title : "");
+  if (titleInput) titleInput.value = resolvedTitle;
+  if (jobTitleInput) jobTitleInput.value = resolvedTitle;
+
   if (hookInput) {
     let hook = "";
     if (job.selected_clips && job.selected_clips.length > 0) {
@@ -899,9 +904,10 @@ function openEditJobModal(jobId) {
   if (dopSelect && job.dopamine_level) dopSelect.value = job.dopamine_level;
 
   if (layoutSelect) layoutSelect.value = job.layout_mode || "split_50_50";
+  if (cropFocusSelect) cropFocusSelect.value = job.crop_focus || "center";
   if (styleSelect) styleSelect.value = job.style_preset || "neon";
   if (gradeSelect) gradeSelect.value = job.color_grading || "none";
-  if (wmInput) wmInput.value = job.watermark || "@AutoShorts";
+  if (wmInput) wmInput.value = job.watermark || job.watermark_text || "@AutoShorts";
 
   // Trimmer timestamps
   let startSec = 0.0;
@@ -917,6 +923,9 @@ function openEditJobModal(jobId) {
   if (endInput) endInput.value = endSec.toFixed(1);
   updateTrimmerDuration();
 
+  // Load A/B Title Variants & Candidate Clips Inspector
+  loadJobCandidates(job.id, job);
+
   // Tab 3 fields
   if (privSelect) privSelect.value = job.privacy_status || "public";
   if (catSelect) catSelect.value = job.category_id || "24";
@@ -926,21 +935,8 @@ function openEditJobModal(jobId) {
   if (publishAtInput) publishAtInput.value = job.publish_at || job.scheduled_time || "";
 
   // Tab 2: Render EDL Jump cuts and zoom punch-ins
-  const edlCutsEl = document.getElementById("edit-edl-cuts");
+  renderEdlJumpCuts(job.edl && job.edl.jump_cuts ? job.edl.jump_cuts : []);
   const edlZoomsEl = document.getElementById("edit-edl-zooms");
-  if (edlCutsEl) {
-    if (job.edl && job.edl.jump_cuts && job.edl.jump_cuts.length > 0) {
-      edlCutsEl.innerHTML = job.edl.jump_cuts.map(c => `
-        <div class="edl-item">
-          <span>Cut: ${c.cut_start.toFixed(1)}s – ${c.cut_end.toFixed(1)}s</span>
-          <span>${escapeHtml(c.reason || 'silence')}</span>
-        </div>
-      `).join("");
-    } else {
-      edlCutsEl.innerHTML = '<div class="edl-empty">No excised silence cuts in this clip.</div>';
-    }
-  }
-
   if (edlZoomsEl) {
     if (job.edl && job.edl.zoom_punch_ins && job.edl.zoom_punch_ins.length > 0) {
       edlZoomsEl.innerHTML = job.edl.zoom_punch_ins.map(z => `
@@ -955,6 +951,232 @@ function openEditJobModal(jobId) {
   }
 
   if (modal) modal.style.display = "flex";
+}
+
+function renderEdlJumpCuts(jumpCuts) {
+  const edlCutsEl = document.getElementById("edit-edl-cuts");
+  if (!edlCutsEl) return;
+  if (Array.isArray(jumpCuts) && jumpCuts.length > 0) {
+    edlCutsEl.innerHTML = jumpCuts.map(c => `
+      <div class="edl-item">
+        <span>Cut: ${Number(c.cut_start || 0).toFixed(2)}s – ${Number(c.cut_end || 0).toFixed(2)}s</span>
+        <span>${escapeHtml(c.reason || 'silence')}</span>
+      </div>
+    `).join("");
+  } else {
+    edlCutsEl.innerHTML = '<div class="edl-empty">No excised silence cuts in this clip.</div>';
+  }
+}
+
+async function loadJobCandidates(jobId, fallbackJob) {
+  const variantsEl = document.getElementById("edit-job-title-variants");
+  const candidatesEl = document.getElementById("edit-job-candidates-list");
+  if (variantsEl) variantsEl.innerHTML = '<span class="variants-empty">Loading A/B title variants...</span>';
+  if (candidatesEl) candidatesEl.innerHTML = '<div class="edl-empty">Loading candidate windows &amp; heatmap telemetry...</div>';
+
+  let candidates = (fallbackJob && fallbackJob.candidate_windows) ? fallbackJob.candidate_windows : [];
+  let titleVariants = (fallbackJob && fallbackJob.title_variants) ? fallbackJob.title_variants : [];
+  let activeIndex = 0;
+
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/candidates`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.candidates)) candidates = data.candidates;
+      else if (Array.isArray(data.candidate_windows)) candidates = data.candidate_windows;
+      if (Array.isArray(data.title_variants) && data.title_variants.length > 0) {
+        titleVariants = data.title_variants;
+      }
+      if (typeof data.selected_index === "number") {
+        activeIndex = data.selected_index;
+      } else if (typeof data.active_clip_index === "number") {
+        activeIndex = data.active_clip_index;
+      }
+    }
+  } catch (err) {
+    console.debug("Job candidates fetch fallback:", err);
+  }
+
+  if ((!titleVariants || titleVariants.length === 0) && fallbackJob) {
+    if (fallbackJob.selected_clips && fallbackJob.selected_clips[0] && Array.isArray(fallbackJob.selected_clips[0].title_variants)) {
+      titleVariants = fallbackJob.selected_clips[0].title_variants;
+    } else if (fallbackJob.edl && Array.isArray(fallbackJob.edl.title_variants)) {
+      titleVariants = fallbackJob.edl.title_variants;
+    }
+  }
+
+  const activeTitle = (document.getElementById("edit-clip-title") && document.getElementById("edit-clip-title").value) || "";
+  renderTitleVariants(titleVariants, activeTitle);
+  renderCandidateClipsList(jobId, candidates, activeIndex);
+}
+
+function renderTitleVariants(variants, activeTitle) {
+  const variantsEl = document.getElementById("edit-job-title-variants");
+  if (!variantsEl) return;
+
+  if (!Array.isArray(variants) || variants.length === 0) {
+    variantsEl.innerHTML = '<span class="variants-empty">No A/B title variants generated for this clip yet.</span>';
+    return;
+  }
+
+  variantsEl.innerHTML = variants.slice(0, 3).map((v, idx) => {
+    const text = typeof v === "string" ? v : (v.title || v.text || "");
+    const isSelected = activeTitle && text === activeTitle;
+    const labels = ["🅰️ Variant A", "🅱️ Variant B", "🔥 Variant C"];
+    return `
+      <button type="button" class="title-variant-pill ${isSelected ? 'active' : ''}" data-title="${escapeHtml(text)}" onclick="selectJobTitleVariant(this.getAttribute('data-title'), this)">
+        <span>${labels[idx] || 'Variant'}:</span>
+        <span>${escapeHtml(text)}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function selectJobTitleVariant(titleText, btnEl) {
+  const clipTitleInput = document.getElementById("edit-clip-title");
+  const jobTitleInput = document.getElementById("edit-job-title");
+  if (clipTitleInput) clipTitleInput.value = titleText;
+  if (jobTitleInput) jobTitleInput.value = titleText;
+
+  document.querySelectorAll("#edit-job-title-variants .title-variant-pill").forEach(btn => {
+    btn.classList.toggle("active", btn === btnEl);
+  });
+  showToast(`✓ Applied A/B title variant: "${titleText.slice(0, 38)}..."`, "success");
+}
+
+function renderCandidateClipsList(jobId, candidates, activeIndex) {
+  const candidatesEl = document.getElementById("edit-job-candidates-list");
+  if (!candidatesEl) return;
+
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    candidatesEl.innerHTML = '<div class="edl-empty">No scored candidate windows available yet for this job.</div>';
+    return;
+  }
+
+  candidatesEl.innerHTML = candidates.slice(0, 6).map((c, idx) => {
+    const start = Number(c.start || 0);
+    const end = Number(c.end || 45);
+    const dur = Math.max(0, end - start);
+    const semifPct = Math.round(Number(c.score || 0) * 100);
+    const heatmapVal = c.heatmap_score !== undefined ? Number(c.heatmap_score) : (c.replay_intensity !== undefined ? Number(c.replay_intensity) : 0);
+    const heatmapPct = Math.round(heatmapVal <= 1 ? heatmapVal * 100 : heatmapVal);
+    const hookVal = c.hook_strength !== undefined ? Number(c.hook_strength) : (c.hook_score !== undefined ? Number(c.hook_score) : Number(c.score || 0));
+    const hookPct = Math.round(hookVal <= 1 ? hookVal * 100 : hookVal);
+    const isSelected = idx === activeIndex || Boolean(c.selected);
+    const snippet = c.reason || c.text || "Scored transcript window";
+
+    return `
+      <div class="candidate-clip-card ${isSelected ? 'selected' : ''}" data-candidate-idx="${idx}">
+        <div>
+          <div class="candidate-clip-header">
+            <span>#${idx + 1} • ${start.toFixed(1)}s – ${end.toFixed(1)}s (${dur.toFixed(0)}s)</span>
+            ${isSelected ? '<span class="badge badge-success" style="font-size:0.65rem;">Active</span>' : ''}
+          </div>
+          <div class="candidate-badges-row" style="margin-top: 0.35rem;">
+            <span class="badge badge-semif" title="SemIf Semantic Retention Score">🧠 SemIf ${semifPct}%</span>
+            <span class="badge badge-heatmap" title="YouTube Most Replayed Heatmap Intensity">🔥 Most Replayed ${heatmapPct}%</span>
+            <span class="badge badge-hook-strength" title="Opening 3-Second Hook Strength">🪝 Hook ${hookPct}%</span>
+          </div>
+          <p class="candidate-snippet" style="margin-top: 0.4rem;" title="${escapeHtml(snippet)}">${escapeHtml(snippet)}</p>
+        </div>
+        <button type="button" class="btn ${isSelected ? 'btn-primary' : 'btn-secondary'} btn-xs" onclick="selectJobCandidateClip('${escapeHtml(jobId)}', ${idx}, ${start}, ${end})">
+          ${isSelected ? '✓ Selected Clip' : '⚡ Switch to Clip'}
+        </button>
+      </div>
+    `;
+  }).join("");
+}
+
+async function selectJobCandidateClip(jobId, candidateIndex, startSec, endSec) {
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/select-clip`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        candidate_index: candidateIndex,
+        clip_index: candidateIndex,
+        start_sec: startSec,
+        end_sec: endSec,
+      }),
+    });
+
+    const startInput = document.getElementById("edit-start-sec");
+    const endInput = document.getElementById("edit-end-sec");
+    if (startInput && startSec !== undefined) startInput.value = Number(startSec).toFixed(1);
+    if (endInput && endSec !== undefined) endInput.value = Number(endSec).toFixed(1);
+    updateTrimmerDuration();
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.title || (data.selected_clip && data.selected_clip.title)) {
+        const newTitle = data.title || data.selected_clip.title;
+        const ct = document.getElementById("edit-clip-title");
+        const jt = document.getElementById("edit-job-title");
+        if (ct) ct.value = newTitle;
+        if (jt) jt.value = newTitle;
+      }
+      if (Array.isArray(data.title_variants) && data.title_variants.length > 0) {
+        const activeTitle = (document.getElementById("edit-clip-title") && document.getElementById("edit-clip-title").value) || "";
+        renderTitleVariants(data.title_variants, activeTitle);
+      }
+      showToast(`✓ Switched job #${jobId} to Candidate Clip #${candidateIndex + 1}!`, "success");
+      loadJobCandidates(jobId, _jobsCache.find(j => j.id === jobId));
+      refreshJobs();
+    } else {
+      const err = await res.json();
+      showToast("Clip switch error: " + (err.detail || "Server error"), "error");
+    }
+  } catch (err) {
+    showToast("Failed switching clip: " + err, "error");
+  }
+}
+
+async function autoTrimJobSilence() {
+  const jobId = document.getElementById("edit-job-id") ? document.getElementById("edit-job-id").value : "";
+  if (!jobId) return;
+
+  const btn = document.getElementById("btn-auto-trim-silence");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Detecting Dead Air...";
+  }
+
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/auto-trim-silence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ min_silence_sec: 0.48 }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const jumpCuts = data.jump_cuts || (data.edl && data.edl.jump_cuts) || [];
+      const addedCount = data.added_count !== undefined
+        ? data.added_count
+        : (data.count !== undefined ? data.count : jumpCuts.length);
+
+      renderEdlJumpCuts(jumpCuts);
+
+      const cached = _jobsCache.find(j => j.id === jobId);
+      if (cached) {
+        if (!cached.edl) cached.edl = {};
+        cached.edl.jump_cuts = jumpCuts;
+      }
+
+      showToast(`Added ${addedCount} frame-accurate silence jump cuts`, "success");
+      refreshJobs();
+    } else {
+      const err = await res.json();
+      showToast("Auto-trim silence failed: " + (err.detail || "Server error"), "error");
+    }
+  } catch (err) {
+    showToast("Auto-trim silence error: " + err, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✂️ Auto-Cut Dead Air Silences";
+    }
+  }
 }
 
 function closeEditJobModal(e) {
@@ -972,12 +1194,14 @@ async function saveJobMetadata() {
     btn.textContent = "Saving...";
   }
 
+  const titleEl = document.getElementById("edit-clip-title") || document.getElementById("edit-job-title");
   const payload = {
-    clip_title: document.getElementById("edit-clip-title").value.trim(),
+    clip_title: titleEl ? titleEl.value.trim() : "",
     hook_text: document.getElementById("edit-hook-text").value.trim(),
     background_category: document.getElementById("edit-background-category").value,
     dopamine_level: document.getElementById("edit-dopamine-level").value,
     layout_mode: document.getElementById("edit-layout-mode") ? document.getElementById("edit-layout-mode").value : undefined,
+    crop_focus: document.getElementById("edit-job-crop-focus") ? document.getElementById("edit-job-crop-focus").value : undefined,
     style_preset: document.getElementById("edit-style-preset") ? document.getElementById("edit-style-preset").value : undefined,
     color_grading: document.getElementById("edit-color-grading") ? document.getElementById("edit-color-grading").value : undefined,
     watermark: document.getElementById("edit-watermark") ? document.getElementById("edit-watermark").value : undefined,
@@ -1436,6 +1660,18 @@ async function submitJobs() {
     ? document.getElementById("category-id-select").value
     : "22";
 
+  const cropFocus = document.getElementById("crop-focus-select")
+    ? document.getElementById("crop-focus-select").value
+    : "center";
+
+  const skipSponsors = document.getElementById("skip-sponsors-toggle")
+    ? document.getElementById("skip-sponsors-toggle").checked
+    : true;
+
+  const autoTrimSilence = document.getElementById("auto-trim-silence-toggle")
+    ? document.getElementById("auto-trim-silence-toggle").checked
+    : true;
+
   const payload = {
     links: links,
     provider: document.getElementById("provider-select").value,
@@ -1452,6 +1688,9 @@ async function submitJobs() {
     progress_bar_position: progressBarPos,
     watermark: watermarkText,
     category_id: categoryId,
+    crop_focus: cropFocus,
+    skip_sponsors: skipSponsors,
+    auto_trim_silence: autoTrimSilence,
   };
 
   const btn = document.getElementById("submit-btn");
@@ -1459,11 +1698,18 @@ async function submitJobs() {
   btn.textContent = "Submitting...";
 
   try {
-    const res = await fetch("/api/jobs/submit", {
+    let res = await fetch("/api/jobs/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (res.status === 404) {
+      res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
 
     if (!res.ok) {
       const err = await res.json();
@@ -1484,6 +1730,8 @@ async function submitJobs() {
     btn.textContent = "⚡ Start Pipeline";
   }
 }
+
+const submitJobsForm = submitJobs;
 
 async function importSpark() {
   const text = document.getElementById("spark-input").value.trim();
@@ -3912,7 +4160,6 @@ async function generateMoneyPrinterScript() {
   updateMpScriptStats();
   showToast("✓ High-retention viral script & hook generated!", "success");
 }
-}
 
 function updateMpScriptStats() {
   const bodyEl = document.getElementById("mp-script-body");
@@ -4318,13 +4565,20 @@ function renderAnalyticsTable(videos) {
   }
 
   tbody.innerHTML = videos.map(v => {
-    const ytUrl = v.youtube_url || (v.youtube_id ? `https://www.youtube.com/shorts/${v.youtube_id}` : "#");
+    const ytUrl = v.youtube_url || (v.youtube_id ? `https://www.youtube.com/shorts/${v.youtube_id}` : (v.video_id ? `https://www.youtube.com/shorts/${v.video_id}` : "#"));
     const revStr = v.estimated_revenue !== undefined ? `$${Number(v.estimated_revenue).toFixed(2)}` : "$0.00";
     const svs = v.svs_score || 85;
+    const outlierMult = Number(v.outlier_multiplier || 0);
+    const outlierBadgeHtml = outlierMult >= 1.5
+      ? `<span class="badge outlier-badge" title="Outlier performance vs channel median">🔥 ${outlierMult.toFixed(1)}x Outlier</span>`
+      : "";
 
     return `
-      <tr data-title="${escapeHtml(v.title.toLowerCase())}">
-        <td><strong>${escapeHtml(v.title)}</strong></td>
+      <tr data-title="${escapeHtml((v.title || '').toLowerCase())}">
+        <td>
+          <strong>${escapeHtml(v.title || 'Untitled Short')}</strong>
+          ${outlierBadgeHtml}
+        </td>
         <td>
           <a href="${escapeHtml(ytUrl)}" target="_blank" rel="noopener noreferrer" class="video-direct-link">
             🔗 Watch Short ↗
@@ -4346,6 +4600,68 @@ function renderAnalyticsTable(videos) {
       </tr>
     `;
   }).join("");
+}
+
+async function autoTuneStudioFromWinners() {
+  const btn = document.getElementById("btn-analytics-autotune");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Auto-Tuning...";
+  }
+
+  try {
+    const res = await fetch("/api/analytics/auto-tune", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      const recipe = data.recipe || data.winning_recipe || data.applied_settings || (data.layout_mode ? data : null);
+      if (data.success === false || !recipe || !recipe.layout_mode) {
+        showToast(data.message || "No uploaded Shorts telemetry exists yet to auto-tune Studio.", "warning");
+        return;
+      }
+
+      const layout = recipe.layout_mode || "split_50_50";
+      const caption = recipe.caption_preset || recipe.style_preset || "hormozi";
+      const bg = recipe.background_category || recipe.background || "subway";
+
+      if (typeof selectLayoutMode === "function") selectLayoutMode(layout);
+      if (typeof selectCaptionPreset === "function") selectCaptionPreset(caption);
+
+      const bgSelect = document.getElementById("background-select");
+      if (bgSelect) {
+        bgSelect.value = bg;
+        bgSelect.dispatchEvent(new Event("change"));
+      }
+      updatePhoneCanvasPreview();
+      showToast(data.message || `⚡ Auto-Tuned Studio from Winners (${layout} + ${caption} + ${bg})!`, "success");
+    } else {
+      showToast("No uploaded Shorts telemetry exists yet to auto-tune Studio.", "warning");
+    }
+  } catch (err) {
+    console.debug("Auto-tune endpoint fallback:", err);
+    const fallbackRecipe = _analyticsOverviewCache && _analyticsOverviewCache.winning_recipe;
+    if (fallbackRecipe && fallbackRecipe.layout_mode) {
+      applyWinningRecipe();
+    } else {
+      showToast("No uploaded Shorts telemetry exists yet to auto-tune Studio.", "warning");
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "⚡ Auto-Tune Studio from Winners";
+    }
+  }
+}
+
+function exportAnalyticsData(format = "csv") {
+  const cleanFmt = format === "json" ? "json" : "csv";
+  const url = `/api/analytics/export?format=${encodeURIComponent(cleanFmt)}`;
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `autoshorts_analytics.${cleanFmt}`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showToast(`📥 Exporting Shorts analytics telemetry (${cleanFmt.toUpperCase()})...`, "info");
 }
 
 function filterAnalyticsTable() {

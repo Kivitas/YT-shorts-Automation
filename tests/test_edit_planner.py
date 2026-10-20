@@ -333,3 +333,97 @@ def test_empty_edl_properties():
     assert edl.recommended_title == "Test"
     assert edl.recommended_hook == "Look"
     assert edl.background_style_recommendation == "minecraft"
+
+
+def test_detect_dead_air_cuts_gaps_and_padding():
+    """Verify detect_dead_air_cuts detects leading, internal, and trailing silence gaps with padding."""
+    from autoshorts.edit_planner.planner import detect_dead_air_cuts
+    from autoshorts.media.ass_styler import TimedWord
+
+    words = [
+        TimedWord(word="Hello", start=1.0, end=1.5),  # Leading silence 0.0 -> 1.0 (1.0s > 0.48s)
+        TimedWord(word="world", start=1.7, end=2.2),  # Gap 0.2s <= 0.48s (ignored)
+        {"word": "big", "start": 3.2, "end": 3.6},  # Gap 2.2 -> 3.2 (1.0s > 0.48s)
+        {"word": "finish", "start": 3.8, "end": 4.2},  # Trailing 4.2 -> 10.0 (5.8s > 0.48s)
+    ]
+    cuts = detect_dead_air_cuts(
+        words=words,
+        clip_duration=10.0,
+        min_gap_sec=0.48,
+        padding_sec=0.08,
+        max_cuts=12,
+    )
+    assert len(cuts) == 3
+    # Leading cut: 0.0 + 0.08 = 0.08 to 1.0 - 0.08 = 0.92
+    assert cuts[0].cut_start == pytest.approx(0.08, abs=0.02)
+    assert cuts[0].cut_end == pytest.approx(0.92, abs=0.02)
+    assert cuts[0].start == cuts[0].cut_start
+    assert cuts[0].end == cuts[0].cut_end
+    # Internal cut: 2.2 + 0.08 = 2.28 to 3.2 - 0.08 = 3.12
+    assert cuts[1].cut_start == pytest.approx(2.28, abs=0.02)
+    assert cuts[1].cut_end == pytest.approx(3.12, abs=0.02)
+    # Active video must remain >= 3.0s
+    total_excised = sum(c.cut_end - c.cut_start for c in cuts)
+    assert (10.0 - total_excised) >= 3.0
+
+
+def test_generate_smart_zoom_punches_spacing_and_scales():
+    """Verify generate_smart_zoom_punches places 1.12x-1.18x punches on emphasis words >= 3.5s apart."""
+    from autoshorts.edit_planner.planner import generate_smart_zoom_punches
+
+    words = [
+        {"word": "the", "start": 0.2, "end": 0.4},
+        {"word": "SECRET!", "start": 0.5, "end": 1.0},  # Emphasis @ 0.5s
+        {"word": "CRAZY", "start": 2.0, "end": 2.4},  # Too close (< 3.5s from 0.5s), skipped!
+        {"word": "1000", "start": 4.5, "end": 5.0},  # Emphasis @ 4.5s (>= 4.0s)
+        {"word": "extraordinary", "start": 9.0, "end": 9.6},  # Long word @ 9.0s (>= 8.0s)
+    ]
+    punches = generate_smart_zoom_punches(words=words, clip_duration=15.0, max_punches=5)
+    assert len(punches) == 3
+    assert punches[0].emphasis_word == "SECRET!"
+    assert punches[1].emphasis_word == "1000"
+    assert punches[2].emphasis_word == "extraordinary"
+    for p in punches:
+        assert 1.12 <= p.scale <= 1.18
+    assert punches[1].timestamp - punches[0].timestamp >= 3.5
+    assert punches[2].timestamp - punches[1].timestamp >= 3.5
+
+
+def test_create_edl_auto_trim_silence_merges_cuts_when_llm_returns_zero(tmp_path: Path):
+    """Verify MultimodalEditPlanner.create_edl merges dead-air cuts when auto_trim_silence=True and LLM has 0 cuts."""
+    from autoshorts.edit_planner.planner import MultimodalEditPlanner as EnhancedPlanner
+
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_text("fake video")
+
+    valid_json_no_cuts = json.dumps(
+        {
+            "hook_in_sec": 0.0,
+            "hook_out_sec": 20.0,
+            "jump_cuts": [],
+            "zoom_punch_ins": [],
+            "caption_corrections": [],
+            "recommended_thumbnail_timestamp": 1.0,
+            "recommended_title": "Auto Trim #Shorts",
+            "recommended_hook": "Watch this",
+            "background_style_recommendation": "minecraft",
+        }
+    )
+    provider = FakeTextProvider(responses=[valid_json_no_cuts])
+    planner = EnhancedPlanner(provider=provider, default_duration=20.0)
+
+    words = [
+        {"word": "First", "start": 0.1, "end": 0.6},
+        {"word": "Second", "start": 2.0, "end": 2.5},  # 1.4s silence gap
+        {"word": "Third", "start": 2.7, "end": 19.8},
+    ]
+
+    edl = planner.create_edl(
+        video_clip_path=video_path,
+        transcript_text="First Second Third",
+        words=words,
+        auto_trim_silence=True,
+    )
+    assert len(edl.jump_cuts) == 1
+    assert edl.jump_cuts[0].cut_start == pytest.approx(0.68, abs=0.02)
+    assert edl.jump_cuts[0].cut_end == pytest.approx(1.92, abs=0.02)

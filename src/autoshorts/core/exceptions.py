@@ -136,3 +136,11 @@ class UploadError(AutoShortsError):
 
 class UploadVerificationError(UploadError):
     """Raised when post-upload verification fails or video is rejected/processing fails."""
+
+
+class CredentialRevokedError(AutoShortsError):
+    """Raised when an API key or OAuth credential has been revoked or expired."""
+
+
+class CredentialInvalidError(AutoShortsError):
+    """Raised when an API key or credential is fundamentally invalid or malformed."""

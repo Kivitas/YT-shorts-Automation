@@ -16,7 +16,10 @@ from typing import Any
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.contracts import Decider, LLMProvider
 from autoshorts.core.exceptions import DeciderError
-from autoshorts.core.models import ClipCandidate, ClipSelection
+from autoshorts.core.models import (
+    ClipCandidate,
+    ClipSelection,
+)
 from autoshorts.decision.semif_engine import (
     SEMIF_ACTION_TABLE,
     build_semif_prompt,
@@ -25,6 +28,28 @@ from autoshorts.decision.semif_engine import (
 from autoshorts.decision.window_slicer import select_non_overlapping_candidates
 
 logger = logging.getLogger("autoshorts.decision.orchestrator")
+
+
+def _fuse_candidate_score(
+    semif_score: float,
+    heatmap_score: float,
+    hook_strength: float,
+) -> float:
+    """Fuse LLM SemIf probability score with heatmap and hook curiosity signals.
+
+    Preserves exact deterministic behavior when heatmap_score == 0.0 and hook_strength == 0.0.
+    """
+    hm = max(0.0, min(1.0, float(heatmap_score or 0.0)))
+    hk = max(0.0, min(1.0, float(hook_strength or 0.0)))
+    sf = max(0.0, min(1.0, float(semif_score or 0.0)))
+
+    if hm > 0.0:
+        composite = 0.72 * sf + 0.18 * hm + 0.10 * hk
+        return round(max(0.0, min(1.0, composite)), 4)
+    if hk > 0.0:
+        composite = 0.90 * sf + 0.10 * hk
+        return round(max(0.0, min(1.0, composite)), 4)
+    return round(sf, 4)
 
 
 class SemIfDecider(Decider):
@@ -103,13 +128,17 @@ class SemIfDecider(Decider):
                 score = evaluate_heuristic(cand.text, cand.duration)
                 reason = f"Heuristic (no provider): {score:.3f}"
 
+            fused_score = _fuse_candidate_score(score, cand.heatmap_score, cand.hook_strength)
             scored.append(
                 ClipCandidate(
                     start=cand.start,
                     end=cand.end,
                     text=cand.text,
-                    score=round(score, 4),
+                    score=fused_score,
                     reason=reason,
+                    heatmap_score=cand.heatmap_score,
+                    hook_strength=cand.hook_strength,
+                    chapter_title=cand.chapter_title,
                 )
             )
 
@@ -155,26 +184,34 @@ class SemIfDecider(Decider):
                 s = evaluate_heuristic(cand.text, cand.duration)
                 reason = f"Heuristic fallback: {s:.3f}"
 
+            fused_s = _fuse_candidate_score(s, cand.heatmap_score, cand.hook_strength)
             scored.append(
                 ClipCandidate(
                     start=cand.start,
                     end=cand.end,
                     text=cand.text,
-                    score=round(s, 4),
+                    score=fused_s,
                     reason=reason,
+                    heatmap_score=cand.heatmap_score,
+                    hook_strength=cand.hook_strength,
+                    chapter_title=cand.chapter_title,
                 )
             )
 
         # Append remaining candidates evaluated via heuristic
         for cand in candidates[5:]:
             s = evaluate_heuristic(cand.text, cand.duration)
+            fused_s = _fuse_candidate_score(s, cand.heatmap_score, cand.hook_strength)
             scored.append(
                 ClipCandidate(
                     start=cand.start,
                     end=cand.end,
                     text=cand.text,
-                    score=round(s, 4),
+                    score=fused_s,
                     reason="Heuristic fallback",
+                    heatmap_score=cand.heatmap_score,
+                    hook_strength=cand.hook_strength,
+                    chapter_title=cand.chapter_title,
                 )
             )
 
@@ -193,6 +230,21 @@ class SemIfDecider(Decider):
         # If candidates are unscored (all 0.0), score them first
         if all(c.score == 0.0 for c in candidates):
             candidates = self.score_candidates(candidates)
+        else:
+            # Ensure heatmap/hook fusion is applied if candidates have pre-populated semif scores + heatmap/hook
+            candidates = [
+                ClipCandidate(
+                    start=c.start,
+                    end=c.end,
+                    text=c.text,
+                    score=_fuse_candidate_score(c.score, c.heatmap_score, c.hook_strength),
+                    reason=c.reason,
+                    heatmap_score=c.heatmap_score,
+                    hook_strength=c.hook_strength,
+                    chapter_title=c.chapter_title,
+                )
+                for c in candidates
+            ]
 
         chosen_candidates = select_non_overlapping_candidates(candidates, count=count)
         selections: list[ClipSelection] = []
@@ -207,8 +259,13 @@ class SemIfDecider(Decider):
             # 2. Generate hook text
             hook_text = self.generate_hook(cand.text)
 
-            # 3. Generate title
+            # 3. Generate title & 3 distinct viral title variants
             title = self.generate_title(cand.text)
+            title_variants = self.generate_title_variants(
+                cand.text,
+                base_title=title,
+                chapter_title=cand.chapter_title,
+            )
 
             selections.append(
                 ClipSelection(
@@ -220,6 +277,7 @@ class SemIfDecider(Decider):
                     background_style=bg_style,
                     hook_text=hook_text,
                     title=title,
+                    title_variants=title_variants,
                 )
             )
 
@@ -322,6 +380,39 @@ class SemIfDecider(Decider):
         first_chunk = " ".join(words[:6])
         clean_chunk = re.sub(r"[^\w\s]", "", first_chunk).title()
         return f"{clean_chunk[:45]} #Shorts"
+
+    def generate_title_variants(
+        self,
+        transcript_text: str,
+        base_title: str | None = None,
+        chapter_title: str | None = None,
+    ) -> list[str]:
+        """Generate 3 distinct viral title angles: Curiosity, Contrarian, and Direct Punch."""
+        words = [
+            re.sub(r"[^\w]", "", w)
+            for w in transcript_text.strip().split()
+            if re.sub(r"[^\w]", "", w)
+        ]
+        topic = (
+            chapter_title.strip()
+            if chapter_title and chapter_title.strip()
+            else (" ".join(words[:4]).title() if words else "This Secret")
+        )
+        topic_short = topic[:24].strip()
+
+        curiosity = f"Why Does {topic_short} Matter? #Shorts"
+        contrarian = f"The Truth About {topic_short} #Shorts"
+        direct_punch = (
+            base_title.strip()
+            if base_title and base_title.strip()
+            else f"{topic_short}: What To Know #Shorts"
+        )
+        if not direct_punch.endswith("#Shorts"):
+            direct_punch = f"{direct_punch[:48].strip()} #Shorts"
+        if direct_punch in {curiosity, contrarian}:
+            direct_punch = f"{topic_short} Explained Fast #Shorts"
+
+        return [curiosity[:60], contrarian[:60], direct_punch[:60]]
 
     def generate_hook(self, transcript_text: str) -> str:
         """Generate a bold 3-second hook question or headline."""

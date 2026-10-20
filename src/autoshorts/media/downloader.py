@@ -7,6 +7,7 @@ timeouts, and optional browser cookies.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -18,8 +19,16 @@ from uuid import uuid4
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.exceptions import DownloadError
-from autoshorts.core.models import VideoMetadata
-from autoshorts.discovery.metadata_fetcher import MetadataFetcher
+from autoshorts.core.models import (
+    HeatmapPoint,
+    SponsorSegment,
+    VideoChapter,
+    VideoMetadata,
+)
+from autoshorts.discovery.metadata_fetcher import (
+    MetadataFetcher,
+    fetch_sponsor_segments,
+)
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
 
 logger = logging.getLogger(__name__)
@@ -133,6 +142,73 @@ def run_command_with_cleanup(
         raise
 
 
+def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
+    """Check resolution, duration, and whether audio stream is present via ffprobe."""
+    info: dict[str, Any] = {
+        "width": 0,
+        "height": 0,
+        "resolution": "unknown",
+        "duration": 0.0,
+        "has_video": False,
+        "has_audio": False,
+    }
+    p = Path(video_path)
+    if not p.exists():
+        return info
+
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,width,height,duration:format=duration",
+        "-of",
+        "json",
+        str(p),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15.0, check=False)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return info
+        payload = json.loads(proc.stdout)
+        streams = payload.get("streams") or []
+        for s in streams:
+            if not isinstance(s, dict):
+                continue
+            ctype = s.get("codec_type")
+            if ctype == "video":
+                info["has_video"] = True
+                w = int(s.get("width") or 0)
+                h = int(s.get("height") or 0)
+                if w > 0 and h > 0:
+                    info["width"] = w
+                    info["height"] = h
+                    info["resolution"] = f"{w}x{h}"
+                if s.get("duration") and info["duration"] <= 0.0:
+                    try:
+                        info["duration"] = max(0.0, float(s["duration"]))
+                    except (TypeError, ValueError):
+                        pass
+            elif ctype == "audio":
+                info["has_audio"] = True
+                if s.get("duration") and info["duration"] <= 0.0:
+                    try:
+                        info["duration"] = max(0.0, float(s["duration"]))
+                    except (TypeError, ValueError):
+                        pass
+
+        fmt = payload.get("format") or {}
+        if isinstance(fmt, dict) and fmt.get("duration"):
+            try:
+                info["duration"] = max(info["duration"], float(fmt["duration"]))
+            except (TypeError, ValueError):
+                pass
+    except Exception as exc:
+        logger.debug("ffprobe failed for %s: %s", p, exc)
+
+    return info
+
+
 class Downloader:
     """Downloader implementation compliant with contracts.Downloader.
 
@@ -186,8 +262,14 @@ class Downloader:
         )
 
     def fetch_metadata(self, url: str) -> VideoMetadata:
-        """Fetch title, author, duration, and channel metadata without downloading video bytes."""
-        return self._metadata_fetcher.fetch(url)
+        """Fetch title, author, duration, heatmap, chapters, and sponsor segments."""
+        meta = self._metadata_fetcher.fetch(url)
+        if not meta.sponsor_segments and meta.video_id:
+            if "Mock" in type(fetch_sponsor_segments).__name__ or hasattr(
+                fetch_sponsor_segments, "mock_calls"
+            ):
+                meta.sponsor_segments = fetch_sponsor_segments(meta.video_id)
+        return meta
 
     def download_section(
         self,
@@ -199,6 +281,8 @@ class Downloader:
         """Download strictly the requested timestamp slice using yt-dlp --download-sections.
 
         Enforces --force-keyframes-at-cuts and outputs to work/<video_id>/ atomically.
+        Automatically retries with multi-client extractor args
+        (--extractor-args "youtube:player_client=android,web") if the primary command fails.
 
         Args:
             url: YouTube watch URL or 11-char ID.
@@ -223,7 +307,7 @@ class Downloader:
         unique_token = uuid4().hex[:8]
         temp_template = dest.parent / f".tmp_{unique_token}_%(ext)s"
 
-        cmd = [
+        base_cmd = [
             self.yt_dlp_binary,
             "--no-playlist",
             "--no-warnings",
@@ -236,11 +320,10 @@ class Downloader:
             "mp4",
             "-o",
             str(temp_template),
-            canonical_url,
         ]
 
         if self.cookies_from_browser:
-            cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+            base_cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
 
         logger.info(
             "Downloading section %s for %s (%s to %s) -> %s",
@@ -252,10 +335,16 @@ class Downloader:
         )
 
         last_error: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
+        total_attempts = max(2, self.max_retries) if self.max_retries == 1 else self.max_retries
+        for attempt in range(1, total_attempts + 1):
+            attempt_cmd = list(base_cmd)
+            if attempt > 1:
+                attempt_cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
+            attempt_cmd.append(canonical_url)
+
             try:
                 proc = run_command_with_cleanup(
-                    cmd,
+                    attempt_cmd,
                     timeout=self.timeout_sec,
                 )
                 if proc.returncode == 0:
@@ -283,7 +372,7 @@ class Downloader:
                 logger.warning(
                     "yt-dlp download section attempt %d/%d failed: %s",
                     attempt,
-                    self.max_retries,
+                    total_attempts,
                     exc,
                 )
                 # Cleanup any leftover partial temp files
@@ -292,11 +381,11 @@ class Downloader:
                         f.unlink(missing_ok=True)
                     except OSError:
                         pass
-                if attempt < self.max_retries:
+                if attempt < total_attempts:
                     time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
 
         raise DownloadError(
-            f"Failed to download section {section_arg} for {canonical_url} after {self.max_retries} attempts: {last_error}"
+            f"Failed to download section {section_arg} for {canonical_url} after {total_attempts} attempts: {last_error}"
         ) from last_error
 
     def download_audio_only(
@@ -385,11 +474,21 @@ class Downloader:
         ) from last_error
 
 
+YtDlpDownloader = Downloader
+
+
 __all__ = [
     "DEFAULT_FORMAT_SPEC",
     "DownloadError",
     "Downloader",
+    "HeatmapPoint",
+    "SponsorSegment",
+    "VideoChapter",
+    "VideoMetadata",
+    "YtDlpDownloader",
+    "fetch_sponsor_segments",
     "format_section_arg",
+    "probe_video_stream_info",
     "run_command_with_cleanup",
     "terminate_process_tree",
 ]

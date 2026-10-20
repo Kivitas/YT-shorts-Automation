@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import get_log_stream_handler
-from autoshorts.core.models import EditDecisionList, Job, JobStatus
+from autoshorts.core.models import ClipSelection, EditDecisionList, Job, JobStatus
 from autoshorts.core.paths import get_assets_dir, get_output_dir
 from autoshorts.core.settings_manager import (
     apply_settings_update,
@@ -110,6 +110,33 @@ def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
     data["full_description"] = full_description
     data["hashtags"] = "#Shorts #Podcasts #Education"
     return data
+
+
+def generate_title_variants(
+    hook: str,
+    channel: str = "AutoShorts",
+    title: str = "",
+) -> list[str]:
+    """Generate 3 A/B title variants for a Short candidate clip."""
+    try:
+        from autoshorts.uploader import description_builder as _db
+
+        if hasattr(_db, "generate_title_variants"):
+            res = _db.generate_title_variants(hook=hook, channel=channel, title=title)
+            if isinstance(res, list) and len(res) >= 3:
+                return res[:3]
+    except Exception:
+        pass
+
+    base_hook = (hook or title or "Must Watch Insight").strip()
+    v1 = build_short_title(hook=base_hook, channel=channel, title=title)
+    v2_hook = (
+        f"Why {base_hook}" if not base_hook.lower().startswith("why") else f"The Truth: {base_hook}"
+    )
+    v2 = build_short_title(hook=v2_hook, channel=channel, title=title)
+    v3_hook = f"{base_hook} (Watch Until The End)"
+    v3 = build_short_title(hook=v3_hook, channel=channel, title=title)
+    return [v1, v2, v3]
 
 
 # -----------------------------------------------------------------------------
@@ -374,6 +401,9 @@ class JobSubmitRequest(BaseModel):
     related_video_url: str | None = Field(default=None)
     publish_at: str | None = Field(default=None)
     channel_profile_id: str | None = Field(default=None)
+    crop_focus: str | None = Field(default=None)
+    auto_trim_silence: bool | None = Field(default=None)
+    skip_sponsors: bool | None = Field(default=None)
 
 
 SubmitJobsRequest = JobSubmitRequest
@@ -410,6 +440,9 @@ class JobPatchRequest(BaseModel):
     publish_at: str | None = Field(default=None)
     channel_profile_id: str | None = Field(default=None)
     privacy_status: str | None = Field(default=None)
+    crop_focus: str | None = Field(default=None)
+    auto_trim_silence: bool | None = Field(default=None)
+    skip_sponsors: bool | None = Field(default=None)
 
 
 class TestProviderRequest(BaseModel):
@@ -730,6 +763,9 @@ def create_app(
                 "publish_at",
                 "channel_profile_id",
                 "privacy_status",
+                "crop_focus",
+                "auto_trim_silence",
+                "skip_sponsors",
             ):
                 val = getattr(req, field_name, None)
                 if val is not None:
@@ -840,6 +876,9 @@ def create_app(
             "publish_at",
             "channel_profile_id",
             "privacy_status",
+            "crop_focus",
+            "auto_trim_silence",
+            "skip_sponsors",
         ):
             val = getattr(req, field_name, None)
             if val is not None:
@@ -1034,6 +1073,167 @@ def create_app(
         except Exception as e:
             logger.error("Fast re-render failed for job %s: %s", job_id, e)
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.get("/api/jobs/{job_id}/candidates")
+    async def get_job_candidates(job_id: str) -> dict[str, Any]:
+        """Return candidate windows, selected clips, and 3 A/B title variants for a job."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        channel = job.video_metadata.channel if job.video_metadata else "AutoShorts"
+        v_title = (
+            job.video_metadata.title
+            if job.video_metadata
+            else (job.custom_instructions or "AutoShort Clip")
+        )
+
+        candidates_out: list[dict[str, Any]] = []
+        for idx, cand in enumerate(job.candidate_windows):
+            c_dict = cand.model_dump()
+            c_dict["index"] = idx
+            c_dict["duration"] = cand.duration
+            c_dict.setdefault("heatmap_score", getattr(cand, "heatmap_score", 0.0))
+            c_dict.setdefault(
+                "hook_strength",
+                getattr(cand, "hook_strength", round(min(1.0, cand.score * 1.05), 2)),
+            )
+            c_dict.setdefault("chapter_title", getattr(cand, "chapter_title", None))
+            hook_seed = cand.reason or (cand.text[:48].strip() if cand.text else "Must Watch")
+            c_dict["title_variants"] = generate_title_variants(
+                hook=hook_seed, channel=channel, title=v_title
+            )
+            candidates_out.append(c_dict)
+
+        selected_out: list[dict[str, Any]] = []
+        for s_idx, sel in enumerate(job.selected_clips):
+            s_dict = sel.model_dump()
+            s_dict.setdefault("heatmap_score", getattr(sel.candidate, "heatmap_score", 0.0))
+            s_dict.setdefault(
+                "hook_strength",
+                getattr(
+                    sel.candidate,
+                    "hook_strength",
+                    round(min(1.0, sel.candidate.score * 1.05), 2),
+                ),
+            )
+            s_dict.setdefault("chapter_title", getattr(sel.candidate, "chapter_title", None))
+            hook_seed = (
+                sel.hook_text
+                or sel.title
+                or sel.candidate.reason
+                or (sel.candidate.text[:48].strip() if sel.candidate.text else "Must Watch")
+            )
+            s_dict["title_variants"] = generate_title_variants(
+                hook=hook_seed, channel=channel, title=v_title
+            )
+            selected_out.append(s_dict)
+
+        primary_hook = (
+            (job.selected_clips[0].hook_text or job.selected_clips[0].title)
+            if job.selected_clips
+            else (job.edl.recommended_hook if job.edl else v_title)
+        )
+        top_variants = generate_title_variants(
+            hook=primary_hook or "Must Watch", channel=channel, title=v_title
+        )
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "candidates": candidates_out,
+            "selected_clips": selected_out,
+            "title_variants": top_variants,
+        }
+
+    @app.post("/api/jobs/{job_id}/select-clip")
+    async def select_job_clip(job_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        """Switch active SelectedClip to another candidate window or apply an A/B title variant."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        cand_idx = req.get("candidate_index")
+        if cand_idx is None:
+            cand_idx = req.get("clip_index")
+
+        if cand_idx is not None:
+            try:
+                idx = int(cand_idx)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid candidate_index: {e}") from e
+
+            if idx < 0 or idx >= len(job.candidate_windows):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"candidate_index {idx} out of range (0..{len(job.candidate_windows) - 1})",
+                )
+
+            chosen_cand = job.candidate_windows[idx]
+            target_dur = max(10.0, min(60.0, chosen_cand.duration or 45.0))
+            if job.selected_clips:
+                job.selected_clips[0].candidate = chosen_cand
+                job.selected_clips[0].clip_index = idx
+                job.selected_clips[0].target_duration = target_dur
+            else:
+                job.selected_clips = [
+                    ClipSelection(
+                        candidate=chosen_cand,
+                        clip_index=idx,
+                        target_duration=target_dur,
+                    )
+                ]
+
+        chosen_title = req.get("title") or req.get("title_variant") or req.get("clip_title")
+        if chosen_title is not None:
+            title_str = str(chosen_title)
+            if job.selected_clips:
+                job.selected_clips[0].title = title_str
+            if job.edl:
+                job.edl.recommended_title = title_str[:60]
+
+        chosen_hook = req.get("hook_text")
+        if chosen_hook is not None:
+            hook_str = str(chosen_hook)
+            if job.selected_clips:
+                job.selected_clips[0].hook_text = hook_str
+            if job.edl:
+                job.edl.recommended_hook = hook_str[:100]
+
+        job.updated_at = datetime.now(UTC)
+        state_mgr.save_job(job)
+
+        current_cfg = pipe.config if hasattr(pipe, "config") else cfg
+        return {
+            "success": True,
+            "job_id": job_id,
+            "selected_clip": job.selected_clips[0].model_dump() if job.selected_clips else None,
+            "job": enrich_job_dict(job, current_cfg),
+        }
+
+    @app.post("/api/jobs/{job_id}/auto-trim-silence")
+    async def auto_trim_silence_endpoint(
+        job_id: str,
+        req: dict[str, Any] | None = None,
+        min_gap_sec: float = 0.48,
+    ) -> dict[str, Any]:
+        """Compute dead-air jump cuts from aligned_words.json and update job EDL."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        gap_val = min_gap_sec
+        if req and "min_gap_sec" in req and req["min_gap_sec"] is not None:
+            try:
+                gap_val = float(req["min_gap_sec"])
+            except (ValueError, TypeError):
+                pass
+
+        res = await asyncio.to_thread(pipe.auto_trim_job_silence, job_id, min_gap_sec=gap_val)
+        return {
+            "success": True,
+            **res,
+        }
 
     # -------------------------------------------------------------------------
     # 1-Click Studio Profiles & Multi-Channel Endpoints
@@ -1978,6 +2178,48 @@ def create_app(
         }
         return {"success": True, "job_id": job_id, "style": recipe}
 
+    @app.get("/api/analytics/insights")
+    async def get_analytics_insights() -> dict[str, Any]:
+        """Return viral outlier multipliers and best UTC publish windows."""
+        from autoshorts.analytics.attribution import PerformanceAttributionEngine
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        yt_configured = is_youtube_api_configured(active_cfg)
+        attribution = PerformanceAttributionEngine(state_manager=state_mgr)
+        return {
+            "success": True,
+            "api_configured": yt_configured,
+            "outliers": attribution.compute_outlier_scores(),
+            "best_publish_windows": attribution.get_best_publish_windows(),
+        }
+
+    @app.post("/api/analytics/auto-tune")
+    async def auto_tune_analytics_endpoint() -> dict[str, Any]:
+        """Apply empirical winning recipe parameters onto active pipeline config."""
+        from autoshorts.analytics.attribution import PerformanceAttributionEngine
+
+        attribution = PerformanceAttributionEngine(state_manager=state_mgr)
+        res = attribution.auto_tune_config_from_winners(pipe.config)
+        return {
+            "success": True,
+            **res,
+        }
+
+    @app.get("/api/analytics/export")
+    async def export_analytics_endpoint(format: str = "json") -> Response:
+        """Export recorded video analytics telemetry as CSV or JSON."""
+        from autoshorts.analytics.engine import AnalyticsEngine
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
+        content, media_type = engine.export_telemetry(fmt=format)
+        ext = "csv" if format.strip().lower() == "csv" else "json"
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="autoshorts_telemetry.{ext}"'},
+        )
+
     # -------------------------------------------------------------------------
     # Built-In Viral Research Agent API
     # -------------------------------------------------------------------------
@@ -2315,6 +2557,144 @@ def create_app(
             except Exception as e:
                 logger.debug("Failed fetching topics: %s", e)
         return {"success": True, "topics": past_topics}
+
+    # -------------------------------------------------------------------------
+    # Offline Resilience, Credential Guardian & Editing Workflow Optimizer APIs
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/system/connectivity")
+    async def get_system_connectivity(recover_slots: bool = True) -> dict[str, Any]:
+        """Probe PC internet and YouTube reachability, recovering overdue offline slots."""
+        from autoshorts.core.resilience import OfflineRecoveryManager, probe_connectivity
+
+        status = await asyncio.to_thread(probe_connectivity)
+        recovered: list[dict[str, Any]] = []
+        if recover_slots and status.internet_online:
+            min_gap = getattr(getattr(pipe.config, "scheduler", None), "min_gap_minutes", 12)
+            recovered = OfflineRecoveryManager.recover_overdue_scheduled_slots(
+                state_mgr, min_gap_minutes=min_gap
+            )
+        return {
+            "success": True,
+            "connectivity": status.model_dump(),
+            "recovered_slots_count": len(recovered),
+            "recovered_slots": recovered,
+        }
+
+    @app.get("/api/settings/credentials-health")
+    async def get_credentials_health() -> dict[str, Any]:
+        """Audit all configured API keys and OAuth tokens for expiration or revocation."""
+        from autoshorts.core.credential_guardian import audit_all_credentials
+
+        reports = audit_all_credentials(pipe.config)
+        return {
+            "success": True,
+            "credentials": {k: v.model_dump() for k, v in reports.items()},
+        }
+
+    def _resolve_job_work_dir(job_id: str) -> Path:
+        from autoshorts.core.paths import get_work_dir
+
+        base_work = (
+            Path(pipe.config.app.work_dir)
+            if hasattr(pipe, "config") and hasattr(pipe.config, "app")
+            else get_work_dir()
+        )
+        return base_work / job_id
+
+    def _get_job_words_list(job_id: str) -> tuple[list[dict[str, Any]], str]:
+        job_work = _resolve_job_work_dir(job_id)
+        aligned_cache = job_work / "aligned_words.json"
+        if aligned_cache.is_file():
+            try:
+                return json.loads(aligned_cache.read_text(encoding="utf-8")), "aligned_words"
+            except Exception as e:
+                logger.debug("Failed reading aligned_words.json: %s", e)
+        return [], "none"
+
+    @app.get("/api/jobs/{job_id}/pacing-audit")
+    async def get_job_pacing_audit(job_id: str) -> dict[str, Any]:
+        """Analyze word-per-minute rhythm, silence ratio, and retention pacing score."""
+        from autoshorts.core.models import EditDecisionList
+        from autoshorts.edit_planner.workflow_optimizer import analyze_edit_rhythm
+
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        words, _ = _get_job_words_list(job_id)
+        edl = job.edl or EditDecisionList()
+        duration = 40.0
+        if job.selected_clips:
+            duration = max(1.0, job.selected_clips[0].duration)
+        report = analyze_edit_rhythm(words, edl, duration)
+        return {"success": True, "job_id": job_id, "audit": report.model_dump()}
+
+    @app.post("/api/jobs/{job_id}/optimize-edl")
+    async def post_optimize_job_edl(job_id: str) -> dict[str, Any]:
+        """Auto-optimize EDL for retention (cut dead air + inject zoom punches + snapshot)."""
+        from autoshorts.core.models import EditDecisionList
+        from autoshorts.edit_planner.workflow_optimizer import (
+            optimize_edl_for_retention,
+            save_workflow_snapshot,
+        )
+
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        words, _ = _get_job_words_list(job_id)
+        edl = job.edl or EditDecisionList()
+        duration = 40.0
+        if job.selected_clips:
+            duration = max(1.0, job.selected_clips[0].duration)
+
+        job_work = _resolve_job_work_dir(job_id)
+        snap = save_workflow_snapshot(job_work, job_id, edl, words, label="pre_optimize")
+        optimized_edl, report = optimize_edl_for_retention(words, edl, duration)
+        job.edl = optimized_edl
+        state_mgr.save_job(job)
+        return {
+            "success": True,
+            "job_id": job_id,
+            "snapshot_id": snap.get("snapshot_id"),
+            "edl": optimized_edl.model_dump(),
+            "audit": report.model_dump(),
+        }
+
+    @app.get("/api/jobs/{job_id}/snapshots")
+    async def get_job_snapshots(job_id: str) -> dict[str, Any]:
+        """List saved EDL & transcript snapshots for instant rollback."""
+        from autoshorts.edit_planner.workflow_optimizer import list_workflow_snapshots
+
+        job_work = _resolve_job_work_dir(job_id)
+        return {
+            "success": True,
+            "job_id": job_id,
+            "snapshots": list_workflow_snapshots(job_work),
+        }
+
+    @app.post("/api/jobs/{job_id}/snapshots/restore")
+    async def restore_job_snapshot(job_id: str, request: Request) -> dict[str, Any]:
+        """Restore a job's EDL and aligned transcript from a saved snapshot."""
+        from autoshorts.edit_planner.workflow_optimizer import restore_workflow_snapshot
+
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        body = await request.json()
+        snapshot_id = str(body.get("snapshot_id", "")).strip()
+        if not snapshot_id:
+            raise HTTPException(status_code=400, detail="snapshot_id is required")
+
+        job_work = _resolve_job_work_dir(job_id)
+        restored = restore_workflow_snapshot(job_work, snapshot_id)
+        job.edl = restored["edl"]
+        state_mgr.save_job(job)
+        return {
+            "success": True,
+            "job_id": job_id,
+            "snapshot_id": snapshot_id,
+            "edl": job.edl.model_dump(),
+        }
 
     return app
 

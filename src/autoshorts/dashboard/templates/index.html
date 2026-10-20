@@ -486,13 +486,37 @@
                   </select>
                 </div>
 
-                <div class="control-group" style="grid-column: span 2;">
+                <div class="control-group">
                   <label for="dopamine-select">Dopamine Level</label>
                   <select id="dopamine-select">
                     <option value="low">Low (Clean, minimal)</option>
                     <option value="medium" selected>Medium (Punch-in, Pop ASS)</option>
                     <option value="high">High (SFX, Zoom, High Energy)</option>
                   </select>
+                </div>
+
+                <div class="control-group">
+                  <label for="crop-focus-select">Speaker Crop Focus</label>
+                  <select id="crop-focus-select" onchange="updatePhoneCanvasPreview()">
+                    <option value="center" selected>Center Frame</option>
+                    <option value="left">Left Speaker Focus</option>
+                    <option value="right">Right Speaker Focus</option>
+                    <option value="dynamic">Dynamic Motion Pan</option>
+                  </select>
+                </div>
+
+                <div class="control-group smart-clipping-group" style="grid-column: span 2;">
+                  <label>Smart Clipping &amp; Pacing</label>
+                  <div class="smart-clipping-checks">
+                    <label class="clay-checkbox-row" for="skip-sponsors-toggle">
+                      <input type="checkbox" id="skip-sponsors-toggle" checked>
+                      <span>Skip SponsorBlock &amp; Intro/Outro Segments</span>
+                    </label>
+                    <label class="clay-checkbox-row" for="auto-trim-silence-toggle">
+                      <input type="checkbox" id="auto-trim-silence-toggle" checked>
+                      <span>Auto-Cut Dead Air Silences (&gt;0.48s)</span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </details>
@@ -1293,6 +1317,15 @@
               <span class="sync-dot live"></span>
               <span id="analytics-last-synced">Last synced: Not yet synced</span>
             </div>
+            <button id="btn-analytics-autotune" type="button" class="btn btn-primary-gradient btn-sm" onclick="autoTuneStudioFromWinners()" title="Apply empirical winning layout, caption preset &amp; background to Studio">
+              ⚡ Auto-Tune Studio from Winners
+            </button>
+            <button id="btn-export-csv" type="button" class="btn btn-secondary btn-sm" onclick="exportAnalyticsData('csv')" title="Download published Shorts telemetry as CSV">
+              📥 Export CSV
+            </button>
+            <button id="btn-export-json" type="button" class="btn btn-secondary btn-sm" onclick="exportAnalyticsData('json')" title="Download published Shorts telemetry as JSON">
+              📥 Export JSON
+            </button>
             <button id="analytics-sync-btn" type="button" class="btn btn-primary btn-sm" onclick="syncLiveAnalytics()">
               <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
               <span>Sync Live Analytics</span>
@@ -2200,12 +2233,30 @@
             </div>
           </div>
 
+          <!-- Candidate Clips & Heatmap Inspector -->
+          <div class="editor-section-card">
+            <div class="section-card-title">
+              <span>🎯 Candidate Clips &amp; Heatmap Inspector</span>
+              <span class="hint">Top scored SemIf windows • 1-Click Switch Clip</span>
+            </div>
+            <div id="edit-job-candidates-list" class="candidates-inspector-strip">
+              <div class="edl-empty">Loading candidate windows &amp; heatmap telemetry...</div>
+            </div>
+          </div>
+
           <!-- Titles & Hooks -->
           <div class="editor-section-card">
             <div class="section-card-title">Titles, Hooks &amp; Branding Overrides</div>
             <div class="control-group">
               <label for="edit-clip-title">Short Title</label>
-              <input type="text" id="edit-clip-title" placeholder="Catchy title...">
+              <input type="text" id="edit-clip-title" placeholder="Catchy title..." oninput="const jt=document.getElementById('edit-job-title'); if(jt) jt.value=this.value;">
+              <input type="hidden" id="edit-job-title">
+            </div>
+            <div class="control-group">
+              <label>🔥 A/B Viral Title Variants (1-Click Apply)</label>
+              <div id="edit-job-title-variants" class="title-variants-picker">
+                <span class="variants-empty">Loading A/B title variants...</span>
+              </div>
             </div>
             <div class="control-group">
               <label for="edit-hook-text">Opening Hook Text</label>
@@ -2221,6 +2272,16 @@
                   <option value="full_blur_bg">Blurred 16:9 Backdrop (Zero Gameplay)</option>
                   <option value="full_center_crop">Full 9:16 Center Crop</option>
                   <option value="pip_gameplay">PiP Gameplay Box (Reaction Style)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="edit-job-crop-focus">Speaker Crop Focus</label>
+                <select id="edit-job-crop-focus">
+                  <option value="center" selected>Center Frame</option>
+                  <option value="left">Left Speaker Focus</option>
+                  <option value="right">Right Speaker Focus</option>
+                  <option value="dynamic">Dynamic Motion Pan</option>
                 </select>
               </div>
 
@@ -2303,7 +2364,12 @@
             <div class="section-card-title">🎬 Edit Decision List (EDL) Jump Cuts &amp; Punch-Ins</div>
             <div class="edl-inspection-grid">
               <div class="edl-box">
-                <div class="edl-box-title">⚡ Excised Jump Cuts (Dead Air)</div>
+                <div class="edl-box-header">
+                  <div class="edl-box-title">⚡ Excised Jump Cuts (Dead Air)</div>
+                  <button type="button" id="btn-auto-trim-silence" class="btn btn-secondary btn-xs clay-btn-tactile" onclick="autoTrimJobSilence()">
+                    ✂️ Auto-Cut Dead Air Silences
+                  </button>
+                </div>
                 <div id="edit-edl-cuts" class="edl-list-scroll">
                   <div class="edl-empty">No jump cuts generated yet.</div>
                 </div>

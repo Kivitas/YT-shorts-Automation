@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import autoshorts.decision.window_slicer as _window_slicer
 from autoshorts.cleanup.safety_cleaner import SafetyCleaner
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.contracts import (
@@ -43,6 +44,7 @@ from autoshorts.core.exceptions import (
 from autoshorts.core.models import (
     Job,
     JobStatus,
+    JumpCut,
     UploadResult,
     VideoMetadata,
 )
@@ -51,6 +53,10 @@ from autoshorts.core.providers import get_provider
 from autoshorts.core.state_manager import StateManager
 from autoshorts.decision.orchestrator import SemIfDecider
 from autoshorts.decision.window_slicer import slice_transcript_windows
+
+generate_candidate_windows = getattr(
+    _window_slicer, "generate_candidate_windows", slice_transcript_windows
+)
 from autoshorts.discovery.url_validator import ParsedLink, parse_links_input
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
@@ -517,13 +523,38 @@ class ShortsPipeline:
                     f"Cannot slice windows: No cached transcript found for job {job.id}"
                 )
 
-            candidates = slice_transcript_windows(
-                transcript=segments,
-                window_duration_seconds=float(self.config.job_defaults.max_duration_seconds),
-                stride_seconds=float(self.config.job_defaults.window_stride_seconds),
-                min_duration_seconds=float(self.config.job_defaults.min_duration_seconds),
-                max_duration_seconds=float(self.config.job_defaults.max_duration_seconds),
-            )
+            slicer_fn = generate_candidate_windows
+            if slicer_fn is slice_transcript_windows and hasattr(
+                _window_slicer, "generate_candidate_windows"
+            ):
+                slicer_fn = _window_slicer.generate_candidate_windows
+
+            slicer_kwargs: dict[str, Any] = {
+                "transcript": segments,
+                "window_duration_seconds": float(self.config.job_defaults.max_duration_seconds),
+                "stride_seconds": float(self.config.job_defaults.window_stride_seconds),
+                "min_duration_seconds": float(self.config.job_defaults.min_duration_seconds),
+                "max_duration_seconds": float(self.config.job_defaults.max_duration_seconds),
+            }
+            meta = getattr(job, "video_metadata", None)
+            extra_slicer_kwargs: dict[str, Any] = {
+                "heatmap": getattr(meta, "heatmap", None) if meta else None,
+                "chapters": getattr(meta, "chapters", None) if meta else None,
+                "sponsor_segments": getattr(meta, "sponsor_segments", None) if meta else None,
+                "skip_sponsors": getattr(job, "skip_sponsors", True),
+            }
+            try:
+                s_sig = inspect.signature(slicer_fn)
+                has_varkw = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in s_sig.parameters.values()
+                )
+                for k, v in extra_slicer_kwargs.items():
+                    if has_varkw or k in s_sig.parameters:
+                        slicer_kwargs[k] = v
+            except Exception:
+                pass
+
+            candidates = slicer_fn(**slicer_kwargs)
 
             if not candidates:
                 raise AutoShortsError(
@@ -852,6 +883,7 @@ class ShortsPipeline:
             voice_boost = getattr(audio_cfg, "voice_boost", True)
             target_lufs = getattr(audio_cfg, "target_lufs", -14.0)
             bg_music_volume = getattr(audio_cfg, "bg_music_volume", 0.20)
+            crop_focus = getattr(job, "crop_focus", None) or "center"
 
             comp_kwargs: dict[str, Any] = {
                 "job_id": job.id,
@@ -873,6 +905,7 @@ class ShortsPipeline:
                 "voice_boost": voice_boost,
                 "target_lufs": target_lufs,
                 "bg_music_volume": bg_music_volume,
+                "crop_focus": crop_focus,
             }
             try:
                 c_sig = inspect.signature(self.compositor.compose)
@@ -886,8 +919,46 @@ class ShortsPipeline:
                 comp_kwargs.update(extra_comp)
 
             # Run FFmpeg master compositing
-            self.compositor.compose(**comp_kwargs)
-            job.rendered_video_path = str(master_path)
+            composed_res = self.compositor.compose(**comp_kwargs)
+            final_path = (
+                Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
+            )
+            if not final_path.is_file() and master_path.is_file():
+                final_path = master_path
+            job.rendered_video_path = str(final_path)
+
+            # Optional auto-thumbnail extraction
+            if hasattr(self.compositor, "extract_thumbnail") and final_path.is_file():
+                try:
+                    work_dir = get_work_dir() / job.id
+                    work_dir.mkdir(parents=True, exist_ok=True)
+                    thumb_path = work_dir / f"thumb_{job.id}.jpg"
+                    thumb_ts = (
+                        job.edl.recommended_thumbnail_timestamp
+                        if (
+                            job.edl and getattr(job.edl, "recommended_thumbnail_timestamp", 0.0) > 0
+                        )
+                        else 1.0
+                    )
+                    t_sig = inspect.signature(self.compositor.extract_thumbnail)
+                    if "timestamp_sec" in t_sig.parameters:
+                        self.compositor.extract_thumbnail(
+                            final_path, thumb_path, timestamp_sec=thumb_ts
+                        )
+                    elif "timestamp" in t_sig.parameters:
+                        self.compositor.extract_thumbnail(
+                            final_path, thumb_path, timestamp=thumb_ts
+                        )
+                    else:
+                        self.compositor.extract_thumbnail(final_path, thumb_path)
+                    if job.selected_clips:
+                        try:
+                            job.selected_clips[0].thumbnail_path = str(thumb_path)
+                        except (ValueError, TypeError, AttributeError):
+                            if hasattr(job.selected_clips[0], "__dict__"):
+                                job.selected_clips[0].__dict__["thumbnail_path"] = str(thumb_path)
+                except Exception as t_err:
+                    logger.warning("Job %s: Auto-thumbnail extraction failed: %s", job.id, t_err)
 
             # Optional low-resolution fast preview
             if self.config.media.generate_lowres_preview:
@@ -1030,6 +1101,76 @@ class ShortsPipeline:
         self.state_manager.save_job(job)
         logger.info("Job %s fast re-render complete; ready for review.", job.id)
         return job
+
+    def auto_trim_job_silence(self, job_id: str, min_gap_sec: float = 0.48) -> dict[str, Any]:
+        """Compute tight JumpCut ranges for silences >= min_gap_sec from aligned_words.json."""
+        job = self.state_manager.get_job(job_id)
+        if not job:
+            raise AutoShortsError(f"Job {job_id} not found in state database")
+
+        work_dir = get_work_dir() / job_id
+        aligned_words_cache = work_dir / "aligned_words.json"
+        words: list[dict[str, Any]] = []
+        if aligned_words_cache.is_file():
+            try:
+                loaded = json.loads(aligned_words_cache.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    words = loaded
+            except Exception as e:
+                logger.debug("Failed reading aligned_words.json for job %s: %s", job_id, e)
+
+        cuts: list[JumpCut] = []
+        detector_fn = None
+        for mod_name in (
+            "autoshorts.edit_planner.multimodal_planner",
+            "autoshorts.edit_planner.edl_schema",
+            "autoshorts.media.compositor",
+        ):
+            try:
+                mod = __import__(mod_name, fromlist=["detect_dead_air_cuts"])
+                if hasattr(mod, "detect_dead_air_cuts"):
+                    detector_fn = mod.detect_dead_air_cuts
+                    break
+            except Exception:
+                pass
+
+        if detector_fn is not None and words:
+            try:
+                raw_cuts = detector_fn(words, min_gap_sec=min_gap_sec)
+                for rc in raw_cuts:
+                    if isinstance(rc, JumpCut):
+                        cuts.append(rc)
+                    elif isinstance(rc, dict):
+                        cuts.append(JumpCut(**rc))
+            except Exception as d_err:
+                logger.debug("detect_dead_air_cuts failed, using fallback gap detector: %s", d_err)
+                cuts = []
+
+        if not cuts and len(words) >= 2:
+            sorted_words = sorted(words, key=lambda w: float(w.get("start", 0.0)))
+            for idx in range(len(sorted_words) - 1):
+                prev_end = float(sorted_words[idx].get("end", 0.0))
+                next_start = float(sorted_words[idx + 1].get("start", 0.0))
+                gap = next_start - prev_end
+                if gap >= min_gap_sec:
+                    cuts.append(
+                        JumpCut(
+                            cut_start=round(prev_end, 3),
+                            cut_end=round(next_start, 3),
+                            reason=f"dead_air ({gap:.2f}s)",
+                        )
+                    )
+
+        if job.edl is None:
+            job.edl = create_empty_edl()
+        job.edl.jump_cuts = cuts
+        self.state_manager.save_job(job)
+
+        return {
+            "job_id": job_id,
+            "jump_cuts_added": len(cuts),
+            "jump_cuts": [c.model_dump() for c in cuts],
+        }
 
     def _prepare_upload_metadata(self, job: Job) -> tuple[str, str]:
         sel = job.selected_clips[0]

@@ -8,10 +8,17 @@ styles, and background styles, and recommend high-confidence Winning Recipes.
 from __future__ import annotations
 
 import logging
+import statistics
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
-from autoshorts.analytics.models import StyleBreakdownItem, VideoAnalyticsRecord, WinningRecipe
+from autoshorts.analytics.models import (
+    PublishWindowInsight,
+    StyleBreakdownItem,
+    VideoAnalyticsRecord,
+    WinningRecipe,
+)
 from autoshorts.core.models import Job
 from autoshorts.core.state_manager import StateManager
 
@@ -273,6 +280,177 @@ class PerformanceAttributionEngine:
             rationale=rationale,
             source_job_id=source_job_id,
         )
+
+    def compute_winning_recipe(self) -> WinningRecipe:
+        """Alias for get_winning_recipe() returning the empirical WinningRecipe."""
+        return self.get_winning_recipe()
+
+    # -------------------------------------------------------------------------
+    # Analytics 2.0: Viral Outliers, Best Publish Windows & Auto-Tune
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_timestamp_utc(ts_str: str | None) -> datetime | None:
+        """Parse an ISO-8601 or YYYYMMDD timestamp string into a UTC datetime."""
+        if not ts_str or not isinstance(ts_str, str):
+            return None
+        cleaned = ts_str.strip()
+        if not cleaned:
+            return None
+        try:
+            if len(cleaned) == 8 and cleaned.isdigit():
+                return datetime.strptime(cleaned, "%Y%m%d").replace(tzinfo=UTC)
+            if cleaned.endswith("Z"):
+                cleaned = cleaned[:-1] + "+00:00"
+            dt = datetime.fromisoformat(cleaned)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=UTC)
+            return dt.astimezone(UTC)
+        except Exception:
+            return None
+
+    def compute_outlier_scores(self) -> list[dict[str, Any]]:
+        """Compute viral outlier multipliers across real uploaded Shorts.
+
+        Returns [] when no video analytics exist (strictly zero phantom data).
+        """
+        rows = self.state_manager.list_video_analytics(limit=500)
+        if not rows:
+            return []
+
+        views_list = [float(r.get("views", 0) or 0) for r in rows]
+        median_views = float(statistics.median(views_list)) if views_list else 0.0
+        denom = max(1.0, median_views)
+
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                rec = VideoAnalyticsRecord.model_validate(row)
+                item = rec.model_dump()
+                item["svs_score"] = rec.svs_score
+                item["engagement_rate"] = rec.engagement_rate
+            except Exception:
+                item = dict(row)
+                item.setdefault("svs_score", 0.0)
+                item.setdefault("engagement_rate", 0.0)
+
+            views = int(item.get("views", 0) or 0)
+            multiplier = round(views / denom, 2)
+            is_outlier = multiplier >= 1.5
+
+            pub_dt = self._parse_timestamp_utc(item.get("published_at"))
+            fetch_dt = self._parse_timestamp_utc(item.get("fetched_at")) or datetime.now(UTC)
+            velocity = 0.0
+            if pub_dt is not None:
+                hours_elapsed = max(1.0, (fetch_dt - pub_dt).total_seconds() / 3600.0)
+                velocity = round(views / hours_elapsed, 2)
+
+            item["median_views"] = round(median_views, 1)
+            item["outlier_multiplier"] = multiplier
+            item["is_outlier"] = is_outlier
+            item["velocity_views_per_hour"] = velocity
+            results.append(item)
+
+        results.sort(
+            key=lambda x: (x.get("outlier_multiplier", 0.0), x.get("views", 0)), reverse=True
+        )
+        return results
+
+    def get_best_publish_windows(self) -> list[dict[str, Any]]:
+        """Group real video_analytics records by publish hour/day and return ranked publish windows."""
+        rows = self.state_manager.list_video_analytics(limit=500)
+        if not rows:
+            return []
+
+        grouped: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            dt = self._parse_timestamp_utc(row.get("published_at") or row.get("fetched_at"))
+            if dt is None:
+                continue
+            key = (dt.hour, dt.strftime("%A"))
+            grouped[key].append(row)
+
+        insights: list[dict[str, Any]] = []
+        for (hour_utc, day_of_week), group in grouped.items():
+            sample_count = len(group)
+            avg_views = round(sum(float(r.get("views", 0) or 0) for r in group) / sample_count, 1)
+            rets = [
+                float(r.get("avg_view_percentage", 0.0) or 0.0)
+                for r in group
+                if float(r.get("avg_view_percentage", 0.0) or 0.0) > 0
+            ]
+            avg_ret = round(sum(rets) / len(rets), 1) if rets else 0.0
+
+            insight = PublishWindowInsight(
+                hour_utc=hour_utc,
+                day_of_week=day_of_week,
+                sample_count=sample_count,
+                avg_views=avg_views,
+                avg_retention_pct=avg_ret,
+            )
+            insights.append(insight.model_dump())
+
+        insights.sort(
+            key=lambda w: (w["avg_views"], w["avg_retention_pct"], w["sample_count"]),
+            reverse=True,
+        )
+        return insights
+
+    def auto_tune_config_from_winners(self, config: Any) -> dict[str, Any]:
+        """Apply empirical winning recipe parameters onto the active Settings config."""
+        recipe = self.compute_winning_recipe()
+        if recipe.sample_size == 0:
+            return {
+                "applied": False,
+                "reason": "No uploaded Shorts telemetry available yet. Sync live YouTube analytics first.",
+            }
+
+        if config is not None:
+            if hasattr(config, "branding") and config.branding is not None:
+                try:
+                    config.branding.layout_mode = recipe.layout_mode
+                    config.branding.color_grading = recipe.color_grading
+                except Exception:
+                    pass
+            if hasattr(config, "subtitles") and config.subtitles is not None:
+                try:
+                    config.subtitles.style_preset = recipe.style_preset
+                except Exception:
+                    pass
+            if hasattr(config, "job_defaults") and config.job_defaults is not None:
+                try:
+                    config.job_defaults.background_category = recipe.background_category
+                    config.job_defaults.background_style = recipe.background_category
+                except Exception:
+                    pass
+            if isinstance(config, dict):
+                config["layout_mode"] = recipe.layout_mode
+                config["style_preset"] = recipe.style_preset
+                config["background_category"] = recipe.background_category
+                config["color_grading"] = recipe.color_grading
+            else:
+                for attr_name in (
+                    "layout_mode",
+                    "style_preset",
+                    "background_category",
+                    "color_grading",
+                ):
+                    if hasattr(config, attr_name):
+                        try:
+                            setattr(config, attr_name, getattr(recipe, attr_name))
+                        except Exception:
+                            pass
+
+        return {
+            "applied": True,
+            "winning_recipe": recipe.model_dump(),
+            "tuned_fields": {
+                "layout_mode": recipe.layout_mode,
+                "style_preset": recipe.style_preset,
+                "background_category": recipe.background_category,
+                "color_grading": recipe.color_grading,
+            },
+        }
 
     # -------------------------------------------------------------------------
     # 1-Click Clone Job Style

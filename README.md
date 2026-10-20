@@ -1,51 +1,87 @@
-# AutoShorts v1.0
+# AutoShorts v1.1 — Studio 2.0 Overhaul
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Version: v1.0](https://img.shields.io/badge/Version-v1.0-brightgreen.svg)](pyproject.toml)
-[![Tests: 396 passed](https://img.shields.io/badge/Tests-396%20passed-brightgreen.svg)](tests/)
-[![Status: Production Release](https://img.shields.io/badge/Status-v1.0--Production-success.svg)](PLAN.md)
+[![Version: v1.1](https://img.shields.io/badge/Version-v1.1-brightgreen.svg)](pyproject.toml)
+[![Tests: Passing](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)](tests/)
+[![Status: Production Release](https://img.shields.io/badge/Status-v1.1--Production-success.svg)](PLAN.md)
 
 An on-device, CPU-optimized YouTube clip-to-Shorts and autonomous faceless video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution). Transforms long-form YouTube videos and neural text scripts into high-retention 9:16 vertical Shorts using Semantic Inference (SemIf) orchestration, word-level animated karaoke captions, multi-layout compositing, live viral research, and closed-loop YouTube Shorts analytics.
 
-For the exhaustive engineering specification and architecture, see **[PLAN.md](PLAN.md)**.
+For the exhaustive engineering specification and architecture, see **[PLAN.md](PLAN.md)** and **[INTERFACES.md](INTERFACES.md)**.
 
 ---
 
-## What's New in v1.0
+## What's New in v1.1 (Studio 2.0 Overhaul)
 
-- 🎛️ **4-View Studio Command Center**: Unified web workspace featuring `🎬 Shorts Studio & Queue`, `🔥 Viral Research & Trending Finder`, `🎙️ Faceless AI Studio`, and `📊 YouTube Shorts Analytics`.
-- 📐 **5 Vertical 9:16 Layout Modes**: Seamlessly switch between `split_50_50`, `split_70_30`, `full_blur_bg`, `full_center_crop`, and `pip_gameplay` layouts with custom background selection.
-- 📱 **9:16 Live Phone Mockup Previewer**: Real-time smartphone viewport with a toggleable YouTube Shorts Mobile UI Safe-Zone HUD (title, channel pill, right-side action buttons, sound ticker) to guarantee 100% caption legibility.
-- 🎨 **7 Studio Caption Presets & ⚡ Fast 1-Click Re-Burn**: Choose between `neon`, `hormozi`, `mrbeast`, `pill`, `minimal`, `cyberpunk`, and `cinematic` SubStation Alpha (`.ass`) caption presets. Adjust casing, colors, and margins, and re-burn subtitles in seconds without re-downloading or re-rendering base audio/video.
-- 📊 **In-App YouTube Shorts Analytics & Closed-Loop A/B Telemetry**: Multi-source waterfall telemetry (YouTube Data API v3 batch `videos.list`, YouTube Analytics API v2, zero-quota `yt-dlp` fallback, and Playwright Studio scraper), Shorts Viral Score (SVS), and **👑 Winning Style Recipe** 1-click cloning.
-- 🔥 **Built-In Autonomous Viral Research Agent**: Live trending YouTube Shorts & podcasts discovery with direct clickable links and `⚡ 1-Click Send to Pipeline`, Highest Payout Niche RPM/CPM Matrix with interactive Revenue Calculator, Trending Viral Songs library with 1-click background music downloader (`assets/music/`), and AI Viral Strategy Brief Copilot.
-- 🎙️ **Autonomous Faceless AI Shorts Studio**: Generate viral Shorts from scratch using Microsoft Edge Neural TTS (`edge-tts`) voiceovers with word-boundary timing, SQLite `topic_history` de-duplication memory, and 1080×1920 pure FFmpeg composition.
-- ⚙️ **In-App Settings Modal & YouTube Data API v3 In-App OAuth**: Configure LLM providers, API keys, caption defaults, and YouTube Data API v3 credentials live from the web dashboard header without manual file editing.
-- 🛡️ **Playwright MS Edge Studio Auto-Fallback**: Automatic mid-flight failover to headless Microsoft Edge Studio browser automation whenever YouTube API quotas are exhausted (HTTP 403 / `quotaExceeded`), ensuring 100% upload delivery continuity.
+- 🎯 **Smart Video Identification & Resilient Clipping**:
+  - **YouTube "Most Replayed" Heatmap Peak Fusion**: Automatically extracts YouTube viewer retention curves (`0.0–1.0`), fusing audience replay density with SemIf token-probability scoring, hook curiosity ratings, and chapter boundaries for maximum clip virality.
+  - **SponsorBlock Ad/Intro/Outro Auto-Skipping**: Seamless SponsorBlock API integration (`skip_sponsors: true`) that identifies and filters out sponsored promotions, self-promos, intros, and outros during candidate window generation.
+  - **Chapter Boundary Alignment**: Extracts native video chapters and snaps candidate slice windows to logical thematic boundaries, eliminating mid-sentence cuts or context fragmentation.
+  - **Hook Curiosity Scoring**: Multi-signal scoring engine that evaluates narrative tension, hook curiosity, and opening 3–5s viewer retention power.
+  - **Multi-Client `yt-dlp` Resilience**: Resilient player client fallback cascade (`default` &rarr; `android` &rarr; `web`) to bypass bot-detection blocks, paired with keyframe-accurate section downloading.
+- ✂️ **Advanced Video Editing & Smart Publishing**:
+  - **Dead-Air Silence Auto-Trimmer (`detect_dead_air_cuts`)**: Whisper word-gap pause detection (`> 0.45s`) that automatically converts awkward pauses into frame-accurate `JumpCut` ranges and dynamic `ZoomPunch` camera motions (`auto_trim_silence: true`).
+  - **Speaker Crop Focus Reframing (`crop_focus`)**: Horizontal speaker reframing in 9:16 vertical canvas with `center`, `left`, `right`, and `dynamic_pan` tracking.
+  - **Auto-Extracted Peak Hook Thumbnail**: FFmpeg-powered frame extraction of high-retention hook frames (`thumbnail.jpg`) and direct integration with YouTube Data API v3 `thumbnails().set` for automated custom thumbnail uploads.
+  - **3-Way A/B Viral Title Variants (`generate_title_variants`)**: Generates 3 distinct viral angle variants for every clip—*Curiosity Hook*, *Contrarian Contrasting*, and *Stat/Number Shock*.
+- 📊 **Analytics 2.0 & Closed-Loop Auto-Tuning**:
+  - **Viral Outlier Multiplier Badges (`outlier_multiplier`)**: Calculates view velocity against channel median benchmarks to highlight breakout hits (`🔥 3.2x Outlier`, `1.5x`, `3.0x+` Outlier badges).
+  - **Best Publish Hour & Day Insights**: Computes historical velocity heatmaps and recommends optimal publishing windows tailored to the channel's specific audience.
+  - **1-Click Closed-Loop Auto-Tune (`POST /api/analytics/auto-tune`)**: Automatically adopts winning attributes (crop focus, caption preset, background category, dopamine pacing) from top-performing Shorts directly into pipeline defaults.
+  - **CSV & JSON Telemetry Exporter (`GET /api/analytics/export?format=csv|json`)**: Full programmatic export of all channel Shorts performance, engagement ratios, and attribution metadata.
+  - **Strict Zero-Phantom Data Policy**: Guarantees all analytics and telemetry strictly stem from real credentials and official endpoints (`YOUTUBE_API_KEY`, OAuth `token.json`, `yt-dlp`, Playwright Studio scraper), with zero synthetic or placeholder metrics.
+- 💎 **Glassmorphic & Claymorphic Studio UI**:
+  - Complete dashboard aesthetic evolution featuring frosted glass panels (`backdrop-filter: blur`), semi-translucent borders, claymorphic card elevation, and tactile interactive elements.
+  - **Candidate Inspector & Editor**: Interactive clip selection modal equipped with Heatmap/SponsorBlock badges, one-click `✂️ Auto-Remove Silence` trimmer, Speaker Crop Focus dropdown, and A/B title variant selector.
+  - **Analytics 2.0 Command Center**: Live outlier badges (`🔥 3.2x Outlier`), Best Upload Hour insights panel, `⚡ Auto-Tune Studio from Analytics` action button, and 1-click CSV/JSON telemetry downloaders.
+
+---
+
+## Studio 2.0 Architecture & Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Discovery["1. Smart Video Identification, Downloading & Clipping"]
+        A["YouTube URL / Batch Links"] --> B["Resilient Multi-Client Downloader (yt-dlp + Heatmap + Chapters + SponsorBlock)"]
+        B --> C["SponsorBlock Ad/Intro Filter + YouTube 'Most Replayed' Heatmap Fusion"]
+        C --> D["Multi-Signal Viral Scorer (SemIf Logprobs + Heatmap Peak + Hook Curiosity + Chapter Alignment)"]
+    end
+
+    subgraph Editing["2. Precision Video Editing & Audio/Visual Compositor"]
+        D --> E["Dead-Air Auto-Trimmer (Word-Gap Silence Detection -> Frame-Accurate JumpCuts)"]
+        E --> F["Smart Speaker Reframing (Center / Left / Right / Dynamic Pan) + Kinetic Callouts"]
+        F --> G["Multi-Cue SFX & Broadcast Mastering (-14 LUFS + Voice Presence EQ + Sidechain Ducking)"]
+    end
+
+    subgraph Publishing["3. Smart YouTube Publishing & Optimal-Hour Scheduler"]
+        G --> H["Auto-Thumbnail Frame Extractor + 3-Way A/B Viral Title Variants"]
+        H --> I["YouTube Data API v3 + Playwright Edge Studio Fallback"]
+    end
+
+    subgraph Analytics["4. Analytics 2.0 & Closed-Loop Auto-Tuning"]
+        I --> J["Viral Outlier Multiplier + Velocity Curves + Best-Hour Heatmap"]
+        J --> K["1-Click Closed-Loop Auto-Tune + CSV/JSON Telemetry Export"]
+    end
+```
 
 ---
 
 ## 4-View Studio Command Center
 
-AutoShorts provides an all-in-one desktop studio operating on `http://localhost:8765`, divided into four dedicated views:
-
-```mermaid
-flowchart TD
-    subgraph "AutoShorts Command Center"
-        V1["🎬 Shorts Studio & Queue<br/>• Live Link Preview<br/>• 5 Layout Modes<br/>• 7 Caption Presets<br/>• 9:16 Phone Mockup HUD<br/>• Fast 1-Click Re-Burn"]
-        V2["🔥 Viral Research Agent<br/>• Live Trending Finder<br/>• Clickable Video/Podcast Links<br/>• Niche RPM/CPM Matrix<br/>• 1-Click Viral BGM Downloader<br/>• AI Strategy Briefs"]
-        V3["🎙️ Faceless AI Studio<br/>• 7 High-RPM Niches<br/>• SQLite Topic Memory<br/>• Free Edge Neural TTS<br/>• Word-Boundary Subtitles<br/>• 1080x1920 FFmpeg Master"]
-        V4["📊 YouTube Shorts Analytics<br/>• Multi-Source Waterfall<br/>• Shorts Viral Score (SVS)<br/>• Retention Curves (APV)<br/>• Winning Style Recipe Cloning"]
-    end
-```
+AutoShorts provides an all-in-one desktop studio operating on `http://localhost:8765`, styled with an ultramodern **Glassmorphic and Claymorphic UI**:
 
 ### 1. 🎬 Shorts Studio & Queue
-- **Live Link Preview**: Real-time thumbnail, title, channel name, and duration probe upon pasting YouTube URLs (`yt-dlp --dump-single-json`).
-- **Layout & Aesthetic Customization**: Select from 5 vertical 9:16 layouts and 7 caption presets, customize primary and highlight colors, and choose background gameplay footage (Minecraft, Subway Surfers, GTA stunts, or Pexels stock).
+- **Glassmorphic & Claymorphic Interface**: Sleek dark-mode aesthetic featuring frosted translucent glass surfaces (`backdrop-filter: blur`), subtle borders, tactile claymorphic elevation, and pastel accent glows.
+- **Smart Candidate Inspector**: Interactive candidate review modal displaying sliced windows, YouTube *"Most Replayed"* Heatmap retention curves (`0.0–1.0`), SponsorBlock ad/intro indicators, chapter markers, and hook curiosity scores.
+- **Dead-Air Silence Auto-Trimmer (`detect_dead_air_cuts`)**: One-click `✂️ Auto-Remove Silence` tool that scans transcript word gaps, converting pauses > 0.45s into seamless `JumpCut` edits and injecting dynamic `ZoomPunch` camera moves on high-emphasis moments.
+- **Speaker Crop Focus Reframing**: Choose `center`, `left`, `right`, or `dynamic_pan` horizontal camera focus directly in the candidate editor.
+- **Auto-Extracted Peak Hook Thumbnail**: Automatically captures the peak engagement frame (`thumbnail.jpg`) via FFmpeg and uploads it via YouTube Data API v3 `thumbnails().set`.
+- **3-Way A/B Viral Title Variants**: Select or cycle between 3 auto-generated title hooks (*Curiosity Hook*, *Contrarian Angle*, *Stat/Number Shock*).
+- **Live Link Preview & Multi-Client yt-dlp**: Instant metadata preview with resilient multi-client download fallback (`default` &rarr; `android` &rarr; `web`).
 - **9:16 Live Phone Mockup Previewer**: Test video framing inside an interactive mobile viewport with YouTube Shorts UI overlay simulation to avoid caption clipping behind mobile buttons.
 - **Transcript Editor & ⚡ Fast 1-Click Re-Burn**: Edit transcribed sentences and regenerate SubStation Alpha subtitles within seconds via `/api/jobs/{id}/re-burn` without re-downloading or re-rendering video.
-- **Real-Time Job Queue & SSE Stepper**: Monitor job progression across 9 pipeline states with live Server-Sent Events (SSE) log streaming.
+- **Real-Time Job Queue & SSE Stepper**: Monitor job progression across pipeline states with live Server-Sent Events (SSE) log streaming.
 
 ### 2. 🔥 Viral Research & Trending Finder
 - **Live Trending Videos & Podcasts**: Discovers high-velocity YouTube Shorts and podcast moments across major niches. Every card features a **direct clickable YouTube link** to inspect the source and a **`⚡ 1-Click Send to Pipeline`** button that instantly populates the Studio submission form.
@@ -60,14 +96,17 @@ flowchart TD
 - **Exact Word-Boundary Karaoke Synchronization**: Captures exact word timing boundaries during neural audio synthesis to generate sample-accurate SubStation Alpha (`.ass`) karaoke subtitles.
 - **Pure FFmpeg 1080×1920 Compositor**: Composites neural audio, gameplay/stock footage, background music, and animated subtitles strictly via direct FFmpeg subprocesses with zero MoviePy overhead.
 
-### 4. 📊 YouTube Shorts Analytics & Closed-Loop A/B Telemetry
+### 4. 📊 YouTube Shorts Analytics 2.0 & Closed-Loop A/B Telemetry
 - **Multi-Source Waterfall Telemetry**:
   1. *YouTube Data API v3*: Batch `videos.list` fetching official view counts, likes, comments, and tags.
   2. *YouTube Analytics API v2*: Channel and video-level audience retention curves and average percentage viewed (APV).
   3. *Zero-Quota yt-dlp Fallback*: Public metadata scraping when API quota units are conserved.
   4. *Playwright YouTube Studio Scraper*: Automated headless browser scraping of private Studio metrics (subscriber conversion, impression click-through rate [CTR]).
-- **Shorts Viral Score (SVS)**: Proprietary 0–100 algorithm weighting view velocity (40 pts), duration sweet-spot (25 pts), engagement ratio (20 pts), and title hook sentiment (15 pts).
-- **👑 Winning Style Recipe Cloning**: Analyzes your channel's top-performing Shorts, extracts their winning configuration (aspect layout, subtitle preset, background type, duration), and provides a one-click button to apply that exact winning recipe to future pipeline jobs.
+- **Viral Outlier Multiplier Badges (`outlier_multiplier`)**: Compares video velocity against the channel's historical median, highlighting runaway breakouts with `🔥 3.2x Outlier`, `1.5x`, and `3.0x+` outlier badges.
+- **Best Publish Hour & Day Heatmap**: In-depth audience engagement schedule determining the optimal day and hour to publish for maximum day-one algorithmic velocity.
+- **1-Click Closed-Loop Auto-Tune (`POST /api/analytics/auto-tune`)**: One-click optimization that extracts the winning configurations (aspect ratio, caption preset, crop focus, dopamine pacing, background category) from your top viral outliers and automatically applies them to studio defaults.
+- **CSV & JSON Telemetry Exporter (`GET /api/analytics/export?format=csv|json`)**: 1-click export of your full analytics dataset, retention figures, and attribution history.
+- **Strict Zero-Phantom Data Policy**: Telemetry strictly represents verified API and scraped metrics; zero synthetic or placeholder values are ever injected.
 
 ---
 
@@ -297,9 +336,14 @@ AutoShorts features an interactive **Settings Modal** accessible from the dashbo
   - Switch between `local` (CPU GGUF via `llama-cpp-python`), `gemini` (Google Gemini 1.5 Flash / Pro), and `openrouter`.
   - Enter or update `GEMINI_API_KEY` and `OPENROUTER_API_KEY` with automatic secret masking in logs.
   - Set local model paths (default: `data/models/Qwen3-0.6B-Instruct-Q8_0.gguf`).
-- **Caption Style & Layout Defaults**:
+- **Smart Clipping & Video Defaults (`job_defaults`)**:
+  - `skip_sponsors`: Auto-query SponsorBlock API to skip sponsor segments, self-promos, and intros/outros (`true` by default).
+  - `auto_trim_silence`: Auto-detect dead-air pauses (`> 0.45s`) in speech transcripts and convert to tight `JumpCut` ranges (`true` by default).
+  - Target clip duration bounds (`min_duration_seconds: 30`, `max_duration_seconds: 50`) and sliding window stride (`15s`).
+- **Caption Style & Layout Defaults (`branding`)**:
   - Select default caption preset (`neon`, `hormozi`, `mrbeast`, `pill`, `minimal`, `cyberpunk`, `cinematic`).
   - Set default layout mode (`split_50_50`, `split_70_30`, `full_blur_bg`, `full_center_crop`, `pip_gameplay`).
+  - Set speaker reframing crop focus: `center`, `left`, `right`, or `dynamic_pan` (`crop_focus: "center"`).
 - **Upload & Privacy Defaults**:
   - Set default Shorts visibility: `public`, `unlisted`, or `private`.
   - Toggle between `api`, `studio`, and `local` upload modes.
@@ -320,6 +364,9 @@ The FastAPI server exposes clean REST endpoints covering all pipeline capabiliti
 | `GET` | `/api/jobs` | List all jobs with status, metadata, and schedule info. |
 | `POST` | `/api/jobs` | Submit a new clip job with URL, layout mode, caption preset, and instructions. |
 | `GET` | `/api/jobs/{id}` | Retrieve comprehensive job status, candidates, EDL, and rendered paths. |
+| `GET` | `/api/jobs/{id}/candidates` | Inspect sliced candidate windows with Heatmap retention curves, SponsorBlock tags, and curiosity scores. |
+| `POST` | `/api/jobs/{id}/select-clip` | Select a specific candidate window, set speaker crop focus, and choose an A/B title variant. |
+| `POST` | `/api/jobs/{id}/auto-trim-silence` | ✂️ Run Dead-Air Silence Auto-Trimmer (> 0.45s pauses) to generate frame-accurate jump-cuts. |
 | `POST` | `/api/jobs/{id}/re-burn` | ⚡ Fast 1-click re-burn of ASS subtitles into base video with modified styling. |
 | `DELETE` | `/api/jobs/{id}` | Cancel job and purge intermediate files via `SafetyCleaner`. |
 
@@ -340,13 +387,15 @@ The FastAPI server exposes clean REST endpoints covering all pipeline capabiliti
 | `POST` | `/api/faceless/create` | Synthesize neural TTS audio, build subtitles, composite 1080×1920 video, and queue. |
 | `GET` | `/api/faceless/topics` | Retrieve SQLite `topic_history` de-duplication log across channels. |
 
-### YouTube Shorts Analytics (`/api/analytics`)
+### YouTube Shorts Analytics 2.0 (`/api/analytics`)
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/api/analytics/overview` | Summary KPI cards (total views, avg retention, avg SVS, top Shorts). |
-| `GET` | `/api/analytics/videos` | Video performance table with views, APV, likes, SVS, and layout attribution. |
+| `GET` | `/api/analytics/overview` | Summary KPI cards (total views, avg retention, avg SVS, top Shorts, viral outlier count). |
+| `GET` | `/api/analytics/videos` | Video performance table with views, APV, likes, SVS, Outlier Multiplier, and layout attribution. |
 | `POST` | `/api/analytics/refresh` | Trigger multi-source waterfall refresh (API v3 &rarr; Analytics v2 &rarr; yt-dlp &rarr; Studio). |
 | `GET` | `/api/analytics/attribution/winning-style` | Extract the winning layout/caption/background recipe from top-performing Shorts. |
+| `POST` | `/api/analytics/auto-tune` | ⚡ 1-Click Closed-Loop Auto-Tune: adopts winning parameters directly into studio pipeline defaults. |
+| `GET` | `/api/analytics/export` | 📥 Export comprehensive channel telemetry dataset in CSV or JSON format (`?format=csv\|json`). |
 
 ### Settings & Quota (`/api/settings`, `/api/quota`)
 | Method | Endpoint | Description |

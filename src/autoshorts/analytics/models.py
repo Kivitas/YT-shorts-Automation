@@ -46,6 +46,8 @@ class VideoAnalyticsRecord(BaseModel):
     source_tier: str = "ytdlp"  # 'data_api', 'analytics_api', 'ytdlp', 'studio'
     published_at: str | None = None
     fetched_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    outlier_multiplier: float = 1.0
+    velocity_views_per_hour: float = 0.0
     history_json: str = "[]"
     history: list[AnalyticsSnapshot] = Field(default_factory=list)
 
@@ -122,6 +124,16 @@ class WinningRecipe(BaseModel):
     source_job_id: str | None = None
 
 
+class PublishWindowInsight(BaseModel):
+    """Aggregated performance insight for a specific UTC publish hour and day of week."""
+
+    hour_utc: int
+    day_of_week: str
+    sample_count: int = 0
+    avg_views: float = 0.0
+    avg_retention_pct: float = 0.0
+
+
 class AnalyticsOverview(BaseModel):
     """Channel-wide aggregate analytics overview for dashboard KPI cards."""
 
@@ -142,6 +154,7 @@ class AnalyticsOverview(BaseModel):
 __all__ = [
     "AnalyticsOverview",
     "AnalyticsSnapshot",
+    "PublishWindowInsight",
     "StyleBreakdownItem",
     "VideoAnalyticsRecord",
     "WinningRecipe",

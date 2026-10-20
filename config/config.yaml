@@ -27,6 +27,8 @@ job_defaults:
   background_category: "minecraft" # "minecraft", "subway", or "auto"
   dopamine_level: "medium"         # "low", "medium", "high"
   auto_approve: false              # Require human dashboard confirmation before upload
+  skip_sponsors: true              # Filter out SponsorBlock sponsor/intro/outro segments automatically
+  auto_trim_silence: true          # Auto-trim dead-air pauses (>0.45s) into tight jump-cuts
 
 edit_planner:
   enabled: true                    # Multimodal AI edit planning
@@ -90,6 +92,7 @@ subtitles:
 
 branding:
   layout_mode: "split_50_50"       # "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
+  crop_focus: "center"             # "center", "left", "right", "dynamic_pan" horizontal speaker framing
   color_grading: "none"            # "none", "vibrant", "cinematic", "warm", "crisp"
   watermark_text: null             # Channel watermark text (e.g. "@MyChannel")
   watermark_position: "top_right"  # "top_right", "top_left", "bottom_right", "bottom_center"
