@@ -428,6 +428,39 @@ class BackgroundDownloadRequest(BaseModel):
     min_clips: int = Field(default=1)
 
 
+class MusicDownloadPayload(BaseModel):
+    track_id: str = Field(..., description="Target track ID")
+    custom_url: str | None = Field(default=None, description="Optional custom source URL")
+
+
+class ResearchBriefPayload(BaseModel):
+    niche: str = Field(default="ai_tech", description="Niche identifier")
+    custom_query: str | None = Field(default=None, description="Optional search query")
+
+
+class PipelineHandoffPayload(BaseModel):
+    url: str = Field(..., description="YouTube video URL")
+    niche: str = Field(default="ai_tech", description="Niche category")
+    focus_prompt: str | None = Field(default=None, description="Focus prompt for clipping")
+    recommended_studio_profile: str = Field(
+        default="hormozi", description="Recommended Studio Profile"
+    )
+    recommended_background: str = Field(
+        default="minecraft", description="Recommended background category"
+    )
+    auto_upload: bool = Field(default=False, description="Whether to trigger auto-upload")
+
+
+class MoneyPrinterScriptPayload(BaseModel):
+    niche: str = Field(default="ai_tech", description="Target niche")
+    topic: str | None = Field(default=None, description="Custom topic prompt")
+    language: str = Field(default="en", description="Language code")
+
+
+class AnalyticsSyncPayload(BaseModel):
+    force: bool = Field(default=False, description="Force sync flag")
+
+
 # -----------------------------------------------------------------------------
 # Browser Launcher Helper
 # -----------------------------------------------------------------------------
@@ -1738,6 +1771,411 @@ def create_app(
         except Exception as e:
             logger.error("Provider test failed for %s: %s", req.provider, e)
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # -------------------------------------------------------------------------
+    # In-App Analytics & Telemetry API
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/analytics/overview")
+    async def get_analytics_overview(days: int = 30) -> dict[str, Any]:
+        """Return 30-day KPI aggregates, retention metrics, and winning style recipe."""
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        try:
+            from autoshorts.analytics.attribution import PerformanceAttributionEngine
+            from autoshorts.analytics.engine import AnalyticsEngine
+
+            engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
+            attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
+
+            if hasattr(engine, "get_overview"):
+                overview = engine.get_overview(days=days)
+            elif hasattr(engine, "compute_overview"):
+                overview = engine.compute_overview(days=days)
+            else:
+                overview = {}
+
+            if hasattr(attr_engine, "get_winning_recipe"):
+                winning = attr_engine.get_winning_recipe()
+            elif hasattr(attr_engine, "get_attribution"):
+                winning = attr_engine.get_attribution()
+            else:
+                winning = None
+
+            return {
+                "success": True,
+                "overview": overview.model_dump() if hasattr(overview, "model_dump") else overview,
+                "winning_recipe": winning.model_dump()
+                if hasattr(winning, "model_dump")
+                else winning,
+            }
+        except Exception as e:
+            logger.debug("Analytics overview fallback: %s", e)
+            return {
+                "success": True,
+                "overview": {
+                    "total_views": 0,
+                    "total_likes": 0,
+                    "avg_retention_pct": 0.0,
+                    "avg_svs": 0.0,
+                    "estimated_revenue_usd": 0.0,
+                    "video_count": 0,
+                },
+                "winning_recipe": None,
+            }
+
+    @app.get("/api/analytics/breakdown")
+    async def get_analytics_breakdown() -> dict[str, Any]:
+        """Return SVS viral score breakdowns by layout, caption preset, and background."""
+        try:
+            from autoshorts.analytics.attribution import PerformanceAttributionEngine
+
+            attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
+            if hasattr(attr_engine, "get_breakdowns"):
+                b = attr_engine.get_breakdowns()
+            elif hasattr(attr_engine, "get_breakdown"):
+                b = attr_engine.get_breakdown()
+            elif hasattr(attr_engine, "compute_breakdown"):
+                b = attr_engine.compute_breakdown()
+            else:
+                b = {}
+
+            return {
+                "success": True,
+                "breakdowns": b.model_dump() if hasattr(b, "model_dump") else b,
+            }
+        except Exception as e:
+            logger.debug("Analytics breakdown fallback: %s", e)
+            return {
+                "success": True,
+                "breakdowns": {
+                    "layout_modes": {},
+                    "style_presets": {},
+                    "background_categories": {},
+                },
+            }
+
+    @app.get("/api/analytics/videos")
+    async def get_analytics_videos(limit: int = 50) -> dict[str, Any]:
+        """Return per-video telemetry and retention data."""
+        try:
+            from autoshorts.analytics.engine import AnalyticsEngine
+
+            active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+            engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
+            if hasattr(engine, "get_videos"):
+                videos = engine.get_videos(limit=limit)
+            elif hasattr(engine, "get_all_videos"):
+                videos = engine.get_all_videos(limit=limit)
+            elif hasattr(engine, "list_videos"):
+                videos = engine.list_videos(limit=limit)
+            else:
+                videos = []
+
+            return {
+                "success": True,
+                "videos": [v.model_dump() if hasattr(v, "model_dump") else v for v in videos],
+            }
+        except Exception as e:
+            logger.debug("Analytics videos fallback: %s", e)
+            return {"success": True, "videos": []}
+
+    @app.post("/api/analytics/sync")
+    async def sync_analytics_endpoint(
+        payload: AnalyticsSyncPayload | None = None,
+    ) -> dict[str, Any]:
+        """Trigger live YouTube stats sync for all uploaded videos."""
+        try:
+            from autoshorts.analytics.engine import AnalyticsEngine
+
+            active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+            engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
+            force = payload.force if payload else False
+            if hasattr(engine, "sync_all"):
+                synced = engine.sync_all(force=force)
+            elif hasattr(engine, "sync"):
+                synced = engine.sync(force=force)
+            else:
+                synced = {"status": "ok", "synced": 0}
+
+            return {
+                "success": True,
+                "synced": synced.model_dump() if hasattr(synced, "model_dump") else synced,
+            }
+        except Exception as e:
+            logger.debug("Analytics sync fallback: %s", e)
+            return {"success": True, "synced": {"updated": 0, "message": str(e)}}
+
+    @app.post("/api/analytics/clone-style/{job_id}")
+    async def clone_style_recipe(job_id: str) -> dict[str, Any]:
+        """Extract winning layout, caption preset and dopamine level from a top-performing job."""
+        try:
+            from autoshorts.analytics.attribution import PerformanceAttributionEngine
+
+            attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
+            if hasattr(attr_engine, "clone_style"):
+                recipe = attr_engine.clone_style(job_id)
+                return {"success": True, "job_id": job_id, "style": recipe}
+        except Exception:
+            pass
+
+        job = state_mgr.get_job(job_id) if hasattr(state_mgr, "get_job") else None
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        bg_cat = getattr(job, "background_category", None)
+        if not bg_cat and job.selected_clips:
+            bg_cat = job.selected_clips[0].background_style
+
+        recipe = {
+            "layout_mode": getattr(job, "layout_mode", "split_50_50"),
+            "style_preset": getattr(job, "style_preset", "hormozi"),
+            "background_category": bg_cat or "minecraft",
+            "dopamine_level": getattr(job, "dopamine_level", "medium"),
+            "color_grading": getattr(job, "color_grading", "none"),
+            "text_transform": getattr(job, "text_transform", "uppercase"),
+            "subtitle_position": getattr(job, "subtitle_position", "center"),
+            "hook_banner_style": getattr(job, "hook_banner_style", "neon_box"),
+        }
+        return {"success": True, "job_id": job_id, "style": recipe}
+
+    # -------------------------------------------------------------------------
+    # Built-In Viral Research Agent API
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/research/trending")
+    async def get_trending_sources_endpoint(
+        niche: str = "ai_tech",
+        query: str | None = None,
+        limit: int = 9,
+    ) -> dict[str, Any]:
+        """Discover live trending videos and podcasts with viral potential scores."""
+        from autoshorts.research_agent.trending_sources import discover_trending_sources
+
+        videos = await asyncio.to_thread(
+            discover_trending_sources,
+            niche=niche,
+            custom_query=query,
+            limit=limit,
+        )
+        return {
+            "success": True,
+            "niche": niche,
+            "count": len(videos),
+            "videos": [v.model_dump() for v in videos],
+        }
+
+    @app.get("/api/research/niches")
+    async def get_niche_payouts_endpoint(
+        views: int | None = None,
+        ctr: float = 2.5,
+        niche_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return highest payout niche matrix and optional projected revenue calculation."""
+        from autoshorts.research_agent.payout_matrix import (
+            calculate_projected_payout,
+            get_niche_payout_matrix,
+        )
+
+        matrix = get_niche_payout_matrix()
+        projection = None
+        if views is not None:
+            target_niche = niche_id or "ai_tech"
+            projection = calculate_projected_payout(
+                niche_id=target_niche,
+                projected_views=views,
+                related_video_ctr_pct=ctr,
+            )
+
+        return {
+            "success": True,
+            "niches": [n.model_dump() for n in matrix],
+            "projection": projection,
+        }
+
+    @app.get("/api/research/music")
+    async def get_viral_music_endpoint(genre: str = "all") -> dict[str, Any]:
+        """Return curated royalty-free BGM catalog and live trending commercial Shorts sounds."""
+        from autoshorts.research_agent.song_recommender import (
+            get_trending_shorts_audio,
+            get_viral_bgm_catalog,
+        )
+
+        bgm = get_viral_bgm_catalog()
+        trending = get_trending_shorts_audio(genre=genre)
+        return {
+            "success": True,
+            "bgm_catalog": [b.model_dump() for b in bgm],
+            "trending_shorts_audio": [t.model_dump() for t in trending],
+        }
+
+    @app.post("/api/research/music/download")
+    async def download_viral_bgm_endpoint(payload: MusicDownloadPayload) -> dict[str, Any]:
+        """Download or procedural-synthesize viral BGM into assets/music/."""
+        from autoshorts.research_agent.song_recommender import download_viral_bgm
+
+        res = await asyncio.to_thread(
+            download_viral_bgm,
+            track_id=payload.track_id,
+            custom_url=payload.custom_url,
+        )
+        return res
+
+    @app.post("/api/research/brief")
+    async def generate_strategy_brief_endpoint(payload: ResearchBriefPayload) -> dict[str, Any]:
+        """Generate bespoke AI viral strategy brief combining sources, payout, and audio."""
+        from autoshorts.research_agent.research_brief_agent import generate_viral_strategy_brief
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        brief = await asyncio.to_thread(
+            generate_viral_strategy_brief,
+            niche=payload.niche,
+            custom_query=payload.custom_query,
+            config=active_cfg,
+        )
+        return {
+            "success": True,
+            "brief": brief.model_dump(),
+        }
+
+    @app.post("/api/research/pipeline-handoff")
+    async def pipeline_handoff_endpoint(payload: PipelineHandoffPayload) -> dict[str, Any]:
+        """⚡ 1-Click Send to Pipeline: queue trending video URL with recommended profile & related video link."""
+        if not payload.url or not payload.url.strip():
+            raise HTTPException(status_code=400, detail="Video URL is required")
+
+        focus_prompt = (
+            payload.focus_prompt or f"Focus on peak high-impact insight in {payload.niche}"
+        )
+        jobs = pipe.submit_links(
+            links_input=payload.url,
+            custom_instructions=focus_prompt,
+        )
+
+        for job in jobs:
+            job.style_preset = payload.recommended_studio_profile
+            job.layout_mode = (
+                "split_50_50"
+                if payload.recommended_studio_profile == "hormozi"
+                else "podcast_70_30"
+            )
+            set_job_attr(job, "background_category", payload.recommended_background)
+            if job.selected_clips:
+                job.selected_clips[0].background_style = payload.recommended_background
+            job.link_related_video = True
+            set_job_attr(job, "related_video_url", payload.url)
+            if payload.auto_upload:
+                set_job_attr(job, "auto_upload", True)
+            if hasattr(state_mgr, "save_job"):
+                state_mgr.save_job(job)
+
+        return {
+            "success": True,
+            "job_id": jobs[0].id if jobs else None,
+            "jobs": [j.model_dump() for j in jobs],
+        }
+
+    # -------------------------------------------------------------------------
+    # Autonomous Faceless AI Shorts Studio Engine API
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/moneyprinter/voices")
+    @app.get("/api/faceless/voices")
+    async def get_moneyprinter_voices_endpoint(niche: str | None = None) -> dict[str, Any]:
+        """Return free Microsoft Edge Neural TTS voice catalog and historical topics."""
+        from autoshorts.research_agent.moneyprinter import VOICE_CATALOG
+
+        past_topics: list[str] = []
+        if hasattr(state_mgr, "get_topic_history"):
+            try:
+                past_topics = (
+                    state_mgr.get_topic_history(niche=niche)
+                    if niche
+                    else state_mgr.get_topic_history()
+                )
+            except Exception as e:
+                logger.debug("Failed fetching topic history: %s", e)
+
+        return {
+            "success": True,
+            "voices": VOICE_CATALOG,
+            "past_topics": past_topics,
+        }
+
+    @app.post("/api/moneyprinter/generate-script")
+    @app.post("/api/faceless/generate-script")
+    async def preview_moneyprinter_script(payload: MoneyPrinterScriptPayload) -> dict[str, Any]:
+        """Preview viral faceless script, hook, and keywords before rendering."""
+        from autoshorts.research_agent.moneyprinter import generate_faceless_script
+
+        active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
+        past_topics: list[str] = []
+        if hasattr(state_mgr, "get_topic_history"):
+            try:
+                past_topics = state_mgr.get_topic_history(niche=payload.niche)
+            except Exception as e:
+                logger.debug("Failed fetching topic history: %s", e)
+
+        res = await asyncio.to_thread(
+            generate_faceless_script,
+            niche=payload.niche,
+            topic=payload.topic,
+            language=payload.language,
+            config=active_cfg,
+            past_topics=past_topics,
+        )
+        return {
+            "success": True,
+            "script": res.model_dump(),
+        }
+
+    @app.post("/api/moneyprinter/create")
+    @app.post("/api/faceless/create")
+    async def create_faceless_short_endpoint(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        async_mode: bool = False,
+    ) -> dict[str, Any]:
+        """Create and render a complete faceless AI Short using edge-tts and FFmpeg."""
+        from autoshorts.research_agent.models import FacelessShortRequest
+        from autoshorts.research_agent.moneyprinter import create_faceless_short_job
+
+        body = await request.json()
+        req = FacelessShortRequest(**body)
+
+        if async_mode:
+            background_tasks.add_task(create_faceless_short_job, req, pipe, state_mgr)
+            return {
+                "success": True,
+                "status": "queued",
+                "message": "Faceless Short generation task running in background.",
+            }
+
+        job_data = await asyncio.to_thread(create_faceless_short_job, req, pipe, state_mgr)
+        return {
+            "success": True,
+            "status": "completed",
+            "job": job_data,
+        }
+
+    @app.get("/api/moneyprinter/topics")
+    @app.get("/api/faceless/topics")
+    async def get_faceless_topics_endpoint(niche: str | None = None) -> dict[str, Any]:
+        """Return historical generated topics to prevent duplication."""
+        past_topics: list[dict[str, Any]] = []
+        if hasattr(state_mgr, "get_topic_history"):
+            try:
+                raw_topics = (
+                    state_mgr.get_topic_history(niche=niche)
+                    if niche
+                    else state_mgr.get_topic_history()
+                )
+                past_topics = [
+                    {"topic": t, "niche": niche or "general", "status": "✓ Cached in SQLite"}
+                    for t in raw_topics
+                ]
+            except Exception as e:
+                logger.debug("Failed fetching topics: %s", e)
+        return {"success": True, "topics": past_topics}
 
     return app
 

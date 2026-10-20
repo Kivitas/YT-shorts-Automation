@@ -170,6 +170,54 @@ class StateManager:
                     """
                 )
 
+                # 6. YouTube Shorts Video Analytics table (PLAN.md section 2.1 & 2.2)
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS video_analytics (
+                        video_id TEXT PRIMARY KEY,
+                        job_id TEXT NOT NULL,
+                        title TEXT NOT NULL DEFAULT '',
+                        views INTEGER NOT NULL DEFAULT 0,
+                        likes INTEGER NOT NULL DEFAULT 0,
+                        comments INTEGER NOT NULL DEFAULT 0,
+                        shares INTEGER NOT NULL DEFAULT 0,
+                        avg_view_duration_sec REAL NOT NULL DEFAULT 0.0,
+                        avg_view_percentage REAL NOT NULL DEFAULT 0.0,
+                        viewed_vs_swiped_pct REAL NOT NULL DEFAULT 0.0,
+                        shown_in_feed INTEGER NOT NULL DEFAULT 0,
+                        subscribers_gained INTEGER NOT NULL DEFAULT 0,
+                        estimated_revenue_usd REAL NOT NULL DEFAULT 0.0,
+                        rpm_usd REAL NOT NULL DEFAULT 0.0,
+                        source_tier TEXT NOT NULL DEFAULT 'ytdlp',
+                        published_at TEXT,
+                        fetched_at TEXT NOT NULL,
+                        history_json TEXT NOT NULL DEFAULT '[]'
+                    );
+                    """
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_video_analytics_job_id ON video_analytics(job_id);"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_video_analytics_views ON video_analytics(views DESC);"
+                )
+
+                # 7. Topic History table for Faceless AI Studio de-duplication memory
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS topic_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        niche TEXT NOT NULL,
+                        topic TEXT NOT NULL,
+                        job_id TEXT,
+                        created_at TEXT NOT NULL
+                    );
+                    """
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_topic_history_niche ON topic_history(niche);"
+                )
+
                 cursor.execute("COMMIT;")
             except Exception as e:
                 conn.execute("ROLLBACK;")
@@ -669,5 +717,231 @@ class StateManager:
             conn = self._get_connection()
             try:
                 conn.execute("DELETE FROM quota_usage WHERE date_pt = ?;", (date_pt,))
+            finally:
+                conn.close()
+
+    # -------------------------------------------------------------------------
+    # YouTube Shorts Video Analytics & Closed-Loop Telemetry
+    # -------------------------------------------------------------------------
+
+    def upsert_video_analytics(self, record: dict[str, Any] | Any) -> None:
+        """Insert or update a video analytics record and append snapshot to history_json (up to 90 entries)."""
+        if hasattr(record, "model_dump"):
+            rec = record.model_dump()
+        elif isinstance(record, dict):
+            rec = dict(record)
+        else:
+            rec = dict(getattr(record, "__dict__", {}))
+
+        video_id = str(rec.get("video_id") or "").strip()
+        if not video_id:
+            raise StateError("video_id is required for video_analytics")
+
+        job_id = str(rec.get("job_id") or "").strip()
+        title = str(rec.get("title") or "").strip()
+        views = int(rec.get("views") or 0)
+        likes = int(rec.get("likes") or 0)
+        comments = int(rec.get("comments") or 0)
+        shares = int(rec.get("shares") or 0)
+        avg_view_duration_sec = float(rec.get("avg_view_duration_sec") or 0.0)
+        avg_view_percentage = float(rec.get("avg_view_percentage") or 0.0)
+        viewed_vs_swiped_pct = float(rec.get("viewed_vs_swiped_pct") or 0.0)
+        shown_in_feed = int(rec.get("shown_in_feed") or 0)
+        subscribers_gained = int(rec.get("subscribers_gained") or 0)
+        estimated_revenue_usd = float(rec.get("estimated_revenue_usd") or 0.0)
+        rpm_usd = float(rec.get("rpm_usd") or 0.0)
+        source_tier = str(rec.get("source_tier") or "ytdlp")
+        published_at = rec.get("published_at")
+        if published_at is not None:
+            published_at = str(published_at)
+        fetched_at = str(rec.get("fetched_at") or datetime.now(UTC).isoformat())
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                # Fetch existing history to append
+                existing = conn.execute(
+                    "SELECT history_json FROM video_analytics WHERE video_id = ?;", (video_id,)
+                ).fetchone()
+
+                history: list[dict[str, Any]] = []
+                if existing and existing["history_json"]:
+                    try:
+                        loaded = json.loads(existing["history_json"])
+                        if isinstance(loaded, list):
+                            history = loaded
+                    except Exception:
+                        history = []
+                elif rec.get("history_json"):
+                    try:
+                        loaded = json.loads(rec["history_json"])
+                        if isinstance(loaded, list):
+                            history = loaded
+                    except Exception:
+                        history = []
+                elif "history" in rec and isinstance(rec["history"], list):
+                    history = list(rec["history"])
+
+                # Create snapshot
+                snapshot = {
+                    "timestamp": fetched_at,
+                    "views": views,
+                    "likes": likes,
+                    "comments": comments,
+                    "shares": shares,
+                    "avg_view_duration_sec": avg_view_duration_sec,
+                    "avg_view_percentage": avg_view_percentage,
+                    "estimated_revenue_usd": estimated_revenue_usd,
+                }
+                history.append(snapshot)
+                if len(history) > 90:
+                    history = history[-90:]
+
+                history_json = json.dumps(history)
+
+                conn.execute(
+                    """
+                    INSERT INTO video_analytics (
+                        video_id, job_id, title, views, likes, comments, shares,
+                        avg_view_duration_sec, avg_view_percentage, viewed_vs_swiped_pct,
+                        shown_in_feed, subscribers_gained, estimated_revenue_usd, rpm_usd,
+                        source_tier, published_at, fetched_at, history_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(video_id) DO UPDATE SET
+                        job_id = CASE WHEN excluded.job_id != '' THEN excluded.job_id ELSE video_analytics.job_id END,
+                        title = CASE WHEN excluded.title != '' THEN excluded.title ELSE video_analytics.title END,
+                        views = excluded.views,
+                        likes = excluded.likes,
+                        comments = excluded.comments,
+                        shares = excluded.shares,
+                        avg_view_duration_sec = excluded.avg_view_duration_sec,
+                        avg_view_percentage = excluded.avg_view_percentage,
+                        viewed_vs_swiped_pct = excluded.viewed_vs_swiped_pct,
+                        shown_in_feed = excluded.shown_in_feed,
+                        subscribers_gained = excluded.subscribers_gained,
+                        estimated_revenue_usd = excluded.estimated_revenue_usd,
+                        rpm_usd = excluded.rpm_usd,
+                        source_tier = excluded.source_tier,
+                        published_at = COALESCE(excluded.published_at, video_analytics.published_at),
+                        fetched_at = excluded.fetched_at,
+                        history_json = excluded.history_json;
+                    """,
+                    (
+                        video_id,
+                        job_id,
+                        title,
+                        views,
+                        likes,
+                        comments,
+                        shares,
+                        avg_view_duration_sec,
+                        avg_view_percentage,
+                        viewed_vs_swiped_pct,
+                        shown_in_feed,
+                        subscribers_gained,
+                        estimated_revenue_usd,
+                        rpm_usd,
+                        source_tier,
+                        published_at,
+                        fetched_at,
+                        history_json,
+                    ),
+                )
+                conn.execute("COMMIT;")
+            except Exception as e:
+                conn.execute("ROLLBACK;")
+                raise StateError(f"Failed to upsert video analytics for {video_id}: {e}") from e
+            finally:
+                conn.close()
+
+    def get_video_analytics(self, video_id: str) -> dict[str, Any] | None:
+        """Retrieve a video analytics record by video_id, or None if not found."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM video_analytics WHERE video_id = ?;", (video_id,)
+                ).fetchone()
+                if not row:
+                    return None
+                res = dict(row)
+                try:
+                    res["history"] = json.loads(res.get("history_json") or "[]")
+                except Exception:
+                    res["history"] = []
+                return res
+            finally:
+                conn.close()
+
+    def list_video_analytics(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Retrieve recent video analytics records, ordered by fetched_at DESC."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM video_analytics ORDER BY fetched_at DESC LIMIT ?;", (limit,)
+                ).fetchall()
+                results = []
+                for r in rows:
+                    item = dict(r)
+                    try:
+                        item["history"] = json.loads(item.get("history_json") or "[]")
+                    except Exception:
+                        item["history"] = []
+                    results.append(item)
+                return results
+            finally:
+                conn.close()
+
+    # -------------------------------------------------------------------------
+    # Topic History Management (Faceless AI Studio De-Duplication Cache)
+    # -------------------------------------------------------------------------
+
+    def record_topic_history(self, niche: str, topic: str, job_id: str | None = None) -> None:
+        """Record a generated topic to prevent topic repetition."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now_str = datetime.now(UTC).isoformat()
+                conn.execute(
+                    """
+                    INSERT INTO topic_history (niche, topic, job_id, created_at)
+                    VALUES (?, ?, ?, ?);
+                    """,
+                    (niche.strip(), topic.strip(), job_id, now_str),
+                )
+            except Exception as e:
+                raise StateError(f"Failed to record topic history: {e}") from e
+            finally:
+                conn.close()
+
+    def get_topic_history(self, niche: str | None = None, limit: int = 100) -> list[str]:
+        """Retrieve recent topic history for a niche (or all niches), newest first."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                if niche:
+                    rows = conn.execute(
+                        """
+                        SELECT topic FROM topic_history
+                        WHERE LOWER(niche) = LOWER(?)
+                        ORDER BY id DESC
+                        LIMIT ?;
+                        """,
+                        (niche.strip(), limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT topic FROM topic_history
+                        ORDER BY id DESC
+                        LIMIT ?;
+                        """,
+                        (limit,),
+                    ).fetchall()
+                return [str(r["topic"]) for r in rows]
+            except Exception as e:
+                raise StateError(f"Failed to retrieve topic history: {e}") from e
             finally:
                 conn.close()

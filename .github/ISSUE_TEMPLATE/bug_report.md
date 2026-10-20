@@ -12,10 +12,15 @@ A clear and concise description of what the bug is.
 **Affected Component(s)**
 Check all components involved:
 - [ ] Dashboard & Settings Modal (`⚙️` in-app configuration)
+- [ ] 4-View Studio Command Center (Studio & Queue, Viral Research, Faceless AI Studio, Analytics)
+- [ ] 5 Vertical 9:16 Layout Modes & 9:16 Live Phone Previewer HUD
+- [ ] 7 Studio Caption Presets & 1-Click Fast Re-Burn
+- [ ] In-App YouTube Shorts Analytics & Closed-Loop A/B Telemetry (`src/autoshorts/analytics/`)
+- [ ] Built-In Autonomous Viral Research Agent (`src/autoshorts/research_agent/`)
+- [ ] Autonomous Faceless AI Shorts Studio & Neural TTS (`src/autoshorts/research_agent/`)
 - [ ] YouTube Data API v3 OAuth & Chunked Upload
 - [ ] Playwright MS Edge Studio Fallback
 - [ ] Gameplay Backgrounds Fetcher (CC0 Minecraft / Subway Surfers)
-- [ ] Subtitle Style Presets (`neon` / `minimal` / `pill`)
 - [ ] Spread Scheduler & Dual-Bucket Quota Tracker (50/day cap, 7/hr rolling limit)
 - [ ] Ingestion, URL Validator & yt-dlp Precision Downloader
 - [ ] SemIf Token-Probability Decider & Window Slicer

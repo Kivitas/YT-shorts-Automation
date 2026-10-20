@@ -14,10 +14,15 @@ A clear and concise description of what you want to happen.
 
 **Target Component / Module**
 - [ ] Dashboard Settings Modal (`⚙️`) & Live Link Previews
+- [ ] 4-View Studio Command Center (Studio, Research, Faceless AI Studio, Analytics)
+- [ ] 5 Vertical 9:16 Layout Modes & 9:16 Live Phone Previewer HUD
+- [ ] 7 Studio Caption Presets & 1-Click Fast Re-Burn
+- [ ] In-App YouTube Shorts Analytics & Closed-Loop A/B Telemetry (`src/autoshorts/analytics/`)
+- [ ] Built-In Autonomous Viral Research Agent & Payout Calculator (`src/autoshorts/research_agent/`)
+- [ ] Autonomous Faceless AI Shorts Studio & Neural TTS (`src/autoshorts/research_agent/`)
 - [ ] YouTube Data API v3 OAuth & Token Management
 - [ ] Playwright MS Edge Studio Uploader & Fallback
 - [ ] Gameplay Backgrounds Fetcher & Asset Management
-- [ ] Subtitle Style Presets (`neon` / `minimal` / `pill`) & ASS Styler
 - [ ] Spread Scheduler & Dual-Bucket Quota Tracker
 - [ ] SemIf Token-Probability Decider & Window Slicer
 - [ ] FFmpeg 9:16 Dopamine Compositor

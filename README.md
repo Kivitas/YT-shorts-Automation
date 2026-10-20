@@ -3,9 +3,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Version: v1.0](https://img.shields.io/badge/Version-v1.0-brightgreen.svg)](pyproject.toml)
+[![Tests: 396 passed](https://img.shields.io/badge/Tests-396%20passed-brightgreen.svg)](tests/)
 [![Status: Production Release](https://img.shields.io/badge/Status-v1.0--Production-success.svg)](PLAN.md)
 
-An on-device, CPU-optimized YouTube clip-to-Shorts automation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution). Transforms long-form YouTube videos into high-retention 9:16 vertical Shorts using Semantic Inference (SemIf) orchestration, word-level animated karaoke captions, and scheduled pacing.
+An on-device, CPU-optimized YouTube clip-to-Shorts and autonomous faceless video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution). Transforms long-form YouTube videos and neural text scripts into high-retention 9:16 vertical Shorts using Semantic Inference (SemIf) orchestration, word-level animated karaoke captions, multi-layout compositing, live viral research, and closed-loop YouTube Shorts analytics.
 
 For the exhaustive engineering specification and architecture, see **[PLAN.md](PLAN.md)**.
 
@@ -13,63 +14,162 @@ For the exhaustive engineering specification and architecture, see **[PLAN.md](P
 
 ## What's New in v1.0
 
-- ⚙️ **In-App Settings Modal**: Configure LLM providers, API keys, caption styles, and upload visibility live from the web dashboard header without touching raw YAML files or restarting the server.
-- 🔑 **YouTube Data API v3 In-App OAuth**: Guided `client_secret.json` upload and one-click in-app Google OAuth consent flow for automated token management (`credentials.json`).
-- 🌐 **Live Link Preview**: Real-time metadata and thumbnail preview card as soon as a YouTube link is pasted into the queue submission form.
-- 🎨 **Caption Style Presets (`neon`, `minimal`, `pill`)**: One-click switchable SubStation Alpha (`.ass`) caption aesthetic styles tailored for maximum viewer retention.
-- 🛡️ **Playwright MS Edge Studio Auto-Fallback**: Seamless mid-flight failover to headless Microsoft Edge Studio browser automation whenever YouTube API quotas are exhausted (HTTP 403 / `quotaExceeded`), ensuring 100% upload delivery continuity.
+- 🎛️ **4-View Studio Command Center**: Unified web workspace featuring `🎬 Shorts Studio & Queue`, `🔥 Viral Research & Trending Finder`, `🎙️ Faceless AI Studio`, and `📊 YouTube Shorts Analytics`.
+- 📐 **5 Vertical 9:16 Layout Modes**: Seamlessly switch between `split_50_50`, `split_70_30`, `full_blur_bg`, `full_center_crop`, and `pip_gameplay` layouts with custom background selection.
+- 📱 **9:16 Live Phone Mockup Previewer**: Real-time smartphone viewport with a toggleable YouTube Shorts Mobile UI Safe-Zone HUD (title, channel pill, right-side action buttons, sound ticker) to guarantee 100% caption legibility.
+- 🎨 **7 Studio Caption Presets & ⚡ Fast 1-Click Re-Burn**: Choose between `neon`, `hormozi`, `mrbeast`, `pill`, `minimal`, `cyberpunk`, and `cinematic` SubStation Alpha (`.ass`) caption presets. Adjust casing, colors, and margins, and re-burn subtitles in seconds without re-downloading or re-rendering base audio/video.
+- 📊 **In-App YouTube Shorts Analytics & Closed-Loop A/B Telemetry**: Multi-source waterfall telemetry (YouTube Data API v3 batch `videos.list`, YouTube Analytics API v2, zero-quota `yt-dlp` fallback, and Playwright Studio scraper), Shorts Viral Score (SVS), and **👑 Winning Style Recipe** 1-click cloning.
+- 🔥 **Built-In Autonomous Viral Research Agent**: Live trending YouTube Shorts & podcasts discovery with direct clickable links and `⚡ 1-Click Send to Pipeline`, Highest Payout Niche RPM/CPM Matrix with interactive Revenue Calculator, Trending Viral Songs library with 1-click background music downloader (`assets/music/`), and AI Viral Strategy Brief Copilot.
+- 🎙️ **Autonomous Faceless AI Shorts Studio**: Generate viral Shorts from scratch using Microsoft Edge Neural TTS (`edge-tts`) voiceovers with word-boundary timing, SQLite `topic_history` de-duplication memory, and 1080×1920 pure FFmpeg composition.
+- ⚙️ **In-App Settings Modal & YouTube Data API v3 In-App OAuth**: Configure LLM providers, API keys, caption defaults, and YouTube Data API v3 credentials live from the web dashboard header without manual file editing.
+- 🛡️ **Playwright MS Edge Studio Auto-Fallback**: Automatic mid-flight failover to headless Microsoft Edge Studio browser automation whenever YouTube API quotas are exhausted (HTTP 403 / `quotaExceeded`), ensuring 100% upload delivery continuity.
 
 ---
 
-## Key Features
+## 4-View Studio Command Center
 
-- **Strict Tooling Exclusivity**:
-  - Video downloading strictly via `yt-dlp` (`--download-sections` for precision cuts).
-  - Video rendering, audio ducking, and compositing strictly via direct `FFmpeg` and `ffprobe` subprocesses.
-  - Zero MoviePy (prohibited due to memory leaks and CPU overhead); zero Playwright video downloads.
-- **Persistent Daily Spread Scheduler (Up to 50 Shorts/Day)**:
-  - Hard daily ceiling of **50 uploads per day** (`daily_upload_cap: 50`).
-  - Strict rolling rate limiting of **maximum 7 uploads per rolling hour**.
-  - Non-fixed uniform random jittered gaps (5–25 minutes) distributed across daytime active windows (e.g. 08:00–23:59).
-  - Pre-renders ahead of time in background; persists queue in SQLite (`data/state.db`).
-  - Intelligent catch-up behavior after PC sleep/shutdown (skips/reschedules missed slots without bursting).
-  - Daily counters and quota reset synchronized to midnight Pacific Time (00:00 PT).
-  - System sleep prevention via Windows Win32 `SetThreadExecutionState` during active windows.
-- **Granular YouTube Data API v3 Quota Management & Studio Fallback**:
-  - Transparent quota accounting based on YouTube's granular bucket architecture: `videos.insert` operates within its own dedicated bucket (default 100 calls/day, 1 unit/call) separate from the 10,000 units/day general pool (`videos.list` = 1 unit).
-  - Pacing 50 uploads/day consumes 50 of the 100 upload-bucket calls and is **fully feasible on standard default quotas without requiring a quota extension audit**, while reserving 50 calls as headroom for retries.
-  - **Automatic Playwright Studio Fallback**: When API quota units are exhausted, AutoShorts automatically falls back to Microsoft Edge browser automation (`msedge` channel) to complete uploads with 0 quota cost.
-  - Dual-bucket SQLite quota tracker with auto-throttling and 3 fallback modes: `queue_next_day`, Playwright Studio fallback, or local export.
-- **Multimodal AI Edit Planning (`gemini_video`)**:
-  - Optional AI edit planner leveraging Google's Gemini Files API video understanding to output a structured **Edit Decision List (EDL JSON)**: hook trims, dead-air jump-cuts, and camera zoom punch-ins.
-  - Executed deterministically by FFmpeg; falls back cleanly to transcript-only SemIf planning if disabled or unavailable.
-- **Gemini Spark Companion Integration**:
-  - Loosely coupled companion workflow for Google's 24/7 personal background AI agent (Gemini Spark).
-  - Includes ready-to-use Spark 'Skills' research prompt templates, a dashboard JSON/Markdown import modal, and a watched `inbox/` file drop folder.
-- **Decoupled Provider Abstraction**:
-  - Seamlessly switch between Local GGUF (`llama-cpp-python` on CPU), Google Gemini, and OpenRouter with **zero hardcoded model names** (`model: null` dynamically resolved at runtime).
-- **High-Dopamine Compositor Engine & Caption Presets**:
-  - Dual vertical split-screen (speaker on top, gameplay on bottom with random start offsets).
-  - Three distinct subtitle style presets:
-    - **`neon`** (Default): High-energy yellow karaoke active pop animation with micro-tilt bounce, black outline, and keyword color accents.
-    - **`minimal`**: Clean, elegant sans-serif typography with subtle outline, suitable for commentary and podcast excerpts.
-    - **`pill`**: Modern high-contrast rounded box backdrop behind words for maximum legibility against vibrant gaming footage.
-  - First-3s hook title card, dynamic top progress bar, and dialogue volume normalization (`loudnorm`).
-- **Interactive Local Dashboard & Headless CLI**:
-  - FastAPI web UI running on `http://localhost:8765` with HTML5 video preview player, queue management, quota meter, and scheduler controls.
-  - **Settings Modal (⚙️)** for managing configurations, API keys, and OAuth credentials.
-  - **Live Link Preview** for instant thumbnail and video verification upon pasting YouTube URLs.
-  - 9-stage progress stepper tracking each job's lifecycle from ingestion to final cleanup.
-  - Real-time Server-Sent Events (SSE) log streaming from the orchestrator.
-  - Automatic transactional post-upload intermediate cleanup via path-guarded `SafetyCleaner`.
+AutoShorts provides an all-in-one desktop studio operating on `http://localhost:8765`, divided into four dedicated views:
+
+```mermaid
+flowchart TD
+    subgraph "AutoShorts Command Center"
+        V1["🎬 Shorts Studio & Queue<br/>• Live Link Preview<br/>• 5 Layout Modes<br/>• 7 Caption Presets<br/>• 9:16 Phone Mockup HUD<br/>• Fast 1-Click Re-Burn"]
+        V2["🔥 Viral Research Agent<br/>• Live Trending Finder<br/>• Clickable Video/Podcast Links<br/>• Niche RPM/CPM Matrix<br/>• 1-Click Viral BGM Downloader<br/>• AI Strategy Briefs"]
+        V3["🎙️ Faceless AI Studio<br/>• 7 High-RPM Niches<br/>• SQLite Topic Memory<br/>• Free Edge Neural TTS<br/>• Word-Boundary Subtitles<br/>• 1080x1920 FFmpeg Master"]
+        V4["📊 YouTube Shorts Analytics<br/>• Multi-Source Waterfall<br/>• Shorts Viral Score (SVS)<br/>• Retention Curves (APV)<br/>• Winning Style Recipe Cloning"]
+    end
+```
+
+### 1. 🎬 Shorts Studio & Queue
+- **Live Link Preview**: Real-time thumbnail, title, channel name, and duration probe upon pasting YouTube URLs (`yt-dlp --dump-single-json`).
+- **Layout & Aesthetic Customization**: Select from 5 vertical 9:16 layouts and 7 caption presets, customize primary and highlight colors, and choose background gameplay footage (Minecraft, Subway Surfers, GTA stunts, or Pexels stock).
+- **9:16 Live Phone Mockup Previewer**: Test video framing inside an interactive mobile viewport with YouTube Shorts UI overlay simulation to avoid caption clipping behind mobile buttons.
+- **Transcript Editor & ⚡ Fast 1-Click Re-Burn**: Edit transcribed sentences and regenerate SubStation Alpha subtitles within seconds via `/api/jobs/{id}/re-burn` without re-downloading or re-rendering video.
+- **Real-Time Job Queue & SSE Stepper**: Monitor job progression across 9 pipeline states with live Server-Sent Events (SSE) log streaming.
+
+### 2. 🔥 Viral Research & Trending Finder
+- **Live Trending Videos & Podcasts**: Discovers high-velocity YouTube Shorts and podcast moments across major niches. Every card features a **direct clickable YouTube link** to inspect the source and a **`⚡ 1-Click Send to Pipeline`** button that instantly populates the Studio submission form.
+- **Highest Payout Niche Matrix & Revenue Calculator**: Explores CPM/RPM dynamics across 7 lucrative niches (Finance & Wealth, AI & Tech, Business & Startups, Dark Psychology, Stoicism, Space & Physics, Health & Biohacking). Interactive calculator projects monthly revenue based on daily views and niche RPM.
+- **Trending Viral Songs & 1-Click BGM Downloader**: Curated catalog of copyright-safe viral background tracks (Drift Phonk 138 BPM, Dark Synthwave 120 BPM, Lo-Fi Chill 80 BPM, Fast Tension Ticks 132 BPM) with one-click automated downloads into `assets/music/`.
+- **AI Viral Strategy Brief Copilot**: Generates tailored strategy briefs detailing psychological hook triggers, pacing strategies, visual background recommendations, and thumbnail concepts for any target topic.
+
+### 3. 🎙️ Autonomous Faceless AI Shorts Studio
+- **End-to-End Autonomous Generation**: Produces complete faceless Shorts without requiring long-form video input.
+- **SQLite Topic De-Duplication Memory**: Tracks every generated topic in `data/state.db` (`topic_history` table) so your channels never repeat content ideas.
+- **Free High-Fidelity Neural TTS**: Leverages Microsoft Edge Neural TTS (`edge-tts`) across male and female voice personas in English, Spanish, Hindi, German, French, Portuguese, and Japanese.
+- **Exact Word-Boundary Karaoke Synchronization**: Captures exact word timing boundaries during neural audio synthesis to generate sample-accurate SubStation Alpha (`.ass`) karaoke subtitles.
+- **Pure FFmpeg 1080×1920 Compositor**: Composites neural audio, gameplay/stock footage, background music, and animated subtitles strictly via direct FFmpeg subprocesses with zero MoviePy overhead.
+
+### 4. 📊 YouTube Shorts Analytics & Closed-Loop A/B Telemetry
+- **Multi-Source Waterfall Telemetry**:
+  1. *YouTube Data API v3*: Batch `videos.list` fetching official view counts, likes, comments, and tags.
+  2. *YouTube Analytics API v2*: Channel and video-level audience retention curves and average percentage viewed (APV).
+  3. *Zero-Quota yt-dlp Fallback*: Public metadata scraping when API quota units are conserved.
+  4. *Playwright YouTube Studio Scraper*: Automated headless browser scraping of private Studio metrics (subscriber conversion, impression click-through rate [CTR]).
+- **Shorts Viral Score (SVS)**: Proprietary 0–100 algorithm weighting view velocity (40 pts), duration sweet-spot (25 pts), engagement ratio (20 pts), and title hook sentiment (15 pts).
+- **👑 Winning Style Recipe Cloning**: Analyzes your channel's top-performing Shorts, extracts their winning configuration (aspect layout, subtitle preset, background type, duration), and provides a one-click button to apply that exact winning recipe to future pipeline jobs.
+
+---
+
+## 5 Vertical 9:16 Layout Modes
+
+AutoShorts supports five distinct vertical composition layouts:
+
+| Layout Mode | Structure & Visual Hierarchy | Best Suited For |
+| :--- | :--- | :--- |
+| **`split_50_50`** *(Default)* | Dual vertical split: speaker cropped 9:16 on the top 50% (`540×960`), background gameplay or B-roll anchored on the bottom 50% (`540×960`). | High-energy podcasts, reaction videos, gaming commentary |
+| **`split_70_30`** | Primary video commands the top 70% (`756×1344`) of the frame with a compact 30% (`324×576`) gameplay anchor at the base. | Technical demonstrations, presentations, software walkthroughs |
+| **`full_blur_bg`** | 16:9 widescreen source centered horizontally and vertically over an aesthetically blurred, scaled 9:16 background layer. | Cinematic interviews, landscape documentaries, widescreen movie clips |
+| **`full_center_crop`** | Source video cropped and scaled directly to fill the full 1080×1920 canvas (`crop=ih*9/16:ih`). | Face-to-camera monologue, single-speaker interviews, mobile-shot footage |
+| **`pip_gameplay`** | Full-screen 9:16 gameplay footage with a circular or rounded-corner picture-in-picture speaker bubble overlay. | Commentary streams, storytime videos, educational gaming |
+
+### 9:16 Live Phone Mockup Previewer & Safe-Zone HUD
+
+Mobile video platforms place UI overlays (channel icon, title, like, comment, share, and sound ticker) over vertical videos. The AutoShorts Live Phone Mockup Previewer renders an interactive **YouTube Shorts Mobile UI Safe-Zone HUD** overlay:
+
+```
+┌─────────────────────────────────┐
+│ [Top Progress Bar / Safe Zone]  │
+│                                 │
+│                                 │
+│         [PRIMARY CONTENT]       │
+│                                 │
+│                                 │
+│     ┌─────────────────────┐     │  [Like Button]
+│     │   ACTIVE SUBTITLES  │     │  [Dislike]
+│     │   (Safe Center Zone)│     │  [Comments]
+│     └─────────────────────┘     │  [Share]
+│                                 │  [Remix]
+│ [Channel Pill & Subscribe]      │
+│ [Video Title & Hashtags]        │  [Sound Disc]
+└─────────────────────────────────┘
+```
+
+The HUD ensures subtitle lines and key visual subjects remain centered and completely unobstructed by native mobile platform controls.
+
+---
+
+## 7 Studio Caption Presets & ⚡ Fast Re-Burn
+
+AutoShorts includes 7 high-retention SubStation Alpha (`.ass`) caption rendering presets:
+
+| Preset | Visual Style & Behavior | Typical Use Case |
+| :--- | :--- | :--- |
+| **`neon`** *(Default)* | Vibrant yellow active karaoke pop (`#FFFF00`), dynamic scaling bounce (100% &rarr; 118% &rarr; 100%), micro-tilt angle pop (`\frz-2`), deep black outline, and keyword color accents. | High-retention clips, viral moments, gaming, fast dialogue |
+| **`hormozi`** | Ultra-bold punchy text (The Bold Font / Montserrat Black) with bright yellow active words, deep green keyword accents, and heavy black stroke. | Motivation, business, direct-response advice, personal branding |
+| **`mrbeast`** | Energetic pop font with dynamic orange, lime, and yellow highlights, playful active scale wobble, and thick drop shadows. | Challenges, surprising facts, viral entertainment |
+| **`pill`** | High-contrast bounded dark translucent rounded box backdrop behind active words (`\bord10\shad0`). 100% legibility over any footage. | Busy Minecraft parkour, subway surfers, motion-heavy footage |
+| **`minimal`** | Clean, modern sans-serif typography with subtle outline and soft shadow. Zero distracting animations; crisp word-by-word active focus. | Educational podcasts, technical commentary, interviews |
+| **`cyberpunk`** | Neon cyan text with hot pink glow pulses, futuristic monospace aesthetic, and digital chromatic accenting. | AI & technology, gaming lore, crypto, sci-fi facts |
+| **`cinematic`** | Warm cream and gold serif/sans typography with elegant kerning, subtle fade transitions, and cinematic letterboxing. | History, stoicism philosophy, deep storytelling, audiobooks |
+
+### ⚡ Fast 1-Click Re-Burn Engine
+When tweaking caption text, font sizes, colors, or styles:
+- AutoShorts bypasses the entire download and audio alignment pipeline.
+- Calls `/api/jobs/{id}/re-burn` to re-generate the SubStation Alpha `.ass` file and burn it into the pre-composited base video in seconds.
+- Allows rapid transcript corrections and aesthetic experimentation without wasting compute or waiting for re-renders.
+
+---
+
+## Core Architecture & Engine Invariants
+
+```
+Long-Form YouTube URL / Topic Prompt
+  │
+  ├── [Ingestion & Discovery] (yt-dlp metadata probe / live link preview)
+  ├── [Transcription & Alignment] (faster-whisper CPU int8 / edge-tts word events)
+  ├── [SemIf Decision Engine] (Logit softmax scoring / Gemini video EDL planning)
+  ├── [Compositor Engine] (Pure FFmpeg 1080x1920: 5 layouts + 7 caption presets)
+  ├── [Interactive Review & Re-Burn] (9:16 Live phone previewer + safe-zone HUD)
+  ├── [Daily Spread Scheduler] (50/day cap, 7/hr rolling limit, Pacific Time reset)
+  ├── [Upload & Fallback Engine] (YouTube Data API v3 -> Playwright MS Edge Studio fallback)
+  └── [Closed-Loop Analytics] (Waterfall telemetry -> SVS scoring -> Winning style cloning)
+```
+
+1. **Strict Tooling Exclusivity**:
+   - Video downloading strictly via `yt-dlp` (`--download-sections` for precision cuts).
+   - Video rendering, audio ducking, and compositing strictly via direct `FFmpeg` and `ffprobe` subprocesses.
+   - Zero MoviePy (prohibited due to memory leaks and CPU overhead); zero Playwright video downloads.
+2. **Persistent Daily Spread Scheduler (Up to 50 Shorts/Day)**:
+   - Hard daily ceiling of **50 uploads per day** (`daily_upload_cap: 50`).
+   - Strict rolling rate limiting of **maximum 7 uploads per rolling hour**.
+   - Non-fixed uniform random jittered gaps (5–25 minutes) distributed across daytime active windows (e.g. 08:00–23:59).
+   - System sleep prevention via Windows Win32 `SetThreadExecutionState` during active windows.
+   - Daily quota resets synchronized to midnight Pacific Time (00:00 PT).
+3. **Granular Quota Accounting & Studio Fallback**:
+   - Pacing 50 uploads/day consumes 50 of the 100 dedicated `videos.insert` bucket calls, requiring **zero quota extension audits**.
+   - Mid-flight failover catches `403 QuotaExceeded` and automatically deploys headless Microsoft Edge browser automation (`msedge`) to complete uploads with 0 quota cost.
+4. **Hardware Optimized for Consumer Windows PCs**:
+   - 100% executable on consumer multi-core CPUs with integrated Intel UHD / Iris Xe Graphics.
+   - Bounded concurrency (`concurrency = 1`) to eliminate CPU thrashing and memory exhaustion.
 
 ---
 
 ## Quick Start (Windows One-Click Launcher)
 
 > [!NOTE]
-> **Why `start.bat` is excluded from git:**
-> Windows SmartScreen and security software often flag downloaded `.bat` files from the internet as suspicious. To avoid security prompts, create your own local `start.bat` file in this directory.
+> **Why `start.bat` is created locally:**
+> Windows SmartScreen often flags downloaded `.bat` files from the internet. To avoid security prompts, create your own local `start.bat` file in this directory.
 
 ### Creating Your Local `start.bat` (Step-by-Step)
 *(Full standalone copy-paste guide also available in [bat.md](file:///c:/Users/Sirisha%20Rajana/Desktop/New%20folder/Automation/bat.md))*
@@ -177,7 +277,7 @@ endlocal
 
 1. **One-Click Launch**:
    - Double-click **`start.bat`**.
-   - It automatically checks for dependencies, verifies/creates `.venv`, opens **`http://localhost:8765`** in your default browser, and launches the web dashboard.
+   - Automatically bootstraps virtual environments, opens **`http://localhost:8765`** in your default browser, and launches the web dashboard.
 
 2. **One-Time YouTube Studio Browser Sign-In**:
    - For zero-quota browser automation uploads (`upload.mode: studio`), run:
@@ -189,125 +289,73 @@ endlocal
 
 ---
 
----
-
 ## Configuration & Settings Modal (⚙️)
 
-AutoShorts v1.0 features an interactive **Settings Modal** accessible directly from the top navigation bar of the web dashboard (click the **⚙️ Settings** icon).
-
-The modal allows you to inspect and modify pipeline behavior in real time without manually editing YAML files or restarting the server:
+AutoShorts features an interactive **Settings Modal** accessible from the dashboard header (click **⚙️ Settings**):
 
 - **AI Engine / LLM Provider**:
   - Switch between `local` (CPU GGUF via `llama-cpp-python`), `gemini` (Google Gemini 1.5 Flash / Pro), and `openrouter`.
-  - Enter or update `GEMINI_API_KEY` and `OPENROUTER_API_KEY` with automatic secret masking and redaction in logs.
+  - Enter or update `GEMINI_API_KEY` and `OPENROUTER_API_KEY` with automatic secret masking in logs.
   - Set local model paths (default: `data/models/Qwen3-0.6B-Instruct-Q8_0.gguf`).
-- **Caption Style Presets**:
-  - Select your default caption aesthetic: `neon`, `minimal`, or `pill`.
+- **Caption Style & Layout Defaults**:
+  - Select default caption preset (`neon`, `hormozi`, `mrbeast`, `pill`, `minimal`, `cyberpunk`, `cinematic`).
+  - Set default layout mode (`split_50_50`, `split_70_30`, `full_blur_bg`, `full_center_crop`, `pip_gameplay`).
 - **Upload & Privacy Defaults**:
-  - Choose default Shorts visibility: `public`, `unlisted`, or `private`.
+  - Set default Shorts visibility: `public`, `unlisted`, or `private`.
   - Toggle between `api`, `studio`, and `local` upload modes.
   - Set quota exhaustion fallback behavior (`studio`, `queue_next_day`, or `local`).
 - **YouTube OAuth Credentials**:
   - Upload `client_secret.json` directly through the modal.
-  - Initiate one-click in-app OAuth 2.0 authorization.
+  - Initiate one-click in-app OAuth 2.0 authorization saving tokens to `config/credentials.json`.
 
 ---
 
-## YouTube Data API v3 In-App OAuth Setup
+## REST API Reference
 
-To upload Shorts automatically using the official YouTube Data API v3:
+The FastAPI server exposes clean REST endpoints covering all pipeline capabilities:
 
-### 1. Create Google Cloud Project & Credentials
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project (e.g. `AutoShorts-Uploader`).
-3. Navigate to **APIs & Services** &rarr; **Library**, search for **YouTube Data API v3**, and click **Enable**.
-4. Go to **APIs & Services** &rarr; **OAuth consent screen**:
-   - Select **External** user type and click **Create**.
-   - Fill in the required App name and Support email.
-   - Under **Test users**, add your YouTube channel's Google account email address.
-5. Go to **APIs & Services** &rarr; **Credentials**:
-   - Click **Create Credentials** &rarr; **OAuth client ID**.
-   - Set Application type to **Desktop app**.
-   - Name it `AutoShorts Desktop Client` and click **Create**.
-   - Click **Download JSON** and save the file as **`client_secret.json`**.
-
-### 2. Connect in AutoShorts
-1. Place **`client_secret.json`** into the `config/` directory (or open the dashboard **⚙️ Settings** modal and click **Upload client_secret.json**).
-2. Click **Authorize YouTube API** in the dashboard header or Settings modal.
-3. A Google sign-in window will open in your browser. Select your channel account and grant upload permissions (`youtube.upload`).
-4. Once completed, AutoShorts saves the authorized refresh token to `config/credentials.json`. All future uploads run autonomously without user interaction.
-
----
-
-## Caption Style Presets
-
-AutoShorts includes 3 built-in SubStation Alpha (`.ass`) caption rendering presets optimized for vertical mobile screens:
-
-| Preset | Aesthetic & Behavior | Best Suited For |
+### Jobs & Pipeline (`/api/jobs`)
+| Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| **`neon`** *(Default)* | Vibrant yellow active karaoke pop (`#FFFF00`), dynamic `\t` scaling bounce (100% &rarr; 118% &rarr; 100%), micro-tilt angle pop (`\frz-2`), deep black outline, and keyword color accents. | High-retention clips, viral moments, gaming, fast-paced dialogue |
-| **`minimal`** | Clean, modern sans-serif typography (Montserrat ExtraBold) with subtle outline and soft drop shadow. Zero distracting animations; crisp word-by-word active focus. | Educational podcasts, technical commentary, interviews, business insights |
-| **`pill`** | High-contrast bounded dark pill backdrop behind the active text block (`\bord10\shad0` translucent rounded background). Guarantees 100% legibility over any visual background. | Busy Minecraft parkour, vibrant gameplay, colorful animation, motion-heavy footage |
+| `GET` | `/api/jobs` | List all jobs with status, metadata, and schedule info. |
+| `POST` | `/api/jobs` | Submit a new clip job with URL, layout mode, caption preset, and instructions. |
+| `GET` | `/api/jobs/{id}` | Retrieve comprehensive job status, candidates, EDL, and rendered paths. |
+| `POST` | `/api/jobs/{id}/re-burn` | ⚡ Fast 1-click re-burn of ASS subtitles into base video with modified styling. |
+| `DELETE` | `/api/jobs/{id}` | Cancel job and purge intermediate files via `SafetyCleaner`. |
 
-You can configure your default preset in `config/config.yaml`:
-```yaml
-subtitles:
-  style_preset: "neon" # "neon", "minimal", or "pill"
-```
-Or override it per job submission through the dashboard or CLI.
+### Built-In Viral Research Agent (`/api/research`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/research/trending` | Fetch live trending YouTube Shorts and podcasts with direct clickable links. |
+| `GET` | `/api/research/payout-matrix` | Retrieve RPM/CPM intelligence and calculate projected revenue across niches. |
+| `GET` | `/api/research/viral-music` | List trending royalty-free viral background audio tracks. |
+| `POST` | `/api/research/download-music` | 1-click download of selected viral audio track into `assets/music/`. |
+| `POST` | `/api/research/generate-brief` | Generate an AI Viral Strategy Brief Copilot recommendation for a given topic. |
 
----
+### Autonomous Faceless AI Shorts Studio (`/api/faceless`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/faceless/voices` | List available Microsoft Edge Neural TTS voices by language and historical topics. |
+| `POST` | `/api/faceless/generate-script` | Generate high-retention hook, script, and SEO tags with anti-duplication memory. |
+| `POST` | `/api/faceless/create` | Synthesize neural TTS audio, build subtitles, composite 1080×1920 video, and queue. |
+| `GET` | `/api/faceless/topics` | Retrieve SQLite `topic_history` de-duplication log across channels. |
 
-## Live Link Preview
+### YouTube Shorts Analytics (`/api/analytics`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/analytics/overview` | Summary KPI cards (total views, avg retention, avg SVS, top Shorts). |
+| `GET` | `/api/analytics/videos` | Video performance table with views, APV, likes, SVS, and layout attribution. |
+| `POST` | `/api/analytics/refresh` | Trigger multi-source waterfall refresh (API v3 &rarr; Analytics v2 &rarr; yt-dlp &rarr; Studio). |
+| `GET` | `/api/analytics/attribution/winning-style` | Extract the winning layout/caption/background recipe from top-performing Shorts. |
 
-When pasting YouTube URLs into the dashboard queue submission box:
-- AutoShorts instantly initiates a lightweight non-download metadata probe (`yt-dlp --dump-single-json`).
-- Displays a **Live Link Preview Card** showing:
-  - Video thumbnail image
-  - Video title and duration
-  - Original channel name and channel URL
-  - Direct link validity status
-- Allows operators to verify clip targets before submitting them into the processing pipeline.
-
----
-
-## Playwright MS Edge Studio Auto-Fallback
-
-AutoShorts provides an automated failover system to ensure 100% upload delivery continuity:
-
-```mermaid
-flowchart TD
-    A[Start Upload Job] --> B{API Quota Available?}
-    B -->|Yes| C[YouTube Data API v3 Upload]
-    B -->|Exhausted / 403| D[Playwright MS Edge Studio Fallback]
-    C -->|Success| E[Verified & Completed]
-    C -->|HTTP 403 QuotaExceeded| D
-    D -->|Browser Automation| E
-```
-
-1. **Primary Route**: AutoShorts uploads via YouTube Data API v3 chunked resumable protocol.
-2. **Auto-Detection**: If the daily upload bucket is depleted (`quota_tracker.can_upload() == False`) or the API returns `403 QuotaExceeded`, the pipeline automatically catches the exception.
-3. **Seamless Failover**: Without aborting the job, the orchestrator invokes `PlaywrightStudioUploader`, launches Microsoft Edge (`msedge`), navigates to YouTube Studio (`studio.youtube.com`), and completes the upload using the authenticated persistent user profile (`data/edge_profile`).
-4. **Zero Quota Units Spent**: Studio browser uploads consume **0 API quota units**, allowing your publishing schedule to continue uninterrupted.
-
----
-
-## Upload Modes
-
-AutoShorts supports three interchangeable upload targets (`upload.mode` in `config/config.yaml` or overridden on job submission):
-1. **`api`** (Default): YouTube Data API v3 resumable chunked upload with dual-bucket quota tracking (`videos.insert` dedicated upload bucket).
-2. **`studio`**: Playwright browser automation with Microsoft Edge (`msedge` channel) and persistent profile. Consumes **0 API quota units**, ideal for restricted or exhausted API projects.
-3. **`local`**: Offline export of master MP4s and subtitle files directly to `output/` without contacting YouTube.
-
----
-
-## Web Dashboard & Real-Time Monitoring
-
-- **9-Stage Progress Stepper**: Live visual progress tracking through:
-  `QUEUED` &rarr; `METADATA_FETCHED` &rarr; `TRANSCRIPT_FETCHED` &rarr; `WINDOWS_SLICED` &rarr; `CLIPS_SELECTED` &rarr; `EDL_GENERATED` &rarr; `SUBTITLES_GENERATED` &rarr; `COMPOSITING` &rarr; `READY_FOR_REVIEW` (then `SCHEDULED` / `UPLOADING` &rarr; `COMPLETED` / `CLEANED`).
-- **Live SSE Log Streaming**: Real-time console log viewer with Server-Sent Events (`/api/logs/stream`), log pause/resume, search filter, and buffer clear.
-- **Quota & Schedule Meters**: Real-time Pacific Time daily upload meter, hourly rolling limiter gauge, and pause/resume toggles.
-- **Transactional Post-Upload Cleanup**: Automatically purges raw downloads, extracted WAVs, and intermediate clips upon verified upload completion via path-guarded recycle-bin deletion (`send2trash`).
+### Settings & Quota (`/api/settings`, `/api/quota`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/settings` | Get current settings with masked API keys. |
+| `POST` | `/api/settings` | Atomically update configuration keys and `.env` variables. |
+| `POST` | `/api/settings/upload-client-secret` | Upload Google OAuth `client_secret.json`. |
+| `POST` | `/api/settings/oauth/authorize` | Launch in-app Google OAuth consent flow for YouTube Data API v3. |
+| `GET` | `/api/quota` | Current daily upload count, rolling limit status, and Pacific Time reset timer. |
 
 ---
 

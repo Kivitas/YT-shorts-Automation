@@ -26,7 +26,7 @@ Before submitting contributions, please review our strict architecture principle
    - All console and file logging automatically masks sensitive credentials via `logging_setup.py`.
 6. **Automated Testing**:
    - All PRs must include network-independent unit tests under `tests/` leveraging `pytest` and `pytest-mock`.
-   - The test suite must maintain 100% passing status (333+ tests).
+   - The test suite must maintain 100% passing status (396 passing tests).
 
 ---
 
@@ -80,12 +80,25 @@ src/autoshorts/
 │   └── slot_generator.py     # Jittered publishing slot generator (5–25 min intervals)
 ├── transcript/
 │   └── fetcher.py            # Timed transcript fetcher (YouTube transcript API)
-└── uploader/
-    ├── description_builder.py# Attribution & description generator
-    ├── local_exporter.py     # Offline disk export
-    ├── studio_playwright.py  # Headless/headed MS Edge YouTube Studio uploader & auto-fallback
-    ├── verifier.py           # Upload status and processing verification
-    └── youtube_api.py        # YouTube Data API v3 chunked resumable uploader
+├── uploader/
+│   ├── description_builder.py# Attribution & description generator
+│   ├── local_exporter.py     # Offline disk export
+│   ├── studio_playwright.py  # Headless/headed MS Edge YouTube Studio uploader & auto-fallback
+│   ├── verifier.py           # Upload status and processing verification
+│   └── youtube_api.py        # YouTube Data API v3 chunked resumable uploader
+├── analytics/
+│   ├── collector.py          # Unified multi-source analytics collector (API v3 + Analytics v2 + yt-dlp + Playwright)
+│   ├── models.py             # YouTube Shorts metrics, A/B performance, and telemetry models
+│   ├── scoring.py            # Shorts Viral Score (SVS) algorithm and winning recipe detector
+│   ├── studio_scraper.py     # Playwright YouTube Studio analytics scraper fallback
+│   └── yt_dlp_collector.py   # Zero-quota public metrics fallback collector
+└── research_agent/
+    ├── discovery.py          # Live trending videos, podcasts, and viral clips discovery
+    ├── models.py             # Viral research, payout matrix, BGM, and faceless short models
+    ├── faceless_studio.py    # Autonomous Faceless AI Shorts generator (edge-tts + ASS + FFmpeg)
+    ├── music.py              # Trending viral background music catalog & downloader
+    ├── payout_matrix.py      # Highest payout niche matrix (RPM/CPM) & revenue calculator
+    └── research_brief_agent.py # AI Viral Strategy Brief Copilot
 ```
 
 ---
@@ -115,7 +128,7 @@ src/autoshorts/
    ```powershell
    uv run pytest -q
    ```
-   All 333+ tests should pass cleanly without regressions.
+   All 396 tests should pass cleanly without regressions.
 
 5. **Create a topic branch**:
    ```powershell

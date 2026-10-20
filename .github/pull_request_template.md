@@ -16,10 +16,15 @@ Fixes #(issue number)
 ## Affected Components
 
 - [ ] Dashboard Settings Modal (`autoshorts.core.settings_manager`)
+- [ ] 4-View Studio Command Center (`autoshorts.dashboard`)
+- [ ] In-App YouTube Shorts Analytics & A/B Telemetry (`autoshorts.analytics`)
+- [ ] Built-In Autonomous Viral Research Agent (`autoshorts.research_agent`)
+- [ ] Autonomous Faceless AI Shorts Studio (`autoshorts.research_agent`)
+- [ ] 5 Vertical 9:16 Layout Modes & Live Phone Previewer (`autoshorts.media.compositor`)
+- [ ] 7 Studio Caption Presets & Fast Re-Burn (`autoshorts.media.ass_styler`)
 - [ ] YouTube Data API v3 OAuth & Chunked Uploader (`autoshorts.uploader.youtube_api`)
 - [ ] Playwright MS Edge Studio Fallback (`autoshorts.uploader.studio_playwright`)
 - [ ] Gameplay Backgrounds Fetcher (`autoshorts.media.background_fetcher`)
-- [ ] Subtitle Style Presets (`neon` / `minimal` / `pill`) (`autoshorts.media.ass_styler`)
 - [ ] Spread Scheduler & Quota Tracker (`autoshorts.scheduler`, `autoshorts.quota`)
 - [ ] SemIf Decider & Window Slicer (`autoshorts.decision`)
 - [ ] FFmpeg Compositor & Dopamine Effects (`autoshorts.media.compositor`)
@@ -30,7 +35,7 @@ Fixes #(issue number)
 - [ ] My code adheres to the project coding style (Python 3.12, strict type annotations, ruff/black).
 - [ ] Lint checks pass cleanly: `uv run ruff check src/ tests/`
 - [ ] Code formatting check passes cleanly: `uv run ruff format --check src/ tests/`
-- [ ] All unit and integration tests pass locally (`uv run pytest -q`, 333+ passing tests).
+- [ ] All unit and integration tests pass locally (`uv run pytest -q`, 396 passing tests).
 - [ ] Tooling constraints respected:
   - Video downloading strictly via `yt-dlp` (`--download-sections` for precision cuts).
   - Video compositing strictly via direct `FFmpeg` and `ffprobe` subprocesses.

@@ -112,6 +112,34 @@
       </div>
     </section>
 
+    <!-- 🎛️ Top-Level Navigation Mode Switcher Bar -->
+    <nav class="main-view-tabs" id="main-view-tabs" role="tablist">
+      <button type="button" class="view-tab-btn active" id="tab-btn-studio" data-view="view-studio" onclick="switchMainView('view-studio')" role="tab" aria-selected="true">
+        <span class="tab-icon">🎬</span>
+        <span class="tab-title">Shorts Studio &amp; Queue</span>
+        <span class="tab-badge" id="studio-queue-tab-badge">0</span>
+      </button>
+      <button type="button" class="view-tab-btn" id="tab-btn-research" data-view="view-research" onclick="switchMainView('view-research')" role="tab" aria-selected="false">
+        <span class="tab-icon">🔥</span>
+        <span class="tab-title">Viral Research &amp; Trending Finder</span>
+        <span class="tab-badge pulse-badge" id="research-tab-badge">HOT</span>
+      </button>
+      <button type="button" class="view-tab-btn" id="tab-btn-moneyprinter" data-view="view-moneyprinter" onclick="switchMainView('view-moneyprinter')" role="tab" aria-selected="false">
+        <span class="tab-icon">🎙️</span>
+        <span class="tab-title">Faceless AI Studio</span>
+        <span class="tab-badge new-badge">NEURAL</span>
+      </button>
+      <button type="button" class="view-tab-btn" id="tab-btn-analytics" data-view="view-analytics" onclick="switchMainView('view-analytics')" role="tab" aria-selected="false">
+        <span class="tab-icon">📊</span>
+        <span class="tab-title">YouTube Shorts Analytics</span>
+        <span class="tab-badge kpi-badge" id="analytics-tab-badge">LIVE</span>
+      </button>
+    </nav>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 1: 🎬 Shorts Studio & Queue (Active Default)                     -->
+    <!-- ===================================================================== -->
+    <div id="view-studio" class="main-view-container active">
     <!-- ⚡ 1-Click Studio Template Profiles Bar -->
     <section class="studio-presets-section">
       <div class="card presets-card">
@@ -748,6 +776,670 @@
         </div>
       </div>
     </section>
+    </div>
+    <!-- End of #view-studio -->
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 2: 🔥 Viral Research & Trending Finder                           -->
+    <!-- ===================================================================== -->
+    <div id="view-research" class="main-view-container" style="display: none;">
+      <!-- Header & AI Strategy Copilot Banner -->
+      <section class="research-header-section">
+        <div class="card research-copilot-card">
+          <div class="copilot-header">
+            <div class="copilot-brand">
+              <span class="copilot-icon">🧠</span>
+              <div>
+                <h2>Autonomous Viral Research Agent &amp; Trending Discovery</h2>
+                <p class="subtitle">Scans YouTube velocity (views/hr), high-payout niches, and viral audio with 1-click pipeline handoff</p>
+              </div>
+            </div>
+            <div class="copilot-actions">
+              <button id="scan-trends-btn" type="button" class="btn btn-secondary btn-sm" onclick="scanLiveTrends()">
+                🔍 Scan Live Trends
+              </button>
+              <button id="generate-brief-btn" type="button" class="btn btn-primary-gradient btn-sm" onclick="generateStrategyBrief()">
+                🤖 Generate AI Viral Strategy Brief
+              </button>
+            </div>
+          </div>
+
+          <!-- Niche Selector Pills -->
+          <div class="niche-selector-bar">
+            <span class="niche-bar-label">🎯 Niche Focus:</span>
+            <div class="niche-pills" id="research-niche-pills">
+              <button type="button" class="niche-pill active" data-genre="ai_tech" onclick="selectResearchNiche('ai_tech')">🤖 AI &amp; Tech</button>
+              <button type="button" class="niche-pill" data-genre="finance" onclick="selectResearchNiche('finance')">💰 Finance &amp; Wealth</button>
+              <button type="button" class="niche-pill" data-genre="podcasts" onclick="selectResearchNiche('podcasts')">🎙️ Podcasts &amp; Interviews</button>
+              <button type="button" class="niche-pill" data-genre="business" onclick="selectResearchNiche('business')">💼 Business &amp; Startups</button>
+              <button type="button" class="niche-pill" data-genre="science" onclick="selectResearchNiche('science')">🔭 Science &amp; Space</button>
+              <button type="button" class="niche-pill" data-genre="health" onclick="selectResearchNiche('health')">🧬 Health &amp; Longevity</button>
+              <button type="button" class="niche-pill" data-genre="gaming" onclick="selectResearchNiche('gaming')">🎮 Gaming &amp; Esports</button>
+              <button type="button" class="niche-pill" data-genre="comedy" onclick="selectResearchNiche('comedy')">🎭 Pop Culture &amp; Comedy</button>
+            </div>
+          </div>
+
+          <!-- Custom Query Bar -->
+          <div class="research-search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">🔎</span>
+              <input type="text" id="research-query-input" placeholder="Search live viral topics, podcast channels, creators (e.g. 'Lex Fridman AI agents', 'Nvidia GPU shortage')..." onkeydown="if(event.key==='Enter') scanLiveTrends()">
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="scanLiveTrends()">Search</button>
+          </div>
+
+          <!-- Collapsible AI Strategy Brief Card -->
+          <div id="ai-strategy-brief-card" class="ai-strategy-brief-card" style="display: none;">
+            <div class="brief-header" onclick="toggleStrategyBrief()">
+              <div class="brief-title-wrap">
+                <span class="brief-badge-icon">⚡</span>
+                <span class="brief-title">AI Viral Strategy Copilot Brief</span>
+                <span class="badge badge-success">Strategy Ready</span>
+              </div>
+              <span id="brief-chevron" class="timeline-chevron">▲</span>
+            </div>
+            <div class="brief-body" id="brief-body-content">
+              <div class="brief-grid">
+                <!-- Left: Recommended Video Card -->
+                <div class="brief-col-video">
+                  <span class="brief-label">🎯 #1 Recommended Video to Clip</span>
+                  <div class="brief-video-preview" id="brief-video-preview">
+                    <!-- Populated dynamically -->
+                  </div>
+                </div>
+
+                <!-- Right: 3 Hook Variants & Settings -->
+                <div class="brief-col-hooks">
+                  <span class="brief-label">🪝 3 High-Retention Hook Variants</span>
+                  <div class="hook-variant-cards">
+                    <div class="hook-card" onclick="selectBriefHook(this)">
+                      <div class="hook-type-tag tag-curiosity">❓ Curiosity Question</div>
+                      <p class="hook-text" id="hook-curiosity">Loading viral hook...</p>
+                    </div>
+                    <div class="hook-card" onclick="selectBriefHook(this)">
+                      <div class="hook-type-tag tag-warning">⚠️ Warning / Common Mistake</div>
+                      <p class="hook-text" id="hook-warning">Loading warning hook...</p>
+                    </div>
+                    <div class="hook-card" onclick="selectBriefHook(this)">
+                      <div class="hook-type-tag tag-shock">⚡ Data Shock / Statistic</div>
+                      <p class="hook-text" id="hook-shock">Loading shock hook...</p>
+                    </div>
+                  </div>
+
+                  <div class="brief-recipe-row">
+                    <div class="recipe-metric-pill">
+                      <span class="rec-label">Preset:</span>
+                      <span class="rec-val" id="brief-profile-rec">⚡ Viral Split</span>
+                    </div>
+                    <div class="recipe-metric-pill">
+                      <span class="rec-label">BGM:</span>
+                      <span class="rec-val" id="brief-bgm-rec">🎵 Drift Phonk</span>
+                    </div>
+                    <div class="recipe-metric-pill">
+                      <span class="rec-label">Est. RPM:</span>
+                      <span class="rec-val" id="brief-rpm-val">$0.35</span>
+                    </div>
+                    <div class="recipe-metric-pill">
+                      <span class="rec-label">Funnel CPM:</span>
+                      <span class="rec-val" id="brief-cpm-val">$32.00</span>
+                    </div>
+                    <div class="recipe-metric-pill highlight">
+                      <span class="rec-label">Est. Revenue:</span>
+                      <span class="rec-val" id="brief-earnings-val">$1,280/mo</span>
+                    </div>
+                  </div>
+
+                  <div class="brief-action-row">
+                    <button id="execute-strategy-btn" type="button" class="btn btn-primary-gradient" onclick="executeFullStrategy()">
+                      ⚡ 1-Click Execute Full Strategy (Apply Profile + BGM + Clip Link)
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section A: 🎬 Trending Videos & Podcasts to Clip -->
+      <section class="research-section" id="trending-videos-section">
+        <div class="section-heading-row">
+          <div class="heading-left">
+            <h3>🎬 Trending Videos &amp; Podcasts to Clip <span class="badge" id="trending-count-badge">8 Videos Found</span></h3>
+            <p class="section-sub">Ranked by real-time viral velocity (views/hour), 15m–90m clipping sweet spot, and engagement ratio</p>
+          </div>
+          <div class="heading-actions">
+            <button id="refresh-trending-btn" type="button" class="btn btn-secondary btn-sm" onclick="scanLiveTrends()">
+              🔄 Refresh Trends
+            </button>
+          </div>
+        </div>
+        <div class="trending-videos-grid" id="trending-videos-grid">
+          <!-- Dynamically populated with rich video cards -->
+        </div>
+      </section>
+
+      <!-- Section B: 💰 Highest Payout Niches & Revenue Calculator -->
+      <section class="research-section" id="niche-payout-section">
+        <div class="section-heading-row">
+          <div class="heading-left">
+            <h3>💰 Highest Payout Niches &amp; Funnel RPM Matrix</h3>
+            <p class="section-sub">Direct Shorts Ad RPM ($0.05–$0.45) vs. Related-Video Long-Form Funnel CPM ($6.00–$55.00+)</p>
+          </div>
+        </div>
+
+        <div class="niche-matrix-wrapper">
+          <div class="table-container">
+            <table class="niche-table" id="niche-matrix-table">
+              <thead>
+                <tr>
+                  <th>Niche / Genre</th>
+                  <th>Shorts Ad RPM (/1k)</th>
+                  <th>Long-Form Funnel CPM (/1k)</th>
+                  <th>Effective Blended RPM</th>
+                  <th>Competition</th>
+                  <th>Best Upload Hours (PT)</th>
+                  <th>Recommended Studio Profile</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="niche-table-body">
+                <!-- Dynamically populated from /api/research/niches -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Interactive Revenue Calculator Card -->
+          <div class="card revenue-calc-card">
+            <div class="card-title">
+              <span>💰 Interactive Shorts + Related-Video Funnel Calculator</span>
+              <span class="badge">Live Projections</span>
+            </div>
+            <div class="calc-grid">
+              <div class="calc-controls-col">
+                <div class="control-group">
+                  <div class="slider-header">
+                    <label for="calc-views-slider">Target Monthly Shorts Views</label>
+                    <span class="slider-val" id="calc-views-val">1,000,000 views</span>
+                  </div>
+                  <input type="range" id="calc-views-slider" min="100000" max="10000000" step="100000" value="1000000" oninput="updateRevenueCalculator()">
+                </div>
+
+                <div class="control-group">
+                  <label for="calc-niche-select">Selected Niche Benchmark</label>
+                  <select id="calc-niche-select" onchange="updateRevenueCalculator()">
+                    <option value="finance">💰 Finance &amp; Wealth ($0.35 RPM / $38 CPM)</option>
+                    <option value="ai_tech" selected>🤖 AI &amp; Tech ($0.30 RPM / $32 CPM)</option>
+                    <option value="business">💼 Business &amp; Startups ($0.26 RPM / $28 CPM)</option>
+                    <option value="health">🧬 Health &amp; Longevity ($0.22 RPM / $24 CPM)</option>
+                    <option value="science">🔭 Science &amp; Space ($0.18 RPM / $20 CPM)</option>
+                    <option value="podcasts">🎙️ Podcasts &amp; Interviews ($0.14 RPM / $12 CPM)</option>
+                    <option value="gaming">🎮 Gaming &amp; Esports ($0.09 RPM / $8 CPM)</option>
+                  </select>
+                </div>
+
+                <div class="control-group">
+                  <div class="slider-header">
+                    <label for="calc-ctr-slider">Related-Video Funnel CTR (Mobile Click Rate)</label>
+                    <span class="slider-val" id="calc-ctr-val">2.5% CTR</span>
+                  </div>
+                  <input type="range" id="calc-ctr-slider" min="0.5" max="8.0" step="0.5" value="2.5" oninput="updateRevenueCalculator()">
+                </div>
+              </div>
+
+              <div class="calc-results-col">
+                <div class="calc-result-box">
+                  <span class="calc-res-label">Direct Shorts Ad Revenue</span>
+                  <span class="calc-res-val" id="calc-direct-rev">$300.00</span>
+                  <span class="calc-res-sub">From YouTube Shorts Ad-Revenue Pool</span>
+                </div>
+                <div class="calc-result-box highlight-funnel">
+                  <span class="calc-res-label">Long-Form Funnel Revenue</span>
+                  <span class="calc-res-val" id="calc-funnel-rev">$800.00</span>
+                  <span class="calc-res-sub">25,000 views driven to related long-form</span>
+                </div>
+                <div class="calc-result-box total-box">
+                  <span class="calc-res-label">Total Monthly Potential</span>
+                  <span class="calc-res-val total-val" id="calc-total-rev">$1,100.00</span>
+                  <span class="calc-res-sub" id="calc-annual-rev">Annualized Run-Rate: $13,200/yr</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section C: 🎵 Trending Viral Songs & 1-Click BGM Downloader -->
+      <section class="research-section" id="viral-music-section">
+        <div class="section-heading-row">
+          <div class="heading-left">
+            <h3>🎵 Trending Viral Songs &amp; 1-Click BGM Downloader</h3>
+            <p class="section-sub">Copyright-safe viral background tracks for FFmpeg sidechain ducking + Live Trending YouTube Shorts commercial sounds</p>
+          </div>
+        </div>
+
+        <div class="music-two-col">
+          <!-- Left: Royalty-Free BGM Catalog -->
+          <div class="card music-catalog-card">
+            <div class="card-title">
+              <span>🎧 Royalty-Free Viral BGM Catalog</span>
+              <span class="hint">Downloads directly into <code>assets/music/</code></span>
+            </div>
+            <div class="bgm-catalog-list" id="bgm-catalog-list">
+              <!-- Dynamically rendered tracks -->
+            </div>
+          </div>
+
+          <!-- Right: Live Trending Commercial Shorts Audio -->
+          <div class="card trending-audio-card">
+            <div class="card-title">
+              <span>🔥 Live Trending YouTube Shorts Sounds</span>
+              <span class="badge">Billboard &amp; Reels</span>
+            </div>
+            <div class="trending-commercial-list" id="trending-commercial-songs-list">
+              <!-- Dynamically rendered trending sounds -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <!-- End of #view-research -->
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 3: 🎙️ Autonomous Faceless AI Shorts Studio                       -->
+    <!-- ===================================================================== -->
+    <div id="view-moneyprinter" class="main-view-container" style="display: none;">
+      <section class="moneyprinter-header-section">
+        <div class="card moneyprinter-hero-card">
+          <div class="mp-hero-content">
+            <div class="mp-hero-brand">
+              <span class="mp-brand-icon">🎙️</span>
+              <div>
+                <h2>Autonomous Faceless AI Shorts Studio</h2>
+                <p class="subtitle">Autonomous 100% on-device faceless short creation — Microsoft Neural TTS (edge-tts), word-level ASS sync, stock/gameplay footage &amp; FFmpeg compositor</p>
+              </div>
+            </div>
+            <div class="mp-hero-badges">
+              <span class="badge badge-success">✓ 100% Free Neural TTS</span>
+              <span class="badge badge-info">✓ Pure FFmpeg (Zero MoviePy)</span>
+              <span class="badge badge-purple">✓ SQLite Topic Memory</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="moneyprinter-workspace">
+        <div class="moneyprinter-grid">
+          <!-- Step 1: Configuration Column -->
+          <div class="card mp-config-card">
+            <div class="card-title">
+              <span>Step 1: Niche, Topic &amp; Neural Voice</span>
+              <span class="step-badge">1 / 2</span>
+            </div>
+
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="mp-niche-select">Target Niche / Content Pillar</label>
+                <select id="mp-niche-select" onchange="handleMpNicheChange()">
+                  <option value="ai_tech" selected>🤖 AI &amp; Tech Facts</option>
+                  <option value="finance">💰 Finance Secrets &amp; Wealth</option>
+                  <option value="stoicism">🏛️ Stoicism &amp; Mindset</option>
+                  <option value="psychology">🧠 Dark Psychology &amp; Behavior</option>
+                  <option value="dark_history">📜 Untold &amp; Dark History</option>
+                  <option value="science">🔭 Space &amp; Physics Mysteries</option>
+                  <option value="business">💼 Billionaire &amp; Startup Tactics</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="mp-lang-select">Narration Language</label>
+                <select id="mp-lang-select" onchange="refreshMpVoices()">
+                  <option value="en" selected>English (US / GB)</option>
+                  <option value="es">Spanish (Español)</option>
+                  <option value="hi">Hindi (हिन्दी)</option>
+                  <option value="de">German (Deutsch)</option>
+                  <option value="fr">French (Français)</option>
+                  <option value="pt">Portuguese (Português)</option>
+                  <option value="ja">Japanese (日本語)</option>
+                </select>
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <div class="label-with-action">
+                  <label for="mp-topic-input">Specific Topic (or leave blank for AI Auto-Topic)</label>
+                  <button type="button" class="btn-text-action" id="mp-random-topic-btn" onclick="setRandomTopic()">🎲 Random Viral Topic</button>
+                </div>
+                <input type="text" id="mp-topic-input" placeholder="e.g. Why the 3-second rule breaks smartphone addiction (or leave empty)">
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="mp-voice-select">Microsoft Neural TTS Voice (edge-tts)</label>
+                <select id="mp-voice-select">
+                  <option value="en-US-ChristopherNeural" selected>Christopher (US - Deep, Authoritative Male)</option>
+                  <option value="en-US-GuyNeural">Guy (US - Energetic &amp; Engaging Male)</option>
+                  <option value="en-US-AriaNeural">Aria (US - Crisp &amp; Expressive Female)</option>
+                  <option value="en-US-JennyNeural">Jenny (US - Conversational Female)</option>
+                  <option value="en-GB-RyanNeural">Ryan (GB - Cinematic Documentary Male)</option>
+                  <option value="en-GB-SoniaNeural">Sonia (GB - Sophisticated Female)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="mp-preset-select">Caption Style Preset</label>
+                <select id="mp-preset-select">
+                  <option value="hormozi" selected>Alex Hormozi (Bold Green/Yellow)</option>
+                  <option value="mrbeast">MrBeast Pop (Orange/Lime Wobble)</option>
+                  <option value="neon">Neon Pop (Yellow/Cyan Glow)</option>
+                  <option value="pill">High-Contrast Pill Box</option>
+                  <option value="minimal">Clean Minimalist</option>
+                  <option value="cyberpunk">Cyberpunk Dual Pulse</option>
+                  <option value="cinematic">Cinematic Cream/Gold</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="mp-bg-select">Visual Footage / Background</label>
+                <select id="mp-bg-select">
+                  <option value="minecraft" selected>Minecraft Parkour</option>
+                  <option value="subway">Subway Surfers</option>
+                  <option value="pexels_stock">Pexels Vertical Stock (Auto-Keywords)</option>
+                  <option value="gta">GTA Car Stunts</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="mp-duration-select">Target Duration</label>
+                <select id="mp-duration-select">
+                  <option value="30s">30s (Punchy Fast-Paced)</option>
+                  <option value="45s" selected>45s (Optimal Engagement)</option>
+                  <option value="55s">55s (Deep Storytelling)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="mp-bgm-select">Background Music</label>
+                <select id="mp-bgm-select">
+                  <option value="drift_phonk" selected>Drift Phonk (138 BPM)</option>
+                  <option value="dark_synthwave">Dark Synthwave (120 BPM)</option>
+                  <option value="lofi">High-Retention Lo-Fi (80 BPM)</option>
+                  <option value="percussion">Fast Tension Ticks (132 BPM)</option>
+                  <option value="none">None (Voice Only)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="mp-step1-actions">
+              <button id="mp-gen-script-btn" type="button" class="btn btn-primary" onclick="generateMoneyPrinterScript()">
+                ✍️ Generate Viral Script &amp; Hook
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 2: Script Review & Render Column -->
+          <div class="card mp-script-card">
+            <div class="card-title">
+              <span>Step 2: Script Review &amp; Synthesis</span>
+              <span class="step-badge">2 / 2</span>
+            </div>
+
+            <div class="mp-script-form">
+              <div class="control-group">
+                <div class="label-with-action">
+                  <label for="mp-script-hook">Explosive Opening Hook (First 3 Seconds)</label>
+                  <span class="hook-badge">⚡ Critical Hook</span>
+                </div>
+                <input type="text" id="mp-script-hook" placeholder="Wait till you hear how 90% of millionaires actually invest...">
+              </div>
+
+              <div class="control-group">
+                <div class="label-with-action">
+                  <label for="mp-script-body">Narrator Script (Word-Level Aligned Voiceover)</label>
+                  <span class="word-counter-badge" id="mp-script-duration">0 words • ~0s</span>
+                </div>
+                <textarea id="mp-script-body" rows="6" placeholder="The full narrator script will appear here after clicking 'Generate Viral Script'... You can also write or tweak your own script." oninput="updateMpScriptStats()"></textarea>
+              </div>
+
+              <div class="settings-grid">
+                <div class="control-group">
+                  <label for="mp-script-title">YouTube SEO Title</label>
+                  <input type="text" id="mp-script-title" placeholder="Catchy title with #Shorts...">
+                </div>
+
+                <div class="control-group">
+                  <label for="mp-script-tags">Hashtags &amp; Category</label>
+                  <input type="text" id="mp-script-tags" placeholder="#Shorts #AI #Mindset #Viral">
+                </div>
+              </div>
+
+              <div id="mp-render-feedback" class="feedback"></div>
+
+              <div class="mp-render-actions">
+                <button id="mp-render-btn" type="button" class="btn btn-primary-gradient btn-lg" onclick="renderMoneyPrinterShort()">
+                  🎙️ Render Faceless AI Short (TTS + FFmpeg)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- De-Duplication Topic History Log -->
+        <div class="card mp-history-card">
+          <div class="card-title">
+            <span>🧠 SQLite De-Duplication Memory Cache</span>
+            <span class="hint">Ensures you never repeat a topic across your channels</span>
+          </div>
+          <div class="topic-history-scroll" id="mp-topic-history-list">
+            <!-- Dynamically populated from /api/moneyprinter/topics -->
+          </div>
+        </div>
+      </section>
+    </div>
+    <!-- End of #view-moneyprinter -->
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 4: 📊 YouTube Shorts Analytics & Attribution                     -->
+    <!-- ===================================================================== -->
+    <div id="view-analytics" class="main-view-container" style="display: none;">
+      <!-- Top Action Bar -->
+      <section class="analytics-header-section">
+        <div class="analytics-header-card card">
+          <div class="analytics-header-left">
+            <span class="analytics-icon">📊</span>
+            <div>
+              <h2>In-App YouTube Shorts Analytics &amp; A/B Telemetry</h2>
+              <p class="subtitle">Multi-source waterfall (API v3 + Analytics v2 + yt-dlp + Playwright Studio) with closed-loop winning style attribution</p>
+            </div>
+          </div>
+          <div class="analytics-header-right">
+            <div class="sync-indicator">
+              <span class="sync-dot live"></span>
+              <span id="analytics-last-synced">Last synced: Just now</span>
+            </div>
+            <button id="analytics-sync-btn" type="button" class="btn btn-primary btn-sm" onclick="syncLiveAnalytics()">
+              🔄 Sync Live YouTube Analytics
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5 KPI Summary Cards -->
+      <section class="analytics-kpis-section">
+        <div class="analytics-kpi-grid">
+          <!-- KPI 1: Total Shorts Views -->
+          <div class="card kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Total Shorts Views</span>
+              <span class="kpi-badge positive">↑ +24.8%</span>
+            </div>
+            <div class="kpi-value" id="kpi-total-views">1,248,500</div>
+            <div class="kpi-footer">Across all published Shorts</div>
+          </div>
+
+          <!-- KPI 2: Avg Retention % -->
+          <div class="card kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Average Retention</span>
+              <span class="kpi-badge high-retention">★ Top Tier</span>
+            </div>
+            <div class="kpi-value" id="kpi-avg-retention">84.2%</div>
+            <div class="kpi-footer">Algorithm recommendation threshold: &gt;75%</div>
+          </div>
+
+          <!-- KPI 3: Viewed vs. Swiped Away -->
+          <div class="card kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Viewed vs. Swiped</span>
+              <span class="kpi-badge positive">78.6% Viewed</span>
+            </div>
+            <div class="kpi-value" id="kpi-viewed-rate">78.6% <span class="kpi-sub">/ 21.4% swipe</span></div>
+            <div class="kpi-footer">High hook conversion rate</div>
+          </div>
+
+          <!-- KPI 4: Est. Revenue & RPM -->
+          <div class="card kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Est. Revenue &amp; RPM</span>
+              <span class="kpi-badge revenue-badge">$0.33 RPM</span>
+            </div>
+            <div class="kpi-value" id="kpi-est-revenue">$412.50</div>
+            <div class="kpi-footer">Ad share + Related Funnel blend</div>
+          </div>
+
+          <!-- KPI 5: Top Performing Short -->
+          <div class="card kpi-card">
+            <div class="kpi-header">
+              <span class="kpi-title">Top Performing Short</span>
+              <span class="kpi-badge top-badge">👑 #1</span>
+            </div>
+            <div class="kpi-value kpi-title-val" id="kpi-top-short">OpenAI Just Dropped This...</div>
+            <div class="kpi-footer" id="kpi-top-short-meta">384,200 views • 91.5% retention</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 👑 Closed-Loop Winning Style Recipe Banner -->
+      <section class="winning-recipe-section">
+        <div class="card winning-recipe-card" id="winning-recipe-banner">
+          <div class="recipe-banner-header">
+            <div class="recipe-title-group">
+              <span class="recipe-crown">👑</span>
+              <div>
+                <h3 class="recipe-title">Closed-Loop "Winning Style Recipe"</h3>
+                <p class="recipe-subtitle">Statistically proven highest-retention layout, caption preset &amp; background combo</p>
+              </div>
+            </div>
+            <button id="apply-winning-style-btn" type="button" class="btn btn-primary-gradient btn-sm" onclick="applyWinningRecipe()">
+              🎯 1-Click Apply Winning Style to Studio
+            </button>
+          </div>
+
+          <div class="recipe-pills-row">
+            <div class="recipe-pill-box">
+              <span class="pill-category">Winning Layout</span>
+              <span class="pill-value" id="recipe-layout">⚡ 50/50 Split</span>
+            </div>
+            <div class="recipe-pill-box">
+              <span class="pill-category">Winning Caption Preset</span>
+              <span class="pill-value" id="recipe-caption">🎨 Hormozi Bold</span>
+            </div>
+            <div class="recipe-pill-box">
+              <span class="pill-category">Winning Background</span>
+              <span class="pill-value" id="recipe-bg">🎮 Subway Surfers</span>
+            </div>
+            <div class="recipe-pill-box score-box">
+              <span class="pill-category">Shorts Viral Score</span>
+              <span class="pill-value score-val" id="recipe-stats">SVS 93 / 100</span>
+            </div>
+          </div>
+
+          <div class="recipe-rationale" id="recipe-rationale">
+            💡 <strong>Algorithmic Attribution:</strong> High-contrast Hormozi yellow/green typography paired with Subway Surfers split keeps viewer drop-off below 12% in the first 5 seconds, driving 89.4% average retention.
+          </div>
+        </div>
+      </section>
+
+      <!-- A/B Style Performance Breakdown Grid -->
+      <section class="analytics-breakdown-section">
+        <div class="section-heading-row">
+          <div class="heading-left">
+            <h3>🔬 A/B Style Performance Breakdown</h3>
+            <p class="section-sub">Empirical retention and viral score attribution across all generated styles</p>
+          </div>
+        </div>
+
+        <div class="breakdown-grid" id="analytics-breakdown-grid">
+          <!-- Card 1: Caption Presets -->
+          <div class="card breakdown-card">
+            <div class="card-title">
+              <span>🎨 Caption Preset Performance</span>
+              <span class="hint">Avg Retention</span>
+            </div>
+            <div class="breakdown-bars-list" id="breakdown-caption-bars">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Card 2: Layout Modes -->
+          <div class="card breakdown-card">
+            <div class="card-title">
+              <span>📐 Layout Mode Performance</span>
+              <span class="hint">SVS Viral Score</span>
+            </div>
+            <div class="breakdown-bars-list" id="breakdown-layout-bars">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Card 3: Background Footage -->
+          <div class="card breakdown-card">
+            <div class="card-title">
+              <span>🎮 Background Category Performance</span>
+              <span class="hint">Retention Rate</span>
+            </div>
+            <div class="breakdown-bars-list" id="breakdown-bg-bars">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Uploaded Shorts Telemetry Table -->
+      <section class="analytics-table-section">
+        <div class="card">
+          <div class="card-title">
+            <span>📺 Published Shorts Telemetry &amp; Style Cloner</span>
+            <div class="table-search-wrap">
+              <input type="text" id="analytics-search-input" placeholder="Search by title, preset..." oninput="filterAnalyticsTable()">
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table class="analytics-table" id="analytics-table">
+              <thead>
+                <tr>
+                  <th>Video Title</th>
+                  <th>YouTube Shorts Link</th>
+                  <th>Layout Mode</th>
+                  <th>Caption Style</th>
+                  <th>Views</th>
+                  <th>Likes</th>
+                  <th>Avg Retention</th>
+                  <th>Viewed Rate</th>
+                  <th>Est. Revenue</th>
+                  <th>SVS Score</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="analytics-table-body">
+                <!-- Dynamically populated with rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+    <!-- End of #view-analytics -->
+
   </main>
 
   <!-- Video Preview Modal -->
