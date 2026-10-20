@@ -613,3 +613,190 @@ def test_api_submit_jobs_with_style_preset_and_privacy(settings_client: dict[str
     assert resp.status_code == 200
     assert pipe.config.upload.privacy_status == "public"
     assert getattr(pipe.config.subtitles, "style_preset", None) == "neon"
+
+
+def test_api_studio_profiles(settings_client: dict[str, Any]):
+    """Verify GET and POST /api/studio/profiles return and persist Studio templates."""
+    client: TestClient = settings_client["client"]
+
+    # 1. GET default profiles
+    get_res = client.get("/api/studio/profiles")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data["success"] is True
+    assert data["count"] >= 5
+    preset_ids = [p["id"] for p in data["profiles"]]
+    assert "viral_split" in preset_ids
+    assert "podcast_blur" in preset_ids
+    assert any("cinematic" in pid for pid in preset_ids)
+
+    # 2. POST custom profile
+    new_prof = {
+        "id": "custom_cyberpunk",
+        "name": "Neon Cyberpunk Studio",
+        "layout_mode": "split_70_30",
+        "style_preset": "cyberpunk",
+        "color_grading": "vibrant",
+        "dopamine_level": "ultra",
+    }
+    post_res = client.post("/api/studio/profiles", json=new_prof)
+    assert post_res.status_code == 200
+    assert post_res.json()["success"] is True
+
+    # 3. Verify retrieved list includes new profile
+    get_res2 = client.get("/api/studio/profiles")
+    updated_ids = [p["id"] for p in get_res2.json()["profiles"]]
+    assert "custom_cyberpunk" in updated_ids
+
+
+def test_api_channels(settings_client: dict[str, Any]):
+    """Verify GET and POST /api/channels manage Multi-Channel profiles."""
+    client: TestClient = settings_client["client"]
+
+    # 1. Initially empty or list
+    get_res = client.get("/api/channels")
+    assert get_res.status_code == 200
+    assert get_res.json()["success"] is True
+
+    # 2. Save new channel
+    new_chan = {
+        "name": "Tech Breakthroughs Daily",
+        "handle": "@TechBreakthroughs",
+        "upload_mode": "api",
+        "default_preset": "viral_split",
+        "daily_upload_cap": 25,
+    }
+    post_res = client.post("/api/channels", json=new_chan)
+    assert post_res.status_code == 200
+    assert post_res.json()["success"] is True
+    saved_chan = post_res.json()["channel"]
+    assert saved_chan["name"] == "Tech Breakthroughs Daily"
+    assert saved_chan["handle"] == "@TechBreakthroughs"
+
+    # 3. GET channels again
+    get_res2 = client.get("/api/channels")
+    chan_names = [c["name"] for c in get_res2.json()["channels"]]
+    assert "Tech Breakthroughs Daily" in chan_names
+
+
+def test_api_job_transcript_get_and_put(
+    settings_client: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify GET and PUT /api/jobs/{job_id}/transcript persist and retrieve word-level captions."""
+    client: TestClient = settings_client["client"]
+    state_mgr: StateManager = settings_client["state_mgr"]
+
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("autoshorts.core.paths.get_work_dir", lambda: work_dir)
+
+    job = Job(
+        id="job_transcript_test_123",
+        source_url="https://youtube.com/watch?v=transcript123",
+        status=JobStatus.SUBTITLES_GENERATED,
+    )
+    state_mgr.save_job(job)
+
+    # 1. PUT transcript
+    words_payload = [
+        {"word": "Welcome", "start": 0.0, "end": 0.4, "probability": 0.99},
+        {"word": "everyone", "start": 0.4, "end": 0.9, "probability": 0.99},
+    ]
+    put_res = client.put(f"/api/jobs/{job.id}/transcript", json={"words": words_payload})
+    assert put_res.status_code == 200
+    assert put_res.json()["success"] is True
+    assert put_res.json()["count"] == 2
+
+    # 2. GET transcript
+    get_res = client.get(f"/api/jobs/{job.id}/transcript")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data["success"] is True
+    assert len(data["words"]) == 2
+    assert data["words"][0]["word"] == "Welcome"
+
+
+def test_api_job_trim(settings_client: dict[str, Any]):
+    """Verify POST /api/jobs/{job_id}/trim enforces valid bounds and updates candidate & EDL."""
+    client: TestClient = settings_client["client"]
+    state_mgr: StateManager = settings_client["state_mgr"]
+
+    cand = ClipCandidate(start=0.0, end=45.0, text="Trim test transcript", score=0.88)
+    sel = ClipSelection(candidate=cand, clip_index=0)
+    job = Job(
+        id="job_trim_test_456",
+        source_url="https://youtube.com/watch?v=trim456",
+        status=JobStatus.READY_FOR_REVIEW,
+        selected_clips=[sel],
+    )
+    state_mgr.save_job(job)
+
+    # 1. Valid trim
+    trim_payload = {
+        "start_sec": 5.0,
+        "end_sec": 35.0,
+        "jump_cuts": [{"cut_start": 12.0, "cut_end": 13.5, "reason": "pause"}],
+    }
+    trim_res = client.post(f"/api/jobs/{job.id}/trim", json=trim_payload)
+    assert trim_res.status_code == 200
+    trim_data = trim_res.json()
+    assert trim_data["success"] is True
+    assert trim_data["start_sec"] == 5.0
+    assert trim_data["end_sec"] == 35.0
+    assert trim_data["duration"] == 30.0
+
+    reloaded = state_mgr.get_job(job.id)
+    assert reloaded.selected_clips[0].candidate.start == 5.0
+    assert reloaded.selected_clips[0].candidate.end == 35.0
+    assert reloaded.edl.hook_in_sec == 5.0
+    assert reloaded.edl.hook_out_sec == 35.0
+    assert len(reloaded.edl.jump_cuts) == 1
+
+    # 2. Invalid trim: start >= end
+    bad_res1 = client.post(f"/api/jobs/{job.id}/trim", json={"start_sec": 40.0, "end_sec": 20.0})
+    assert bad_res1.status_code == 400
+
+    # 3. Invalid trim: duration > 60s
+    bad_res2 = client.post(f"/api/jobs/{job.id}/trim", json={"start_sec": 0.0, "end_sec": 75.0})
+    assert bad_res2.status_code == 400
+
+
+def test_api_job_rerender(settings_client: dict[str, Any]):
+    """Verify POST /api/jobs/{job_id}/rerender triggers pipe.rerender_job with overrides."""
+    client: TestClient = settings_client["client"]
+    state_mgr: StateManager = settings_client["state_mgr"]
+    pipe = settings_client["pipeline"]
+
+    cand = ClipCandidate(start=0.0, end=30.0, text="Rerender test", score=0.85)
+    sel = ClipSelection(candidate=cand, clip_index=0)
+    job = Job(
+        id="job_rerender_api_789",
+        source_url="https://youtube.com/watch?v=rerender789",
+        status=JobStatus.READY_FOR_REVIEW,
+        selected_clips=[sel],
+    )
+    state_mgr.save_job(job)
+
+    # Mock pipe.rerender_job return
+    job.style_preset = "hormozi"
+    pipe.rerender_job.return_value = job
+
+    rerender_payload = {
+        "layout_mode": "split_50_50",
+        "style_preset": "hormozi",
+        "color_grading": "vibrant",
+        "hook_text": "HOOK FX",
+    }
+    resp = client.post(f"/api/jobs/{job.id}/rerender", json=rerender_payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["job"]["id"] == job.id
+
+    pipe.rerender_job.assert_called_once_with(
+        job.id,
+        layout_mode="split_50_50",
+        style_preset="hormozi",
+        color_grading="vibrant",
+        hook_text="HOOK FX",
+    )

@@ -569,3 +569,153 @@ def test_pipeline_instantiates_studio_uploader_when_configured(test_env: dict[st
     pipeline = ShortsPipeline(config=config, state_manager=state_mgr)
     assert isinstance(pipeline.uploader, PlaywrightStudioUploader)
     assert pipeline.scheduler.uploader is pipeline.uploader
+
+
+def test_pipeline_rerender_job_fast_recomposite(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Verify ShortsPipeline.rerender_job applies overrides and re-runs subtitles and compositing only."""
+    import json
+
+    state_mgr = test_env["state_mgr"]
+    work_dir = test_env["work_dir"]
+    output_dir = test_env["output_dir"]
+
+    monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.pipeline.get_output_dir", lambda: output_dir)
+
+    job_id = "job_rerender_test"
+    job_work = work_dir / job_id
+    job_work.mkdir(parents=True, exist_ok=True)
+    raw_video = job_work / f"{job_id}_raw.mp4"
+    raw_video.write_bytes(b"\x00\x00\x00 fake raw video bytes")
+
+    # Write aligned words cache
+    words_data = [
+        {"word": "ORIGINAL", "start": 0.0, "end": 0.5, "probability": 1.0},
+        {"word": "TRANSCRIPT", "start": 0.5, "end": 1.0, "probability": 1.0},
+    ]
+    with open(job_work / "aligned_words.json", "w", encoding="utf-8") as f:
+        json.dump(words_data, f)
+
+    cand = ClipCandidate(start=0.0, end=30.0, text="ORIGINAL TRANSCRIPT", score=0.9)
+    sel = ClipSelection(
+        candidate=cand,
+        clip_index=0,
+        target_duration=30.0,
+        background_style="minecraft",
+        hook_text="OLD HOOK",
+        title="Old Title #Shorts",
+    )
+    edl = EditDecisionList(
+        hook_in_sec=0.0,
+        hook_out_sec=30.0,
+        recommended_title="Old Title",
+        recommended_hook="OLD HOOK",
+    )
+
+    job = Job(
+        id=job_id,
+        source_url="https://youtube.com/watch?v=rerender123",
+        status=JobStatus.READY_FOR_REVIEW,
+        raw_video_path=str(raw_video),
+        candidate_windows=[cand],
+        selected_clips=[sel],
+        edl=edl,
+    )
+    state_mgr.save_job(job)
+
+    mock_compositor = MagicMock()
+
+    def fake_compose(
+        job_id, source_clip, edl, background_path, subtitles_path, output_path, **kwargs
+    ):
+        p = Path(output_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x00\x00\x00 fake re-rendered master")
+        return p
+
+    mock_compositor.compose.side_effect = fake_compose
+
+    mock_transcriber = MagicMock()
+
+    pipeline = ShortsPipeline(
+        state_manager=state_mgr,
+        compositor=mock_compositor,
+        transcriber=mock_transcriber,
+    )
+
+    rerendered = pipeline.rerender_job(
+        job_id=job_id,
+        style_preset="minimal",
+        layout_mode="full_blur_bg",
+        hook_text="BRAND NEW HOOK",
+        clip_title="Brand New Title #Shorts",
+        background_category="subway",
+    )
+
+    assert rerendered.status == JobStatus.READY_FOR_REVIEW
+    assert rerendered.style_preset == "minimal"
+    assert rerendered.selected_clips[0].hook_text == "BRAND NEW HOOK"
+    assert rerendered.selected_clips[0].title == "Brand New Title #Shorts"
+    assert rerendered.selected_clips[0].background_style == "subway"
+    assert rerendered.edl.recommended_hook == "BRAND NEW HOOK"
+    assert rerendered.edl.recommended_title == "Brand New Title #Shorts"
+    assert Path(rerendered.rendered_video_path).is_file()
+
+    # Transcriber align_words should NOT have been called because cached aligned_words was used
+    mock_transcriber.align_words.assert_not_called()
+    mock_compositor.compose.assert_called_once()
+    compose_kwargs = mock_compositor.compose.call_args[1]
+    assert compose_kwargs["layout_mode"] == "full_blur_bg"
+
+
+def test_pipeline_subtitles_caching_and_customization_forwarding(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Verify _run_subtitles_stage saves aligned_words.json and re-reads user transcript modifications."""
+    import json
+
+    state_mgr = test_env["state_mgr"]
+    work_dir = test_env["work_dir"]
+    monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: work_dir)
+
+    job_id = "job_sub_cache_test"
+    job_work = work_dir / job_id
+    job_work.mkdir(parents=True, exist_ok=True)
+    raw_video = job_work / f"{job_id}_raw.mp4"
+    raw_video.write_bytes(b"\x00\x00\x00 dummy")
+
+    cand = ClipCandidate(start=0.0, end=10.0, text="first word second word", score=0.8)
+    sel = ClipSelection(candidate=cand, clip_index=0)
+    job = Job(
+        id=job_id,
+        source_url="https://youtube.com/watch?v=cachetest",
+        status=JobStatus.DOWNLOADING_SECTION,
+        raw_video_path=str(raw_video),
+        selected_clips=[sel],
+        edl=EditDecisionList(hook_in_sec=0.0, hook_out_sec=10.0),
+    )
+    state_mgr.save_job(job)
+
+    mock_transcriber = MagicMock()
+    mock_transcriber.align_words.return_value = [
+        {"word": "first", "start": 0.0, "end": 0.5, "probability": 1.0},
+        {"word": "word", "start": 0.5, "end": 1.0, "probability": 1.0},
+    ]
+
+    pipeline = ShortsPipeline(state_manager=state_mgr, transcriber=mock_transcriber)
+    pipeline._run_subtitles_stage(job)
+
+    # 1. aligned_words.json was generated and cached
+    cache_path = job_work / "aligned_words.json"
+    assert cache_path.is_file()
+
+    # 2. Simulate user editing the word-level transcript
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump([{"word": "MODIFIED_CAPTION", "start": 0.0, "end": 1.0, "probability": 1.0}], f)
+
+    # 3. Re-run subtitles stage with use_cached_words=True
+    pipeline._run_subtitles_stage(job, use_cached_words=True)
+    ass_content = Path(job.subtitles_path).read_text(encoding="utf-8")
+    assert "MODIFIED_CAPTION" in ass_content

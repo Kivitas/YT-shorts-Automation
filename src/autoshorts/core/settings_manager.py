@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from collections.abc import Mapping
 from pathlib import Path
@@ -18,6 +19,7 @@ import yaml
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import register_secret
+from autoshorts.core.models import ChannelProfile
 from autoshorts.core.paths import PROJECT_ROOT, atomic_write, get_config_dir, get_data_dir
 
 logger = logging.getLogger("autoshorts.settings_manager")
@@ -362,6 +364,19 @@ def get_public_settings_payload(
                 config.upload, "quota_exhausted_fallback", "studio"
             ),
             "category_id": getattr(config.upload, "category_id", "24"),
+            "default_language": getattr(config.upload, "default_language", "en"),
+            "altered_content": getattr(config.upload, "altered_content", False),
+            "custom_tags": getattr(config.upload, "custom_tags", []),
+            "auto_pin_comment": getattr(config.upload, "auto_pin_comment", False),
+            "pin_comment_template": getattr(
+                config.upload,
+                "pin_comment_template",
+                "📌 Watch the full video by {channel}: {video_url}",
+            ),
+            "playlist_id": getattr(config.upload, "playlist_id", None),
+            "link_related_video": getattr(config.upload, "link_related_video", True),
+            "schedule_strategy": getattr(config.upload, "schedule_strategy", "local_scheduler"),
+            "active_channel_profile": getattr(config.upload, "active_channel_profile", "default"),
             "made_for_kids": getattr(config.upload, "made_for_kids", False),
             "title_template": config.upload.title_template,
             "description_template": config.upload.description_template,
@@ -381,8 +396,35 @@ def get_public_settings_payload(
             "font_size": config.subtitles.font_size,
             "words_per_burst": config.subtitles.words_per_burst,
             "safe_zone_margin_v": config.subtitles.safe_zone_margin_v,
-            "karaoke_pop_scale": getattr(config.subtitles, "karaoke_pop_scale", 1.15),
+            "karaoke_highlight": getattr(config.subtitles, "karaoke_highlight", True),
+            "karaoke_pop_scale": getattr(config.subtitles, "karaoke_pop_scale", 118),
             "style_preset": getattr(config.subtitles, "style_preset", "neon"),
+            "primary_color": getattr(config.subtitles, "primary_color", "&H00FFFFFF"),
+            "active_color": getattr(config.subtitles, "active_color", "&H0000FFFF"),
+            "emphasis_color": getattr(config.subtitles, "emphasis_color", "&H00FFF000"),
+            "outline_color": getattr(config.subtitles, "outline_color", "&H00000000"),
+            "text_transform": getattr(config.subtitles, "text_transform", "uppercase"),
+            "position": getattr(config.subtitles, "position", "center"),
+            "hook_banner_style": getattr(config.subtitles, "hook_banner_style", "neon_box"),
+            "enable_emojis": getattr(config.subtitles, "enable_emojis", True),
+        },
+        "branding": {
+            "layout_mode": getattr(config.branding, "layout_mode", "split_50_50"),
+            "color_grading": getattr(config.branding, "color_grading", "none"),
+            "watermark_text": getattr(config.branding, "watermark_text", None),
+            "watermark_position": getattr(config.branding, "watermark_position", "top_right"),
+            "watermark_opacity": getattr(config.branding, "watermark_opacity", 0.65),
+            "progress_bar_position": getattr(config.branding, "progress_bar_position", "seam"),
+            "progress_bar_color": getattr(config.branding, "progress_bar_color", "#FFE600"),
+            "progress_bar_height": getattr(config.branding, "progress_bar_height", 12),
+            "hook_opener": getattr(config.branding, "hook_opener", "none"),
+            "outro_cta_text": getattr(config.branding, "outro_cta_text", None),
+        },
+        "audio_mastering": {
+            "voice_boost": getattr(config.audio_mastering, "voice_boost", True),
+            "target_lufs": getattr(config.audio_mastering, "target_lufs", -14.0),
+            "bg_music_volume": getattr(config.audio_mastering, "bg_music_volume", 0.20),
+            "enable_sfx": getattr(config.audio_mastering, "enable_sfx", True),
         },
         "job_defaults": {
             "clips_per_video": config.job_defaults.clips_per_video,
@@ -500,6 +542,15 @@ def apply_settings_update(
             "default_privacy_status",
             "quota_exhausted_fallback",
             "category_id",
+            "default_language",
+            "altered_content",
+            "custom_tags",
+            "auto_pin_comment",
+            "pin_comment_template",
+            "playlist_id",
+            "link_related_video",
+            "schedule_strategy",
+            "active_channel_profile",
             "made_for_kids",
             "title_template",
             "description_template",
@@ -543,11 +594,52 @@ def apply_settings_update(
             "font_size",
             "words_per_burst",
             "safe_zone_margin_v",
+            "karaoke_highlight",
             "karaoke_pop_scale",
             "style_preset",
+            "primary_color",
+            "active_color",
+            "emphasis_color",
+            "outline_color",
+            "text_transform",
+            "position",
+            "hook_banner_style",
+            "enable_emojis",
         ):
             if k in sub_data and sub_data[k] is not None:
                 raw_yaml["subtitles"][k] = sub_data[k]
+
+    # Branding
+    if "branding" in payload and isinstance(payload["branding"], dict):
+        raw_yaml.setdefault("branding", {})
+        br_data = payload["branding"]
+        for k in (
+            "layout_mode",
+            "color_grading",
+            "watermark_text",
+            "watermark_position",
+            "watermark_opacity",
+            "progress_bar_position",
+            "progress_bar_color",
+            "progress_bar_height",
+            "hook_opener",
+            "outro_cta_text",
+        ):
+            if k in br_data and br_data[k] is not None:
+                raw_yaml["branding"][k] = br_data[k]
+
+    # Audio Mastering
+    if "audio_mastering" in payload and isinstance(payload["audio_mastering"], dict):
+        raw_yaml.setdefault("audio_mastering", {})
+        am_data = payload["audio_mastering"]
+        for k in (
+            "voice_boost",
+            "target_lufs",
+            "bg_music_volume",
+            "enable_sfx",
+        ):
+            if k in am_data and am_data[k] is not None:
+                raw_yaml["audio_mastering"][k] = am_data[k]
 
     # Job Defaults
     if "job_defaults" in payload and isinstance(payload["job_defaults"], dict):
@@ -598,15 +690,241 @@ def apply_settings_update(
     return new_settings
 
 
+# -----------------------------------------------------------------------------
+# Studio Profiles (Presets) & Channel Profiles Management
+# -----------------------------------------------------------------------------
+
+FACTORY_STUDIO_PROFILES: dict[str, dict[str, Any]] = {
+    "viral_split": {
+        "id": "viral_split",
+        "name": "Viral Split",
+        "description": "50/50 split-screen with neon pop subtitles and vibrant color grading",
+        "layout_mode": "split_50_50",
+        "style_preset": "neon",
+        "color_grading": "vibrant",
+        "progress_bar_position": "seam",
+        "progress_bar_color": "#FFE600",
+        "hook_opener": "zoom_burst",
+        "text_transform": "uppercase",
+        "subtitle_position": "center",
+        "hook_banner_style": "neon_box",
+        "enable_emojis": True,
+        "is_factory": True,
+    },
+    "podcast_blur": {
+        "id": "podcast_blur",
+        "name": "Podcast Blur",
+        "description": "Gaussian blurred backdrop with clean minimal captions and warm grading",
+        "layout_mode": "full_blur_bg",
+        "style_preset": "minimal",
+        "color_grading": "warm",
+        "progress_bar_position": "bottom",
+        "progress_bar_color": "#00FF66",
+        "hook_opener": "none",
+        "text_transform": "title",
+        "subtitle_position": "bottom_safe",
+        "hook_banner_style": "minimal",
+        "enable_emojis": False,
+        "is_factory": True,
+    },
+    "gaming_dopamine": {
+        "id": "gaming_dopamine",
+        "name": "Gaming Dopamine",
+        "description": "High retention 50/50 split with Hormozi captions and flash hook opener",
+        "layout_mode": "split_50_50",
+        "style_preset": "hormozi",
+        "color_grading": "vibrant",
+        "progress_bar_position": "seam",
+        "progress_bar_color": "#FF0055",
+        "hook_opener": "flash",
+        "text_transform": "uppercase",
+        "subtitle_position": "center",
+        "hook_banner_style": "neon_box",
+        "enable_emojis": True,
+        "is_factory": True,
+    },
+    "cinematic_full": {
+        "id": "cinematic_full",
+        "name": "Cinematic Full",
+        "description": "Full vertical center crop with cinematic serif captions and subtle tone",
+        "layout_mode": "full_center_crop",
+        "style_preset": "cinematic",
+        "color_grading": "cinematic",
+        "progress_bar_position": "none",
+        "progress_bar_color": "#FFE600",
+        "hook_opener": "none",
+        "text_transform": "none",
+        "subtitle_position": "bottom_safe",
+        "hook_banner_style": "none",
+        "enable_emojis": False,
+        "is_factory": True,
+    },
+    "pip_reaction": {
+        "id": "pip_reaction",
+        "name": "PiP Reaction",
+        "description": "Picture-in-picture gameplay overlay with MrBeast captions and crisp grade",
+        "layout_mode": "pip_gameplay",
+        "style_preset": "mrbeast",
+        "color_grading": "crisp",
+        "progress_bar_position": "bottom",
+        "progress_bar_color": "#FFB800",
+        "hook_opener": "zoom_burst",
+        "text_transform": "uppercase",
+        "subtitle_position": "center",
+        "hook_banner_style": "pill",
+        "enable_emojis": True,
+        "is_factory": True,
+    },
+}
+
+
+def get_studio_profiles(data_dir: Path | None = None) -> dict[str, Any]:
+    """Return built-in factory studio profiles merged with custom user profiles."""
+    d_dir = Path(data_dir).resolve() if data_dir else get_data_dir()
+    profiles_file = d_dir / "studio_profiles.json"
+
+    all_profiles: dict[str, Any] = {k: dict(v) for k, v in FACTORY_STUDIO_PROFILES.items()}
+
+    if profiles_file.is_file():
+        try:
+            content = profiles_file.read_text(encoding="utf-8")
+            data = json.loads(content)
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        item = dict(v)
+                        item.setdefault("id", k)
+                        item["is_factory"] = False
+                        all_profiles[k] = item
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and "id" in item:
+                        p = dict(item)
+                        p["is_factory"] = False
+                        all_profiles[p["id"]] = p
+        except Exception as e:
+            logger.warning("Failed to load studio profiles from %s: %s", profiles_file, e)
+
+    return all_profiles
+
+
+def save_studio_profile(
+    profile_data: Mapping[str, Any], data_dir: Path | None = None
+) -> dict[str, Any]:
+    """Persist a custom studio profile to data/studio_profiles.json."""
+    d_dir = Path(data_dir).resolve() if data_dir else get_data_dir()
+    profiles_file = d_dir / "studio_profiles.json"
+
+    custom_profiles: dict[str, Any] = {}
+    if profiles_file.is_file():
+        try:
+            content = profiles_file.read_text(encoding="utf-8")
+            data = json.loads(content)
+            if isinstance(data, dict):
+                custom_profiles = data
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and "id" in item:
+                        custom_profiles[item["id"]] = item
+        except Exception as e:
+            logger.warning("Failed to read existing studio profiles from %s: %s", profiles_file, e)
+            custom_profiles = {}
+
+    profile_dict = dict(profile_data)
+    profile_id = str(profile_dict.get("id") or "").strip()
+    if not profile_id:
+        name = str(profile_dict.get("name", "custom_profile")).lower()
+        profile_id = re.sub(r"[^a-z0-9_]+", "_", name).strip("_") or "custom_profile"
+
+    profile_dict["id"] = profile_id
+    profile_dict["is_factory"] = False
+    custom_profiles[profile_id] = profile_dict
+
+    atomic_write(profiles_file, json.dumps(custom_profiles, indent=2))
+    return profile_dict
+
+
+def get_channel_profiles(data_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Return all configured channel profiles from data/channel_profiles.json."""
+    d_dir = Path(data_dir).resolve() if data_dir else get_data_dir()
+    profiles_file = d_dir / "channel_profiles.json"
+
+    default_profile = ChannelProfile().model_dump()
+
+    if not profiles_file.is_file():
+        return [default_profile]
+
+    try:
+        content = profiles_file.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if isinstance(data, list) and len(data) > 0:
+            profiles = []
+            for item in data:
+                if isinstance(item, dict):
+                    try:
+                        p = ChannelProfile(**item).model_dump()
+                        profiles.append(p)
+                    except Exception:
+                        profiles.append(dict(item))
+            if profiles:
+                return profiles
+        elif isinstance(data, dict):
+            profiles = []
+            for item in data.values():
+                if isinstance(item, dict):
+                    try:
+                        p = ChannelProfile(**item).model_dump()
+                        profiles.append(p)
+                    except Exception:
+                        profiles.append(dict(item))
+            if profiles:
+                return profiles
+    except Exception as e:
+        logger.warning("Failed to load channel profiles from %s: %s", profiles_file, e)
+
+    return [default_profile]
+
+
+def save_channel_profile(
+    profile_data: Mapping[str, Any], data_dir: Path | None = None
+) -> dict[str, Any]:
+    """Persist or update a channel profile in data/channel_profiles.json."""
+    d_dir = Path(data_dir).resolve() if data_dir else get_data_dir()
+    profiles_file = d_dir / "channel_profiles.json"
+
+    current_profiles = get_channel_profiles(data_dir=d_dir)
+
+    new_profile = ChannelProfile(**profile_data).model_dump()
+    target_id = new_profile["id"]
+
+    updated = False
+    for i, p in enumerate(current_profiles):
+        if p.get("id") == target_id:
+            current_profiles[i] = new_profile
+            updated = True
+            break
+
+    if not updated:
+        current_profiles.append(new_profile)
+
+    atomic_write(profiles_file, json.dumps(current_profiles, indent=2))
+    return new_profile
+
+
 __all__ = [
+    "FACTORY_STUDIO_PROFILES",
     "YOUTUBE_OAUTH_STATE",
     "apply_settings_update",
+    "get_channel_profiles",
     "get_public_settings_payload",
+    "get_studio_profiles",
     "get_youtube_oauth_state",
     "get_youtube_oauth_status",
     "mask_secret",
     "read_env_file",
     "run_youtube_oauth_flow",
+    "save_channel_profile",
+    "save_studio_profile",
     "save_youtube_client_secret",
     "update_env_file",
     "update_youtube_oauth_state",

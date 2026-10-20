@@ -4,14 +4,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from autoshorts.core.config import Settings, load_config
+from autoshorts.core.config import (
+    AudioMasteringConfig,
+    Settings,
+    VisualBrandingConfig,
+    load_config,
+)
 from autoshorts.core.contracts import (
     LLMProvider,
 )
 from autoshorts.core.exceptions import InvalidStateTransitionError, PathSecurityError
 from autoshorts.core.logging_setup import redact, register_secret
 from autoshorts.core.models import (
+    ChannelProfile,
     EditDecisionList,
     Job,
     JobStatus,
@@ -25,6 +32,12 @@ from autoshorts.core.paths import (
     escape_ffmpeg_filter_path,
     get_output_dir,
     get_work_dir,
+)
+from autoshorts.core.settings_manager import (
+    get_channel_profiles,
+    get_studio_profiles,
+    save_channel_profile,
+    save_studio_profile,
 )
 from autoshorts.core.state_manager import StateManager, get_current_pt_date, get_pt_timezone
 
@@ -406,3 +419,235 @@ def test_reconcile_stranded_jobs(tmp_path: Path):
 
     # Subsequent run finds 0 stranded jobs
     assert sm.reconcile_stranded_jobs() == 0
+
+
+# -----------------------------------------------------------------------------
+# 10. VisualBrandingConfig & AudioMasteringConfig Validation
+# -----------------------------------------------------------------------------
+
+
+def test_visual_branding_config_defaults_and_validation():
+    """Verify VisualBrandingConfig defaults and Field constraints."""
+    vb = VisualBrandingConfig()
+    assert vb.layout_mode == "split_50_50"
+    assert vb.color_grading == "none"
+    assert vb.watermark_text is None
+    assert vb.watermark_position == "top_right"
+    assert vb.watermark_opacity == 0.65
+    assert vb.progress_bar_position == "seam"
+    assert vb.progress_bar_color == "#FFE600"
+    assert vb.progress_bar_height == 12
+    assert vb.hook_opener == "none"
+    assert vb.outro_cta_text is None
+
+    # Custom valid values
+    custom_vb = VisualBrandingConfig(
+        layout_mode="full_blur_bg",
+        color_grading="vibrant",
+        watermark_text="@AutoShorts",
+        watermark_position="bottom_right",
+        watermark_opacity=0.8,
+        progress_bar_position="bottom",
+        progress_bar_color="#00FF66",
+        progress_bar_height=8,
+        hook_opener="zoom_burst",
+        outro_cta_text="Subscribe for more!",
+    )
+    assert custom_vb.layout_mode == "full_blur_bg"
+    assert custom_vb.watermark_text == "@AutoShorts"
+    assert custom_vb.progress_bar_height == 8
+
+    # Validation bounds: opacity ge 0.1, le 1.0
+    with pytest.raises(ValidationError):
+        VisualBrandingConfig(watermark_opacity=0.05)
+    with pytest.raises(ValidationError):
+        VisualBrandingConfig(watermark_opacity=1.5)
+
+    # Validation bounds: progress_bar_height ge 4, le 24
+    with pytest.raises(ValidationError):
+        VisualBrandingConfig(progress_bar_height=2)
+    with pytest.raises(ValidationError):
+        VisualBrandingConfig(progress_bar_height=30)
+
+
+def test_audio_mastering_config_defaults_and_validation():
+    """Verify AudioMasteringConfig defaults and Field constraints."""
+    am = AudioMasteringConfig()
+    assert am.voice_boost is True
+    assert am.target_lufs == -14.0
+    assert am.bg_music_volume == 0.20
+    assert am.enable_sfx is True
+
+    # Custom valid values
+    custom_am = AudioMasteringConfig(
+        voice_boost=False,
+        target_lufs=-16.0,
+        bg_music_volume=0.35,
+        enable_sfx=False,
+    )
+    assert custom_am.voice_boost is False
+    assert custom_am.target_lufs == -16.0
+
+    # Validation bounds: target_lufs ge -24.0, le -9.0
+    with pytest.raises(ValidationError):
+        AudioMasteringConfig(target_lufs=-28.0)
+    with pytest.raises(ValidationError):
+        AudioMasteringConfig(target_lufs=-5.0)
+
+    # Validation bounds: bg_music_volume ge 0.0, le 0.50
+    with pytest.raises(ValidationError):
+        AudioMasteringConfig(bg_music_volume=-0.1)
+    with pytest.raises(ValidationError):
+        AudioMasteringConfig(bg_music_volume=0.75)
+
+
+# -----------------------------------------------------------------------------
+# 11. ChannelProfile Model
+# -----------------------------------------------------------------------------
+
+
+def test_channel_profile_defaults():
+    """Verify ChannelProfile defaults and custom overrides."""
+    cp = ChannelProfile()
+    assert cp.id == "default"
+    assert cp.name == "Default Channel"
+    assert cp.handle == "@MyChannel"
+    assert cp.token_path == "data/token.json"
+    assert cp.edge_profile_dir == "data/edge_profile"
+    assert cp.default_privacy_status == "public"
+    assert cp.default_category_id == "24"
+    assert cp.watermark_text is None
+
+    custom = ChannelProfile(
+        id="gaming_channel",
+        name="Gaming Shorts",
+        handle="@GamingShorts",
+        token_path="data/tokens/gaming.json",
+        edge_profile_dir="data/edge_profiles/gaming",
+        default_privacy_status="unlisted",
+        default_category_id="20",
+        watermark_text="@GamingShorts",
+    )
+    assert custom.id == "gaming_channel"
+    assert custom.handle == "@GamingShorts"
+    assert custom.default_category_id == "20"
+
+
+# -----------------------------------------------------------------------------
+# 12. Extended Job Model Defaults & Backward Compatibility
+# -----------------------------------------------------------------------------
+
+
+def test_job_model_extended_defaults():
+    """Verify Job model contains all new Track 1 fields with correct defaults."""
+    job = Job(source_url="https://youtube.com/watch?v=dQw4w9WgXcQ")
+    assert job.layout_mode == "split_50_50"
+    assert job.color_grading == "none"
+    assert job.watermark_text is None
+    assert job.watermark_position == "top_right"
+    assert job.progress_bar_position == "seam"
+    assert job.text_transform == "uppercase"
+    assert job.subtitle_position == "center"
+    assert job.hook_banner_style == "neon_box"
+    assert job.enable_emojis is True
+    assert job.category_id == "24"
+    assert job.default_language == "en"
+    assert job.altered_content is False
+    assert job.custom_tags == []
+    assert job.auto_pin_comment is False
+    assert job.link_related_video is True
+    assert job.publish_at is None
+    assert job.channel_profile_id == "default"
+
+    # Backward compatibility with existing fields
+    assert job.style_preset == "neon"
+    assert job.privacy_status is None
+
+
+# -----------------------------------------------------------------------------
+# 13. Studio Profiles & Channel Profiles Persistence
+# -----------------------------------------------------------------------------
+
+
+def test_studio_profiles_factory_and_persistence(tmp_path: Path):
+    """Verify built-in factory studio profiles and custom profile saving."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+
+    # 1. Initially returns 5 factory profiles
+    profiles = get_studio_profiles(data_dir=data_dir)
+    assert len(profiles) >= 5
+    for expected_key in (
+        "viral_split",
+        "podcast_blur",
+        "gaming_dopamine",
+        "cinematic_full",
+        "pip_reaction",
+    ):
+        assert expected_key in profiles
+        assert profiles[expected_key]["is_factory"] is True
+
+    # 2. Save a custom studio profile
+    custom_profile = {
+        "id": "my_tech_review",
+        "name": "Tech Review Custom",
+        "layout_mode": "full_blur_bg",
+        "style_preset": "cyberpunk",
+        "color_grading": "crisp",
+        "progress_bar_position": "top",
+    }
+    saved = save_studio_profile(custom_profile, data_dir=data_dir)
+    assert saved["id"] == "my_tech_review"
+    assert saved["is_factory"] is False
+
+    # 3. Reload profiles and verify custom profile is present alongside factory profiles
+    reloaded = get_studio_profiles(data_dir=data_dir)
+    assert "my_tech_review" in reloaded
+    assert reloaded["my_tech_review"]["name"] == "Tech Review Custom"
+    assert reloaded["my_tech_review"]["is_factory"] is False
+    assert "viral_split" in reloaded
+
+
+def test_channel_profiles_persistence(tmp_path: Path):
+    """Verify channel profiles load default and persist updates cleanly."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+
+    # 1. Defaults to default profile
+    initial = get_channel_profiles(data_dir=data_dir)
+    assert len(initial) == 1
+    assert initial[0]["id"] == "default"
+    assert initial[0]["handle"] == "@MyChannel"
+
+    # 2. Save a new channel profile
+    new_profile = {
+        "id": "podcast_clips",
+        "name": "Podcast Highlights",
+        "handle": "@PodcastHighlights",
+        "default_category_id": "22",
+    }
+    save_channel_profile(new_profile, data_dir=data_dir)
+
+    # 3. Retrieve profiles and verify both exist
+    profiles = get_channel_profiles(data_dir=data_dir)
+    assert len(profiles) == 2
+    ids = [p["id"] for p in profiles]
+    assert "default" in ids
+    assert "podcast_clips" in ids
+
+    # 4. Update existing channel profile
+    updated_profile = {
+        "id": "podcast_clips",
+        "name": "Podcast Highlights Official",
+        "handle": "@PodcastHighlightsHQ",
+        "default_category_id": "27",
+    }
+    save_channel_profile(updated_profile, data_dir=data_dir)
+
+    # 5. Check updated in place
+    profiles_after = get_channel_profiles(data_dir=data_dir)
+    assert len(profiles_after) == 2
+    match = next(p for p in profiles_after if p["id"] == "podcast_clips")
+    assert match["name"] == "Podcast Highlights Official"
+    assert match["handle"] == "@PodcastHighlightsHQ"
+    assert match["default_category_id"] == "27"

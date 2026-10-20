@@ -10,6 +10,7 @@ from autoshorts.media.ass_styler import (
     chunk_words,
     format_ass_timestamp,
     format_emojis_for_ass,
+    hex_to_ass_color,
     is_emphasis_word,
     remap_words_for_jump_cuts,
     write_ass_file,
@@ -260,15 +261,169 @@ def test_caption_style_presets():
     assert "&H0000E6FF" in neon_script
     assert ",1,8,4,2," in neon_script  # BorderStyle=1, Outline=8, Shadow=4
 
-    # 2. Minimal preset: Emerald #00FF66 active (&H0066FF00), subtle shadow
+    # 2. Minimal preset: Emerald #00FF66 active (&H0066FF00), subtle shadow=1
     min_script = build_ass_script(words, style_preset="minimal")
     assert "&H0066FF00" in min_script
-    assert ",1,2,2,2," in min_script  # BorderStyle=1, Outline=2, Shadow=2
+    assert ",1,2,1,2," in min_script  # BorderStyle=1, Outline=2, Shadow=1
 
     # 3. Pill preset: BorderStyle=3 with opaque backing box (&HA0000000)
     pill_script = build_ass_script(words, style_preset="pill")
     assert ",3,6,0,2," in pill_script  # BorderStyle=3, Outline=6, Shadow=0
     assert "&HA0000000" in pill_script  # Backing box color
+
+
+def test_hex_to_ass_color():
+    """Verify conversion of hex colors (#RRGGBB, #AARRGGBB, #RGB) to ASS (&HAABBGGRR / &H00BBGGRR)."""
+    assert hex_to_ass_color("#FFE600") == "&H0000E6FF"
+    assert hex_to_ass_color("#00FF55") == "&H0055FF00"
+    assert hex_to_ass_color("#FFB800") == "&H0000B8FF"
+    assert hex_to_ass_color("#00F0FF") == "&H00FFF000"
+    assert hex_to_ass_color("&H0000E6FF") == "&H0000E6FF"
+    assert hex_to_ass_color("&h0066ff00") == "&H0066FF00"
+    assert hex_to_ass_color("#D4AF37") == "&H0037AFD4"
+    assert hex_to_ass_color("#C4912B") == "&H002B91C4"
+    assert hex_to_ass_color("#FF007F") == "&H007F00FF"
+    assert hex_to_ass_color("#FFF") == "&H00FFFFFF"
+
+
+def test_all_seven_caption_presets():
+    """Verify all 7 studio caption presets generate expected fonts, sizes, and styling."""
+    words = [{"word": "Viral", "start": 0.0, "end": 0.5}]
+
+    # 1. neon
+    s_neon = build_ass_script(words, style_preset="neon")
+    assert "Montserrat ExtraBold,76" in s_neon
+    assert "&H0000E6FF" in s_neon
+    assert ",1,8,4,2," in s_neon
+
+    # 2. minimal
+    s_min = build_ass_script(words, style_preset="minimal")
+    assert "Inter SemiBold,64" in s_min
+    assert "&H0066FF00" in s_min
+    assert ",1,2,1,2," in s_min
+
+    # 3. pill
+    s_pill = build_ass_script(words, style_preset="pill")
+    assert "Montserrat Bold,68" in s_pill
+    assert "&HA0000000" in s_pill
+    assert ",3,6,0,2," in s_pill
+
+    # 4. hormozi
+    s_hormozi = build_ass_script(words, style_preset="hormozi")
+    assert "Impact,86" in s_hormozi
+    assert "&H0055FF00" in s_hormozi
+    assert ",1,12,5,2," in s_hormozi
+    assert r"\fscx130\fscy130" in s_hormozi
+
+    # 5. mrbeast
+    s_mrbeast = build_ass_script(words, style_preset="mrbeast")
+    assert "Montserrat ExtraBold,82" in s_mrbeast
+    assert "&H0000B8FF" in s_mrbeast
+    assert ",1,10,4,2," in s_mrbeast
+    assert r"\frz-3" in s_mrbeast
+    assert r"\frz3" in s_mrbeast
+
+    # 6. cyberpunk
+    s_cyberpunk = build_ass_script(words, style_preset="cyberpunk")
+    assert "Orbitron,74" in s_cyberpunk
+    assert "&H00FFF000" in s_cyberpunk  # primary Cyan
+    assert "&H007F00FF" in s_cyberpunk  # active Magenta
+    assert "&H00330011" in s_cyberpunk  # Dark violet outline
+    assert ",1,8,6,2," in s_cyberpunk
+
+    # 7. cinematic
+    s_cinematic = build_ass_script(words, style_preset="cinematic")
+    assert "Georgia,58" in s_cinematic
+    assert "&H00F0F5F5" in s_cinematic  # Off-white
+    assert "&H0037AFD4" in s_cinematic  # Gold
+    assert "&H00141E28" in s_cinematic  # Umber outline
+    assert ",1,2,3,2," in s_cinematic
+
+
+def test_typography_text_transforms():
+    """Verify uppercase, title, and none text transforms."""
+    words = [{"word": "heLLo wORld", "start": 0.0, "end": 1.0}]
+
+    s_upper = build_ass_script(words, text_transform="uppercase")
+    assert "HELLO WORLD" in s_upper
+
+    s_title = build_ass_script(words, text_transform="title")
+    assert "Hello World" in s_title
+
+    s_none = build_ass_script(words, text_transform="none")
+    assert "heLLo wORld" in s_none
+
+
+def test_subtitle_positions():
+    """Verify center, bottom_safe, and top_safe subtitle vertical margins."""
+    words = [{"word": "SafeZone", "start": 0.0, "end": 1.0}]
+
+    s_bottom = build_ass_script(words, subtitle_position="bottom_safe")
+    assert ",80,150,420,1" in s_bottom
+
+    s_top = build_ass_script(words, subtitle_position="top_safe")
+    assert ",80,150,1450,1" in s_top
+
+    s_center = build_ass_script(words, subtitle_position="center")
+    assert ",80,150,780,1" in s_center
+
+
+def test_hook_banner_styles():
+    """Verify hook banner styles (neon_box, pill, minimal, none)."""
+    words = [{"word": "Word", "start": 0.0, "end": 1.0}]
+
+    # none: skip HookCard event
+    s_none = build_ass_script(words, hook_title="Epic Hook", hook_banner_style="none")
+    assert "Dialogue: 1," not in s_none
+
+    # pill: BorderStyle=3
+    s_pill = build_ass_script(words, hook_title="Epic Hook", hook_banner_style="pill")
+    assert "Dialogue: 1," in s_pill
+    assert "Style: HookCard,Montserrat Black,64," in s_pill
+    assert ",3,8,0,8,80,150,220,1" in s_pill
+
+    # minimal: BorderStyle=1, Outline=2
+    s_min = build_ass_script(words, hook_title="Epic Hook", hook_banner_style="minimal")
+    assert "Dialogue: 1," in s_min
+    assert ",1,2,1,8,80,150,220,1" in s_min
+
+    # neon_box: default BorderStyle=1, Outline=6
+    s_neon = build_ass_script(words, hook_title="Epic Hook", hook_banner_style="neon_box")
+    assert "Dialogue: 1," in s_neon
+    assert ",1,6,3,8,80,150,220,1" in s_neon
+
+
+def test_enable_emojis_toggle():
+    """Verify enabling and disabling emoji rendering."""
+    words = [{"word": "Fire 🔥 Alert ⚡", "start": 0.0, "end": 1.0}]
+
+    # When True: wraps with Segoe UI Emoji
+    s_on = build_ass_script(words, enable_emojis=True)
+    assert r"{\fnSegoe UI Emoji}🔥" in s_on
+    assert r"{\fnSegoe UI Emoji}⚡" in s_on
+
+    # When False: strips emojis cleanly
+    s_off = build_ass_script(words, enable_emojis=False)
+    assert r"{\fnSegoe UI Emoji}" not in s_off
+    assert "🔥" not in s_off
+    assert "⚡" not in s_off
+    assert "FIRE ALERT" in s_off
+
+
+def test_custom_color_overrides_hex():
+    """Verify custom hex color overrides are converted to ASS format."""
+    words = [{"word": "Custom", "start": 0.0, "end": 1.0}]
+
+    s = build_ass_script(
+        words,
+        primary_color="#E0E0E0",  # BGR &H00E0E0E0
+        active_color="#FF3300",  # BGR &H000033FF
+        emphasis_color="#00FFCC",  # BGR &H00CCFF00
+        outline_color="#201005",  # BGR &H00051020
+    )
+    assert "&H00E0E0E0" in s
+    assert "&H000033FF" in s
+    assert "&H00051020" in s
 
 
 def test_active_word_micro_tilt_and_scale_animation():

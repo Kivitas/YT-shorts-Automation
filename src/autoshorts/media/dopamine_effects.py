@@ -1,12 +1,14 @@
 """High-Dopamine filtergraph builder and effects engine for 9:16 vertical Shorts.
 
 Implements:
-- 9:16 vertical split-screen (1080x960 top speaker + 1080x960 bottom gameplay)
-- Top dynamic progress bar overlay
+- 5 Layout Modes: split_50_50, split_70_30, full_blur_bg, full_center_crop, pip_gameplay
+- Color grading LUT filters: vibrant, cinematic, warm, crisp, none
+- Channel watermark branding filter with configurable position and opacity
+- Dynamic progress bar overlay (top, bottom, seam, none)
 - Zoom punch-ins synchronized with emphasis words from EDL
 - Jump cuts excising dead air/silence from EDL
-- Audio normalization (loudnorm=I=-14:LRA=7:tp=-1)
-- Ducked background music and transition SFX
+- Audio normalization (voice boost + loudnorm + EBU R128 mastering)
+- Ducked background music and event-synced transition SFX (adelay)
 - User-supplied background asset picker with random temporal offsets
 - Procedural lavfi fallback background when user assets are empty
 - Dopamine presets: low, medium, high
@@ -76,15 +78,78 @@ def get_dopamine_preset(level: str = "medium") -> DopaminePreset:
     return DOPAMINE_PRESETS.get(normalized, DOPAMINE_PRESETS["medium"])
 
 
+def build_color_grading_filter(preset: str = "none") -> str:
+    """Generate color grading filter expression.
+
+    Supported presets: 'none', 'vibrant', 'cinematic', 'warm', 'crisp'.
+    """
+    clean_preset = (preset or "none").strip().lower()
+    if clean_preset == "none" or not clean_preset:
+        return ""
+    elif clean_preset == "vibrant":
+        return "eq=saturation=1.28:contrast=1.08:brightness=0.02,unsharp=5:5:0.8:5:5:0.0"
+    elif clean_preset == "cinematic":
+        return "eq=contrast=1.12:saturation=0.92:gamma_r=1.04:gamma_b=0.96,colorbalance=rs=0.04:bs=-0.04:rh=-0.03:bh=0.05"
+    elif clean_preset == "warm":
+        return "eq=gamma_r=1.08:gamma_g=1.02:gamma_b=0.92:saturation=1.14:contrast=1.04"
+    elif clean_preset == "crisp":
+        return "unsharp=5:5:1.2:5:5:0.0,eq=contrast=1.06:saturation=1.06"
+    return ""
+
+
+def build_watermark_filter(
+    watermark_text: str | None,
+    position: str = "top_right",
+    opacity: float = 0.65,
+    width: int = 1080,
+    height: int = 1920,
+) -> str:
+    """Generate drawtext filter string for channel handle watermark branding."""
+    if not watermark_text:
+        return ""
+
+    # Safely escape for FFmpeg drawtext: backslash, colon, single quote, percent
+    escaped_text = (
+        watermark_text.replace("\\", "\\\\")
+        .replace(":", r"\:")
+        .replace("'", r"\'")
+        .replace("%", r"\%")
+    )
+
+    pos = (position or "top_right").strip().lower()
+    if pos == "top_left":
+        x_expr = "60" if width == 1080 else f"{int(60 * width / 1080)}"
+        y_expr = "180" if height == 1920 else f"{int(180 * height / 1920)}"
+    elif pos == "bottom_right":
+        x_expr = "w-tw-160" if width == 1080 else f"w-tw-{int(160 * width / 1080)}"
+        y_expr = "h-th-420" if height == 1920 else f"h-th-{int(420 * height / 1920)}"
+    elif pos == "bottom_center":
+        x_expr = "(w-tw)/2"
+        y_expr = "h-th-380" if height == 1920 else f"h-th-{int(380 * height / 1920)}"
+    else:  # top_right (default)
+        x_expr = "w-tw-60" if width == 1080 else f"w-tw-{int(60 * width / 1080)}"
+        y_expr = "180" if height == 1920 else f"{int(180 * height / 1920)}"
+
+    fontsize = max(18, int(32 * width / 1080))
+    alpha_val = max(0.05, min(1.0, opacity))
+
+    return (
+        f"drawtext=text='{escaped_text}':fontcolor=white@{alpha_val:.2f}:"
+        f"fontsize={fontsize}:x={x_expr}:y={y_expr}:shadowcolor=black@0.5:shadowx=2:shadowy=2"
+    )
+
+
 def build_zoom_punch_filter(
     zoom_punch_ins: Sequence[ZoomPunchIn],
     input_label: str = "top_scaled",
     output_label: str = "top",
     ramp_duration_sec: float = 0.15,
+    target_w: int = 1080,
+    target_h: int = 960,
 ) -> tuple[str, str]:
     """Generate dynamic zoom punch-in crop expressions for the top video stream.
 
-    Applies a centered crop (scaled back to 1080x960) with smooth ease-in / ease-out ramps
+    Applies a centered crop (scaled back to target_w x target_h) with smooth ease-in / ease-out ramps
     during specified intervals.
     """
     if not zoom_punch_ins:
@@ -107,10 +172,9 @@ def build_zoom_punch_filter(
             terms.append(f"({scale_delta:.2f}*between(t,{start_t:.2f},{end_t:.2f}))")
 
     scale_expr = "+".join(terms)
-    # iw/scale_expr, ih/scale_expr centered
     crop_str = (
         f"[{input_label}]crop=w='iw/({scale_expr})':h='ih/({scale_expr})':"
-        f"x='(iw-ow)/2':y='(ih-oh)/2',scale=1080:960[{output_label}]"
+        f"x='(iw-ow)/2':y='(ih-oh)/2',scale={target_w}:{target_h}[{output_label}]"
     )
     return crop_str, output_label
 
@@ -148,12 +212,33 @@ def build_progress_bar_filter(
     color: str = "red@0.8",
     height: int = 12,
     width: int = 1080,
+    position: str = "top",
+    total_height: int = 1920,
+    layout_mode: str = "split_50_50",
 ) -> tuple[str, str]:
-    """Generate dynamic top progress bar overlay moving across the video duration."""
+    """Generate dynamic progress bar overlay moving across the video duration.
+
+    Supports positions: 'top' (y=0), 'bottom' (y=total_height - height),
+    'seam' (y at split seam), 'none' (disabled).
+    """
+    pos = (position or "top").strip().lower()
+    if pos == "none":
+        return f"[{input_label}]copy[{output_label}]", output_label
+
+    if pos == "bottom":
+        y_coord = total_height - height
+    elif pos == "seam":
+        if layout_mode == "split_70_30":
+            y_coord = int(total_height * 0.70) - height // 2
+        else:
+            y_coord = total_height // 2 - height // 2
+    else:  # top (default)
+        y_coord = 0
+
     safe_duration = max(1.0, duration_sec)
     bar_filter = (
         f"color=c={color}:s={width}x{height}:d={safe_duration:.2f}[bar_color]; "
-        f"[{input_label}][bar_color]overlay=x='-{width}+({width}*t/{safe_duration:.2f})':y=0[{output_label}]"
+        f"[{input_label}][bar_color]overlay=x='-{width}+({width}*t/{safe_duration:.2f})':y={y_coord}[{output_label}]"
     )
     return bar_filter, output_label
 
@@ -252,9 +337,6 @@ def pick_background_asset(
         return None, 0.0
 
     chosen = random.choice(candidates)
-    # Estimate or probe duration if possible, otherwise use a safe random start
-    # Background videos are typically 5 to 30 minutes long.
-    # We choose a random start between 0 and 180s, wrapped safely.
     random_offset = random.uniform(0.0, 180.0)
     return chosen, random_offset
 
@@ -282,41 +364,68 @@ def build_complex_filtergraph(
     has_background_video: bool = True,
     music_input_index: int | None = None,
     sfx_input_index: int | None = None,
+    layout_mode: str = "split_50_50",
+    color_grading: str = "none",
+    watermark_text: str | None = None,
+    watermark_position: str = "top_right",
+    watermark_opacity: float = 0.65,
+    progress_bar_position: str = "bottom",
+    progress_bar_color: str = "red@0.8",
+    voice_boost: bool = True,
+    target_lufs: float = -14.0,
+    bg_music_volume: float = 0.18,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 30,
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
-    Inputs expected:
-    - 0:v (and 0:a if source_clip_has_audio): Source video clip
-    - 1:v: Background video stream (or lavfi procedural input)
-    - Optional music_input_index: Music audio stream
-    - Optional sfx_input_index: Transition SFX audio stream
+    Supports 5 layout modes:
+    - 'split_50_50': Top 50% speaker + Bottom 50% gameplay
+    - 'split_70_30': Top 70% speaker + Bottom 30% gameplay
+    - 'full_blur_bg': Single-source blurred background + centered 16:9 foreground
+    - 'full_center_crop': Single-source full vertical center crop
+    - 'pip_gameplay': Full vertical speaker + Picture-in-Picture gameplay box
 
     Returns:
         (filter_complex_string, out_video_label, out_audio_label)
     """
     filter_stages: list[str] = []
+    mode = (layout_mode or "split_50_50").strip().lower()
 
-    # 1. Top video: Scale & crop to 1080x960, 30fps
-    filter_stages.append(
-        "[0:v]scale=1080:960:force_original_aspect_ratio=increase,"
-        "crop=1080:960,setsar=1,fps=30[top_scaled]"
+    # Pre-extract valid jump cuts
+    valid_cuts = (
+        [c for c in edl.jump_cuts if c.cut_end > c.cut_start >= 0]
+        if (edl and edl.jump_cuts)
+        else []
     )
-
-    # 2. Zoom punch-ins on top video
-    if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
-        zoom_str, top_final = build_zoom_punch_filter(
-            edl.zoom_punch_ins,
-            input_label="top_scaled",
-            output_label="top_zoomed",
-        )
-        filter_stages.append(zoom_str)
-    else:
-        top_final = "top_scaled"
-
-    # 3. Jump cuts on both video and audio chains before vertical stack
     current_a = "0:a" if source_clip_has_audio else None
-    if edl and edl.jump_cuts:
-        valid_cuts = [c for c in edl.jump_cuts if c.cut_end > c.cut_start >= 0]
+
+    # -------------------------------------------------------------------------
+    # 1. Video Layout Composition
+    # -------------------------------------------------------------------------
+    if mode == "split_70_30":
+        # 70/30 split: top 70% (1344 @ 1080p), bottom 30% (576 @ 1080p)
+        top_h = int(height * 0.70) // 2 * 2
+        bottom_h = height - top_h
+
+        filter_stages.append(
+            f"[0:v]scale={width}:{top_h}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{top_h},setsar=1,fps={fps}[top_scaled]"
+        )
+
+        if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
+            zoom_str, top_final = build_zoom_punch_filter(
+                edl.zoom_punch_ins,
+                input_label="top_scaled",
+                output_label="top_zoomed",
+                target_w=width,
+                target_h=top_h,
+            )
+            filter_stages.append(zoom_str)
+        else:
+            top_final = "top_scaled"
+
         if valid_cuts:
             if source_clip_has_audio:
                 jc_filter, top_cut, audio_cut = build_jumpcut_select_filter(
@@ -330,36 +439,251 @@ def build_complex_filtergraph(
                 top_final = top_cut
                 current_a = audio_cut
             else:
-                drop_conditions = [
-                    f"between(t,{cut.cut_start:.2f},{cut.cut_end:.2f})" for cut in valid_cuts
-                ]
-                cond_str = "+".join(drop_conditions)
+                drop_conds = [f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts]
                 filter_stages.append(
-                    f"[{top_final}]select='not({cond_str})',setpts=N/FRAME_RATE/TB[top_cut]"
+                    f"[{top_final}]select='not({'+'.join(drop_conds)})',setpts=N/FRAME_RATE/TB[top_cut]"
                 )
                 top_final = "top_cut"
 
-    # 4. Bottom video (background): Scale & crop to 1080x960, 30fps
-    filter_stages.append(
-        "[1:v]scale=1080:960:force_original_aspect_ratio=increase,"
-        "crop=1080:960,setsar=1,fps=30[bottom]"
-    )
+        filter_stages.append(
+            f"[1:v]scale={width}:{bottom_h}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{bottom_h},setsar=1,fps={fps}[bottom]"
+        )
+        filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
+        current_v = "stacked"
 
-    # 5. Vertical stack (1080x1920)
-    filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
-    current_v = "stacked"
+    elif mode == "full_blur_bg":
+        # Single-source: blurred 9:16 background with sharp centered 16:9 foreground
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, v_base, audio_cut = build_jumpcut_select_filter(
+                    valid_cuts,
+                    v_in="0:v",
+                    v_out="v_base",
+                    a_in="0:a",
+                    a_out="a_cut",
+                )
+                filter_stages.append(jc_filter)
+                current_a = audio_cut
+            else:
+                drop_conds = [f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts]
+                filter_stages.append(
+                    f"[0:v]select='not({'+'.join(drop_conds)})',setpts=N/FRAME_RATE/TB[v_base]"
+                )
+                v_base = "v_base"
+        else:
+            v_base = "0:v"
 
-    # 6. Top progress bar
-    if dopamine_preset.enable_progress_bar:
+        filter_stages.append(f"[{v_base}]split=2[bg_src][fg_src]")
+        filter_stages.append(
+            f"[bg_src]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=40:5,setsar=1,fps={fps}[bg_blur]"
+        )
+
+        fg_h = round(width * 9 / 16) // 2 * 2
+        filter_stages.append(
+            f"[fg_src]scale={width}:{fg_h}:force_original_aspect_ratio=decrease,"
+            f"setsar=1,fps={fps}[fg_scaled]"
+        )
+
+        if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
+            zoom_str, fg_final = build_zoom_punch_filter(
+                edl.zoom_punch_ins,
+                input_label="fg_scaled",
+                output_label="fg_zoomed",
+                target_w=width,
+                target_h=fg_h,
+            )
+            filter_stages.append(zoom_str)
+        else:
+            fg_final = "fg_scaled"
+
+        filter_stages.append(f"[bg_blur][{fg_final}]overlay=x=(W-w)/2:y=(H-h)/2[stacked]")
+        current_v = "stacked"
+
+    elif mode == "full_center_crop":
+        # Single-source: full 9:16 vertical center crop
+        filter_stages.append(
+            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,fps={fps}[full_scaled]"
+        )
+
+        if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
+            zoom_str, full_final = build_zoom_punch_filter(
+                edl.zoom_punch_ins,
+                input_label="full_scaled",
+                output_label="full_zoomed",
+                target_w=width,
+                target_h=height,
+            )
+            filter_stages.append(zoom_str)
+        else:
+            full_final = "full_scaled"
+
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, full_cut, audio_cut = build_jumpcut_select_filter(
+                    valid_cuts,
+                    v_in=full_final,
+                    v_out="full_cut",
+                    a_in="0:a",
+                    a_out="a_cut",
+                )
+                filter_stages.append(jc_filter)
+                full_final = full_cut
+                current_a = audio_cut
+            else:
+                drop_conds = [f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts]
+                filter_stages.append(
+                    f"[{full_final}]select='not({'+'.join(drop_conds)})',setpts=N/FRAME_RATE/TB[full_cut]"
+                )
+                full_final = "full_cut"
+
+        current_v = full_final
+
+    elif mode == "pip_gameplay":
+        # Full primary video with bordered PiP inset from gameplay [1:v]
+        filter_stages.append(
+            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,fps={fps}[main_scaled]"
+        )
+
+        if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
+            zoom_str, main_final = build_zoom_punch_filter(
+                edl.zoom_punch_ins,
+                input_label="main_scaled",
+                output_label="main_zoomed",
+                target_w=width,
+                target_h=height,
+            )
+            filter_stages.append(zoom_str)
+        else:
+            main_final = "main_scaled"
+
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, main_cut, audio_cut = build_jumpcut_select_filter(
+                    valid_cuts,
+                    v_in=main_final,
+                    v_out="main_cut",
+                    a_in="0:a",
+                    a_out="a_cut",
+                )
+                filter_stages.append(jc_filter)
+                main_final = main_cut
+                current_a = audio_cut
+            else:
+                drop_conds = [f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts]
+                filter_stages.append(
+                    f"[{main_final}]select='not({'+'.join(drop_conds)})',setpts=N/FRAME_RATE/TB[main_cut]"
+                )
+                main_final = "main_cut"
+
+        pip_w = int(380 * width / 1080) // 2 * 2
+        pip_h = pip_w
+        filter_stages.append(
+            f"[1:v]scale={pip_w}:{pip_h}:force_original_aspect_ratio=increase,"
+            f"crop={pip_w}:{pip_h},setsar=1,fps={fps}[pip_scaled]"
+        )
+
+        pip_x = "W-w-48" if width == 1080 else f"W-w-{int(48 * width / 1080)}"
+        pip_y = "H-h-420" if height == 1920 else f"H-h-{int(420 * height / 1920)}"
+        filter_stages.append(f"[{main_final}][pip_scaled]overlay=x={pip_x}:y={pip_y}[stacked]")
+        current_v = "stacked"
+
+    else:
+        # Default split_50_50
+        top_h = height // 2
+        bottom_h = height - top_h
+
+        filter_stages.append(
+            f"[0:v]scale={width}:{top_h}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{top_h},setsar=1,fps={fps}[top_scaled]"
+        )
+
+        if dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins:
+            zoom_str, top_final = build_zoom_punch_filter(
+                edl.zoom_punch_ins,
+                input_label="top_scaled",
+                output_label="top_zoomed",
+                target_w=width,
+                target_h=top_h,
+            )
+            filter_stages.append(zoom_str)
+        else:
+            top_final = "top_scaled"
+
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, top_cut, audio_cut = build_jumpcut_select_filter(
+                    valid_cuts,
+                    v_in=top_final,
+                    v_out="top_cut",
+                    a_in="0:a",
+                    a_out="a_cut",
+                )
+                filter_stages.append(jc_filter)
+                top_final = top_cut
+                current_a = audio_cut
+            else:
+                drop_conds = [f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts]
+                filter_stages.append(
+                    f"[{top_final}]select='not({'+'.join(drop_conds)})',setpts=N/FRAME_RATE/TB[top_cut]"
+                )
+                top_final = "top_cut"
+
+        filter_stages.append(
+            f"[1:v]scale={width}:{bottom_h}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{bottom_h},setsar=1,fps={fps}[bottom]"
+        )
+        filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
+        current_v = "stacked"
+
+    # -------------------------------------------------------------------------
+    # 2. Color Grading LUT
+    # -------------------------------------------------------------------------
+    if color_grading and color_grading != "none":
+        cg_filter = build_color_grading_filter(color_grading)
+        if cg_filter:
+            filter_stages.append(f"[{current_v}]{cg_filter}[graded]")
+            current_v = "graded"
+
+    # -------------------------------------------------------------------------
+    # 3. Watermark (@Handle)
+    # -------------------------------------------------------------------------
+    if watermark_text:
+        wm_filter = build_watermark_filter(
+            watermark_text=watermark_text,
+            position=watermark_position,
+            opacity=watermark_opacity,
+            width=width,
+            height=height,
+        )
+        if wm_filter:
+            filter_stages.append(f"[{current_v}]{wm_filter}[watermarked]")
+            current_v = "watermarked"
+
+    # -------------------------------------------------------------------------
+    # 4. Progress Bar
+    # -------------------------------------------------------------------------
+    if dopamine_preset.enable_progress_bar and progress_bar_position != "none":
         bar_filter, bar_out = build_progress_bar_filter(
             duration_sec=duration_sec,
             input_label=current_v,
             output_label="with_bar",
+            color=progress_bar_color,
+            height=max(6, int(12 * height / 1920)),
+            width=width,
+            position=progress_bar_position,
+            total_height=height,
+            layout_mode=mode,
         )
         filter_stages.append(bar_filter)
         current_v = bar_out
 
-    # 7. Burn-in ASS Subtitles with Windows-safe path escaping
+    # -------------------------------------------------------------------------
+    # 5. ASS Subtitle Burn-In
+    # -------------------------------------------------------------------------
     escaped_subs = escape_ffmpeg_filter_path(subtitles_path)
     subtitles_filter = f"subtitles={escaped_subs}"
     if fonts_dir:
@@ -369,13 +693,24 @@ def build_complex_filtergraph(
     filter_stages.append(f"[{current_v}]{subtitles_filter}[outv]")
     out_video_label = "[outv]"
 
-    # 8. Audio processing: Loudnorm, Ducked Music (sidechain compression), SFX, and Master Limiter
+    # -------------------------------------------------------------------------
+    # 6. Audio Mastering: Voice Boost EQ, Loudnorm, Ducked Music, Event SFX, Limiter
+    # -------------------------------------------------------------------------
     if source_clip_has_audio:
         if current_a is None:
             current_a = "0:a"
 
+        voice_chain: list[str] = []
+        if voice_boost:
+            voice_chain.append("highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5")
         if dopamine_preset.enable_loudnorm:
-            filter_stages.append(f"[{current_a}]loudnorm=I=-14:LRA=7:tp=-1[voice]")
+            lufs_val = (
+                f"{target_lufs:g}" if isinstance(target_lufs, (int, float)) else str(target_lufs)
+            )
+            voice_chain.append(f"loudnorm=I={lufs_val}:TP=-1.0:LRA=7")
+
+        if voice_chain:
+            filter_stages.append(f"[{current_a}]{','.join(voice_chain)}[voice]")
             voice_label = "voice"
         else:
             voice_label = current_a
@@ -384,25 +719,28 @@ def build_complex_filtergraph(
         if dopamine_preset.enable_music_ducking and music_input_index is not None:
             filter_stages.append(
                 f"[{voice_label}]asplit=2[v_main][v_side]; "
-                f"[{music_input_index}:a]volume=0.25[bg_raw]; "
+                f"[{music_input_index}:a]volume={bg_music_volume:.2f}[bg_raw]; "
                 f"[bg_raw][v_side]sidechaincompress=threshold=0.1:ratio=4:attack=20:release=300[bg_ducked]; "
                 f"[v_main][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[mixed_a]"
             )
             voice_label = "mixed_a"
 
-        # Mix SFX if available
+        # Mix SFX if available (with event-synced adelay aligned to first punch-in)
         if dopamine_preset.enable_sfx and sfx_input_index is not None:
+            if edl and edl.zoom_punch_ins and edl.zoom_punch_ins[0].timestamp > 0:
+                delay_ms = int(edl.zoom_punch_ins[0].timestamp * 1000)
+                sfx_chain = f"volume=0.4,adelay={delay_ms}|{delay_ms}"
+            else:
+                sfx_chain = "volume=0.4"
             filter_stages.append(
-                f"[{sfx_input_index}:a]volume=0.4[sfx_audio]; "
+                f"[{sfx_input_index}:a]{sfx_chain}[sfx_audio]; "
                 f"[{voice_label}][sfx_audio]amix=inputs=2:duration=first[sfx_mixed_a]"
             )
             voice_label = "sfx_mixed_a"
 
         # Master audio limiting: protect against clipping and maintain -1.0dB true peak
         filter_stages.append(f"[{voice_label}]alimiter=limit=-1.0dB[master_a]")
-        voice_label = "master_a"
-
-        out_audio_label = f"[{voice_label}]"
+        out_audio_label = "[master_a]"
     else:
         # Generate silent audio if source has no audio track
         filter_stages.append(

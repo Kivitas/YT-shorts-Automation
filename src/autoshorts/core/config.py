@@ -18,6 +18,16 @@ from autoshorts.core.exceptions import ConfigError
 from autoshorts.core.logging_setup import redact, register_secret
 from autoshorts.core.paths import PROJECT_ROOT, get_config_dir
 
+LayoutMode = Literal[
+    "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
+]
+SubtitlePreset = Literal["neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic"]
+ColorGradingPreset = Literal["none", "vibrant", "cinematic", "warm", "crisp"]
+ProgressBarPosition = Literal["top", "bottom", "seam", "none"]
+TextTransform = Literal["uppercase", "title", "none"]
+SubtitlePosition = Literal["bottom_safe", "center", "top_safe"]
+HookBannerStyle = Literal["neon_box", "pill", "minimal", "none"]
+
 
 class AppConfig(BaseModel):
     """Application web server and UI parameters."""
@@ -77,6 +87,16 @@ class UploadConfig(BaseModel):
     privacy_status: Literal["private", "unlisted", "public"] = "unlisted"
     default_privacy_status: str = "unlisted"
     quota_exhausted_fallback: str = "studio"
+    category_id: str = "24"
+    default_language: str = "en"
+    altered_content: bool = False
+    custom_tags: list[str] = Field(default_factory=list)
+    auto_pin_comment: bool = False
+    pin_comment_template: str = "📌 Watch the full video by {channel}: {video_url}"
+    playlist_id: str | None = None
+    link_related_video: bool = True
+    schedule_strategy: str = "local_scheduler"
+    active_channel_profile: str = "default"
     title_template: str = "{hook} | {channel} #Shorts"
     description_template: str = (
         "{hook}\n\n"
@@ -156,6 +176,30 @@ class MediaConfig(BaseModel):
     cookies_from_browser: str | None = None
 
 
+class VisualBrandingConfig(BaseModel):
+    """Visual framing, color grading, watermark, and progress bar branding options."""
+
+    layout_mode: str = "split_50_50"
+    color_grading: str = "none"
+    watermark_text: str | None = None
+    watermark_position: str = "top_right"  # top_right, top_left, bottom_right, bottom_center
+    watermark_opacity: float = Field(default=0.65, ge=0.1, le=1.0)
+    progress_bar_position: str = "seam"
+    progress_bar_color: str = "#FFE600"
+    progress_bar_height: int = Field(default=12, ge=4, le=24)
+    hook_opener: str = "none"  # none, zoom_burst, flash
+    outro_cta_text: str | None = None
+
+
+class AudioMasteringConfig(BaseModel):
+    """Audio mastering, voice boost EQ, and sound effect parameters."""
+
+    voice_boost: bool = True
+    target_lufs: float = Field(default=-14.0, ge=-24.0, le=-9.0)
+    bg_music_volume: float = Field(default=0.20, ge=0.0, le=0.50)
+    enable_sfx: bool = True
+
+
 class SubtitlesConfig(BaseModel):
     """Karaoke ASS subtitle styling and safe-zone positioning."""
 
@@ -165,11 +209,18 @@ class SubtitlesConfig(BaseModel):
     karaoke_highlight: bool = True
     active_color: str = "&H0000FFFF"
     primary_color: str = "&H00FFFFFF"
+    emphasis_color: str = "&H00FFF000"
     outline_color: str = "&H00000000"
     safe_zone_margin_v: int = 780
     style_preset: str = Field(
-        default="neon", description="Subtitle visual preset: neon, minimal, or pill"
+        default="neon",
+        description="Subtitle visual preset: neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic",
     )
+    text_transform: str = "uppercase"
+    position: str = "center"
+    hook_banner_style: str = "neon_box"
+    enable_emojis: bool = True
+    karaoke_pop_scale: int = 118
 
 
 class CleanupConfig(BaseModel):
@@ -201,6 +252,8 @@ class Settings(BaseSettings):
     spark: SparkConfig = Field(default_factory=SparkConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     subtitles: SubtitlesConfig = Field(default_factory=SubtitlesConfig)
+    branding: VisualBrandingConfig = Field(default_factory=VisualBrandingConfig)
+    audio_mastering: AudioMasteringConfig = Field(default_factory=AudioMasteringConfig)
     upload: UploadConfig = Field(default_factory=UploadConfig)
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
 
@@ -271,18 +324,27 @@ def load_config(config_path: Path | str | None = None) -> Settings:
 __all__ = [
     "ActiveWindowConfig",
     "AppConfig",
+    "AudioMasteringConfig",
     "CleanupConfig",
+    "ColorGradingPreset",
     "ConfigError",
     "EditPlannerConfig",
+    "HookBannerStyle",
     "JobDefaultsConfig",
     "LLMConfig",
+    "LayoutMode",
     "MediaConfig",
+    "ProgressBarPosition",
     "QuotaConfig",
     "SchedulerConfig",
     "Settings",
     "SparkConfig",
+    "SubtitlePosition",
+    "SubtitlePreset",
     "SubtitlesConfig",
+    "TextTransform",
     "UploadConfig",
+    "VisualBrandingConfig",
     "load_config",
     "redact",
 ]

@@ -167,6 +167,19 @@ class UploadResult(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict, description="Raw API response data")
 
 
+class ChannelProfile(BaseModel):
+    """Configuration profile for a specific YouTube channel."""
+
+    id: str = "default"
+    name: str = "Default Channel"
+    handle: str = "@MyChannel"
+    token_path: str = "data/token.json"
+    edge_profile_dir: str = "data/edge_profile"
+    default_privacy_status: str = "public"
+    default_category_id: str = "24"
+    watermark_text: str | None = None
+
+
 class Job(BaseModel):
     """Primary pipeline work item tracking end-to-end progress of a video clipping task."""
 
@@ -196,6 +209,23 @@ class Job(BaseModel):
     privacy_status: str | None = Field(
         default=None, description="Target YouTube privacy status override"
     )
+    layout_mode: str = "split_50_50"
+    color_grading: str = "none"
+    watermark_text: str | None = None
+    watermark_position: str = "top_right"
+    progress_bar_position: str = "seam"
+    text_transform: str = "uppercase"
+    subtitle_position: str = "center"
+    hook_banner_style: str = "neon_box"
+    enable_emojis: bool = True
+    category_id: str = "24"
+    default_language: str = "en"
+    altered_content: bool = False
+    custom_tags: list[str] = Field(default_factory=list)
+    auto_pin_comment: bool = False
+    link_related_video: bool = True
+    publish_at: str | None = None
+    channel_profile_id: str = "default"
     scheduled_time: datetime | None = Field(default=None, description="Scheduled upload timestamp")
     upload_result: UploadResult | None = Field(default=None, description="Upload outcome")
     error_message: str | None = Field(default=None, description="Last error message if failed")
@@ -210,3 +240,20 @@ class Job(BaseModel):
             raise InvalidStateTransitionError(self.status.value, new_status.value)
         self.status = new_status
         self.updated_at = datetime.now(UTC)
+
+
+__all__ = [
+    "VALID_TRANSITIONS",
+    "CaptionCorrection",
+    "ChannelProfile",
+    "ClipCandidate",
+    "ClipSelection",
+    "EditDecisionList",
+    "Job",
+    "JobStatus",
+    "JumpCut",
+    "UploadResult",
+    "VideoMetadata",
+    "ZoomPunchIn",
+    "can_transition",
+]

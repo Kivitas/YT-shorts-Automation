@@ -25,6 +25,14 @@ document.addEventListener("DOMContentLoaded", () => {
   refreshSchedulerSlots();
   syncPresetCardHighlight();
 
+  // Initialize AutoShorts Studio Systems
+  initStudioProfiles();
+  syncLayoutCards();
+  syncCaptionCards();
+  updatePhoneCanvasPreview();
+  initCaptionAnimationTicker();
+  initKeyboardShortcuts();
+
   // PT Countdown ticking every 1 second
   setInterval(() => {
     tickPtCountdown();
@@ -499,7 +507,7 @@ function renderJobs(jobs) {
 
     // Actions Buttons
     let actions = "";
-    actions += `<button class="btn btn-secondary btn-sm" onclick="openEditJobModal('${job.id}')" title="Edit clip title, hook, or gameplay theme">✏️ Edit</button>`;
+    actions += `<button class="btn btn-secondary btn-sm" onclick="openEditJobModal('${job.id}')" title="Edit timeline, transcript, layout, and studio re-burn">✏️ Edit &amp; Studio Re-Burn</button>`;
 
     if (hasVideo) {
       actions += `<button class="btn btn-secondary btn-sm" onclick="openPreview('${job.id}', '${encodeURIComponent(title)}')">▶ Preview</button>`;
@@ -630,8 +638,208 @@ async function batchCleanCompleted() {
 }
 
 // -----------------------------------------------------------------------------
-// Edit Job Metadata Modal
+// Interactive Video Editing, Transcript & Studio Re-Burn Modal
 // -----------------------------------------------------------------------------
+
+function switchEditorTab(tab) {
+  ["trim", "transcript", "publish"].forEach(t => {
+    const btn = document.getElementById(`editor-tab-btn-${t}`);
+    const pane = document.getElementById(`editor-pane-${t}`);
+    if (btn) btn.classList.toggle("active", t === tab);
+    if (pane) pane.style.display = (t === tab) ? "block" : "none";
+  });
+
+  if (tab === "transcript") {
+    const jobId = document.getElementById("edit-job-id").value;
+    if (jobId) loadJobTranscript(jobId);
+  }
+}
+
+function updateTrimmerDuration() {
+  const start = parseFloat(document.getElementById("edit-start-sec").value) || 0;
+  const end = parseFloat(document.getElementById("edit-end-sec").value) || 0;
+  const dur = Math.max(0, end - start);
+  const badge = document.getElementById("edit-duration-badge");
+  if (!badge) return;
+
+  if (dur <= 60 && dur >= 5) {
+    badge.className = "badge badge-success";
+    badge.textContent = `${dur.toFixed(1)}s (✓ Optimal <60s Shorts)`;
+  } else if (dur > 60) {
+    badge.className = "badge badge-danger";
+    badge.textContent = `${dur.toFixed(1)}s (⚠️ Exceeds 60s limit!)`;
+  } else {
+    badge.className = "badge";
+    badge.textContent = `${dur.toFixed(1)}s`;
+  }
+}
+
+async function applyJobTrim() {
+  const jobId = document.getElementById("edit-job-id").value;
+  if (!jobId) return;
+
+  const start = parseFloat(document.getElementById("edit-start-sec").value) || 0;
+  const end = parseFloat(document.getElementById("edit-end-sec").value) || 45;
+
+  const btn = document.getElementById("apply-trim-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Trimming...";
+  }
+
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/trim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start_sec: start, end_sec: end }),
+    });
+    if (res.ok) {
+      showToast(`✓ Trim saved for #${jobId} (${(end - start).toFixed(1)}s)!`);
+      refreshJobs();
+    } else {
+      const err = await res.json();
+      showToast("Trim failed: " + (err.detail || "Server error"));
+    }
+  } catch (err) {
+    showToast("Trim API error: " + err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✂️ Save Trim Range";
+    }
+  }
+}
+
+async function loadJobTranscript(jobId) {
+  const listEl = document.getElementById("edit-transcript-word-list");
+  const rawEl = document.getElementById("edit-transcript-raw");
+  if (!listEl) return;
+
+  listEl.innerHTML = '<div class="transcript-placeholder">Loading word-level transcript from whisper alignment...</div>';
+
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/transcript`);
+    if (!res.ok) {
+      listEl.innerHTML = '<div class="transcript-placeholder">Transcript generated during Stage 7 (Whisper word-alignment). Type raw corrections below if desired.</div>';
+      return;
+    }
+    const data = await res.json();
+    const words = data.words || [];
+
+    if (words.length === 0) {
+      listEl.innerHTML = '<div class="transcript-placeholder">No aligned word tokens stored yet for this job.</div>';
+      if (rawEl && !rawEl.value) rawEl.value = data.raw_text || "";
+      return;
+    }
+
+    let fullText = "";
+    listEl.innerHTML = words.map((w, idx) => {
+      const wordText = w.word || w.text || "";
+      fullText += (idx > 0 ? " " : "") + wordText;
+      const isEmphasis = !!w.emphasis;
+      return `<span class="transcript-word ${isEmphasis ? 'word-emphasis' : ''}" data-idx="${idx}" onclick="toggleWordEmphasis(this)" title="Click to toggle emphasis">${escapeHtml(wordText)}</span>`;
+    }).join(" ");
+
+    if (rawEl) rawEl.value = fullText;
+  } catch (err) {
+    listEl.innerHTML = `<div class="transcript-placeholder">Notice: Transcript endpoint not available (${escapeHtml(String(err))}).</div>`;
+  }
+}
+
+function reloadJobTranscript() {
+  const jobId = document.getElementById("edit-job-id").value;
+  if (jobId) loadJobTranscript(jobId);
+}
+
+function toggleWordEmphasis(span) {
+  span.classList.toggle("word-emphasis");
+}
+
+async function saveJobTranscript() {
+  const jobId = document.getElementById("edit-job-id").value;
+  if (!jobId) return;
+
+  const btn = document.getElementById("save-transcript-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+  }
+
+  const rawText = document.getElementById("edit-transcript-raw") ? document.getElementById("edit-transcript-raw").value : "";
+  const wordSpans = document.querySelectorAll("#edit-transcript-word-list .transcript-word");
+  const words = Array.from(wordSpans).map((span, idx) => ({
+    idx: idx,
+    word: span.textContent,
+    emphasis: span.classList.contains("word-emphasis"),
+  }));
+
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/transcript`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ raw_text: rawText, words: words }),
+    });
+    if (res.ok) {
+      showToast(`✓ Transcript saved for #${jobId}!`);
+    } else {
+      const err = await res.json();
+      showToast("Transcript save failed: " + (err.detail || "Server error"));
+    }
+  } catch (err) {
+    showToast("Transcript error: " + err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💾 Save Transcript Corrections";
+    }
+  }
+}
+
+async function rerenderJob() {
+  const jobId = document.getElementById("edit-job-id").value;
+  if (!jobId) return;
+
+  const btn = document.getElementById("rerender-job-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⚡ Starting Fast Re-Burn...";
+  }
+
+  const payload = {
+    layout_mode: document.getElementById("edit-layout-mode") ? document.getElementById("edit-layout-mode").value : "split_50_50",
+    style_preset: document.getElementById("edit-style-preset") ? document.getElementById("edit-style-preset").value : "neon",
+    color_grading: document.getElementById("edit-color-grading") ? document.getElementById("edit-color-grading").value : "none",
+    watermark: document.getElementById("edit-watermark") ? document.getElementById("edit-watermark").value : "@AutoShorts",
+    background: document.getElementById("edit-background-category") ? document.getElementById("edit-background-category").value : "minecraft",
+    dopamine: document.getElementById("edit-dopamine-level") ? document.getElementById("edit-dopamine-level").value : "medium",
+    clip_title: document.getElementById("edit-clip-title") ? document.getElementById("edit-clip-title").value.trim() : "",
+    hook_text: document.getElementById("edit-hook-text") ? document.getElementById("edit-hook-text").value.trim() : "",
+  };
+
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/rerender`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      showToast(`⚡ Fast Re-Burn initiated for #${jobId}! Skipping re-download...`);
+      closeEditJobModal();
+      refreshJobs();
+    } else {
+      const err = await res.json();
+      showToast("Re-burn failed: " + (err.detail || "Server error"));
+    }
+  } catch (err) {
+    showToast("Network error re-burning job: " + err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "⚡ Fast Re-Burn Subtitles & Layout";
+    }
+  }
+}
 
 function openEditJobModal(jobId) {
   const job = _jobsCache.find(j => j.id === jobId);
@@ -644,6 +852,25 @@ function openEditJobModal(jobId) {
   const hookInput = document.getElementById("edit-hook-text");
   const bgSelect = document.getElementById("edit-background-category");
   const dopSelect = document.getElementById("edit-dopamine-level");
+
+  // Tab 1: Layout & Style controls
+  const layoutSelect = document.getElementById("edit-layout-mode");
+  const styleSelect = document.getElementById("edit-style-preset");
+  const gradeSelect = document.getElementById("edit-color-grading");
+  const wmInput = document.getElementById("edit-watermark");
+  const startInput = document.getElementById("edit-start-sec");
+  const endInput = document.getElementById("edit-end-sec");
+
+  // Tab 3: YouTube publish controls
+  const privSelect = document.getElementById("edit-privacy-status");
+  const catSelect = document.getElementById("edit-category-id");
+  const alteredToggle = document.getElementById("edit-altered-content");
+  const linkRelatedToggle = document.getElementById("edit-link-related");
+  const tagsInput = document.getElementById("edit-tags");
+  const publishAtInput = document.getElementById("edit-publish-at");
+
+  // Reset to Tab 1
+  switchEditorTab("trim");
 
   if (modalId) modalId.textContent = `#${job.id}`;
   if (idInput) idInput.value = job.id;
@@ -661,6 +888,62 @@ function openEditJobModal(jobId) {
   }
   if (bgSelect && job.background_category) bgSelect.value = job.background_category;
   if (dopSelect && job.dopamine_level) dopSelect.value = job.dopamine_level;
+
+  if (layoutSelect) layoutSelect.value = job.layout_mode || "split_50_50";
+  if (styleSelect) styleSelect.value = job.style_preset || "neon";
+  if (gradeSelect) gradeSelect.value = job.color_grading || "none";
+  if (wmInput) wmInput.value = job.watermark || "@AutoShorts";
+
+  // Trimmer timestamps
+  let startSec = 0.0;
+  let endSec = 45.0;
+  if (job.selected_clips && job.selected_clips.length > 0 && job.selected_clips[0].candidate) {
+    startSec = job.selected_clips[0].candidate.start;
+    endSec = job.selected_clips[0].candidate.end;
+  } else if (job.edl && job.edl.hook_out_sec) {
+    startSec = job.edl.hook_in_sec || 0.0;
+    endSec = job.edl.hook_out_sec;
+  }
+  if (startInput) startInput.value = startSec.toFixed(1);
+  if (endInput) endInput.value = endSec.toFixed(1);
+  updateTrimmerDuration();
+
+  // Tab 3 fields
+  if (privSelect) privSelect.value = job.privacy_status || "public";
+  if (catSelect) catSelect.value = job.category_id || "24";
+  if (alteredToggle) alteredToggle.checked = !!job.altered_content;
+  if (linkRelatedToggle) linkRelatedToggle.checked = job.link_related_video !== false;
+  if (tagsInput) tagsInput.value = Array.isArray(job.custom_tags) ? job.custom_tags.join(", ") : (job.custom_tags || "");
+  if (publishAtInput) publishAtInput.value = job.publish_at || job.scheduled_time || "";
+
+  // Tab 2: Render EDL Jump cuts and zoom punch-ins
+  const edlCutsEl = document.getElementById("edit-edl-cuts");
+  const edlZoomsEl = document.getElementById("edit-edl-zooms");
+  if (edlCutsEl) {
+    if (job.edl && job.edl.jump_cuts && job.edl.jump_cuts.length > 0) {
+      edlCutsEl.innerHTML = job.edl.jump_cuts.map(c => `
+        <div class="edl-item">
+          <span>Cut: ${c.cut_start.toFixed(1)}s – ${c.cut_end.toFixed(1)}s</span>
+          <span>${escapeHtml(c.reason || 'silence')}</span>
+        </div>
+      `).join("");
+    } else {
+      edlCutsEl.innerHTML = '<div class="edl-empty">No excised silence cuts in this clip.</div>';
+    }
+  }
+
+  if (edlZoomsEl) {
+    if (job.edl && job.edl.zoom_punch_ins && job.edl.zoom_punch_ins.length > 0) {
+      edlZoomsEl.innerHTML = job.edl.zoom_punch_ins.map(z => `
+        <div class="edl-item">
+          <span>Zoom @ ${z.timestamp.toFixed(1)}s (${z.scale}x)</span>
+          <span>${escapeHtml(z.emphasis_word || '')}</span>
+        </div>
+      `).join("");
+    } else {
+      edlZoomsEl.innerHTML = '<div class="edl-empty">No camera zoom punch-ins generated.</div>';
+    }
+  }
 
   if (modal) modal.style.display = "flex";
 }
@@ -685,6 +968,12 @@ async function saveJobMetadata() {
     hook_text: document.getElementById("edit-hook-text").value.trim(),
     background_category: document.getElementById("edit-background-category").value,
     dopamine_level: document.getElementById("edit-dopamine-level").value,
+    layout_mode: document.getElementById("edit-layout-mode") ? document.getElementById("edit-layout-mode").value : undefined,
+    style_preset: document.getElementById("edit-style-preset") ? document.getElementById("edit-style-preset").value : undefined,
+    color_grading: document.getElementById("edit-color-grading") ? document.getElementById("edit-color-grading").value : undefined,
+    watermark: document.getElementById("edit-watermark") ? document.getElementById("edit-watermark").value : undefined,
+    privacy_status: document.getElementById("edit-privacy-status") ? document.getElementById("edit-privacy-status").value : undefined,
+    category_id: document.getElementById("edit-category-id") ? document.getElementById("edit-category-id").value : undefined,
   };
 
   try {
@@ -707,7 +996,7 @@ async function saveJobMetadata() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "💾 Save Changes";
+      btn.textContent = "💾 Save Metadata";
     }
   }
 }
@@ -1091,6 +1380,34 @@ async function submitJobs() {
     ? document.getElementById("privacy-status-select").value
     : "public";
 
+  const layoutMode = document.getElementById("layout-mode-select")
+    ? document.getElementById("layout-mode-select").value
+    : "split_50_50";
+
+  const subtitlePos = document.getElementById("subtitle-position-select")
+    ? document.getElementById("subtitle-position-select").value
+    : "bottom_safe";
+
+  const textTransform = document.getElementById("text-transform-select")
+    ? document.getElementById("text-transform-select").value
+    : "uppercase";
+
+  const colorGrading = document.getElementById("color-grading-select")
+    ? document.getElementById("color-grading-select").value
+    : "none";
+
+  const progressBarPos = document.getElementById("progressbar-pos-select")
+    ? document.getElementById("progressbar-pos-select").value
+    : "none";
+
+  const watermarkText = document.getElementById("watermark-input")
+    ? document.getElementById("watermark-input").value.trim()
+    : "@AutoShorts";
+
+  const categoryId = document.getElementById("category-id-select")
+    ? document.getElementById("category-id-select").value
+    : "22";
+
   const payload = {
     links: links,
     provider: document.getElementById("provider-select").value,
@@ -1100,6 +1417,13 @@ async function submitJobs() {
     auto_upload: document.getElementById("auto-upload-toggle").checked,
     style_preset: stylePreset,
     privacy_status: privacyStatus,
+    layout_mode: layoutMode,
+    subtitle_position: subtitlePos,
+    text_transform: textTransform,
+    color_grading: colorGrading,
+    progress_bar_position: progressBarPos,
+    watermark: watermarkText,
+    category_id: categoryId,
   };
 
   const btn = document.getElementById("submit-btn");
@@ -1315,6 +1639,30 @@ async function loadAllSettings() {
     // 1. YouTube & Upload Tab
     const up = cfg.upload || {};
     const yt = cfg.youtube || {};
+    if (document.getElementById("channel-profile-select")) {
+      document.getElementById("channel-profile-select").value = up.active_channel_profile || "default";
+    }
+    if (document.getElementById("setting-category-id")) {
+      document.getElementById("setting-category-id").value = up.category_id || "24";
+    }
+    if (document.getElementById("setting-schedule-strategy")) {
+      document.getElementById("setting-schedule-strategy").value = up.schedule_strategy || "local_scheduler";
+    }
+    if (document.getElementById("setting-playlist-id")) {
+      document.getElementById("setting-playlist-id").value = up.playlist_id || "";
+    }
+    if (document.getElementById("setting-altered-content")) {
+      document.getElementById("setting-altered-content").checked = !!up.altered_content;
+    }
+    if (document.getElementById("setting-link-related-video")) {
+      document.getElementById("setting-link-related-video").checked = up.link_related_video !== false;
+    }
+    if (document.getElementById("setting-auto-pin-comment")) {
+      document.getElementById("setting-auto-pin-comment").checked = !!up.auto_pin_comment;
+    }
+    if (document.getElementById("setting-pin-comment-template") && up.pin_comment_template) {
+      document.getElementById("setting-pin-comment-template").value = up.pin_comment_template;
+    }
     if (document.getElementById("setting-upload-mode")) {
       document.getElementById("setting-upload-mode").value = up.mode || "local";
     }
@@ -1358,8 +1706,11 @@ async function loadAllSettings() {
 
     // 3. Subtitles & Pacing Tab
     const subs = cfg.subtitles || {};
+    const brand = cfg.branding || {};
+    const audio = cfg.audio_mastering || {};
     const jd = cfg.job_defaults || {};
     const sched = cfg.scheduler || {};
+
     if (document.getElementById("setting-style-preset")) {
       document.getElementById("setting-style-preset").value = subs.style_preset || "neon";
     }
@@ -1372,6 +1723,44 @@ async function loadAllSettings() {
     if (document.getElementById("setting-margin-v")) {
       document.getElementById("setting-margin-v").value = subs.margin_v || 180;
     }
+
+    // Studio framing & branding
+    if (document.getElementById("setting-layout-mode")) {
+      document.getElementById("setting-layout-mode").value = brand.layout_mode || "split_50_50";
+    }
+    if (document.getElementById("setting-color-grading")) {
+      document.getElementById("setting-color-grading").value = brand.color_grading || "none";
+    }
+    if (document.getElementById("setting-text-transform")) {
+      document.getElementById("setting-text-transform").value = subs.text_transform || "uppercase";
+    }
+    if (document.getElementById("setting-hook-banner-style")) {
+      document.getElementById("setting-hook-banner-style").value = subs.hook_banner_style || "neon_box";
+    }
+    if (document.getElementById("setting-watermark-text")) {
+      document.getElementById("setting-watermark-text").value = brand.watermark_text || "@AutoShorts";
+    }
+    if (document.getElementById("setting-watermark-pos")) {
+      document.getElementById("setting-watermark-pos").value = brand.watermark_position || "top_right";
+    }
+    if (document.getElementById("setting-watermark-opacity")) {
+      document.getElementById("setting-watermark-opacity").value = brand.watermark_opacity !== undefined ? brand.watermark_opacity : 0.85;
+    }
+
+    // Audio mastering
+    if (document.getElementById("setting-voice-boost")) {
+      document.getElementById("setting-voice-boost").checked = audio.voice_boost !== false;
+    }
+    if (document.getElementById("setting-target-lufs")) {
+      document.getElementById("setting-target-lufs").value = audio.target_lufs !== undefined ? audio.target_lufs : -14.0;
+    }
+    if (document.getElementById("setting-bg-music-volume")) {
+      document.getElementById("setting-bg-music-volume").value = audio.bg_music_volume !== undefined ? audio.bg_music_volume : 0.18;
+    }
+    if (document.getElementById("setting-sfx-enabled")) {
+      document.getElementById("setting-sfx-enabled").checked = audio.enable_sfx !== false;
+    }
+
     if (document.getElementById("setting-min-duration")) {
       document.getElementById("setting-min-duration").value = jd.min_duration_seconds || 30;
     }
@@ -1438,6 +1827,14 @@ async function saveAllSettings() {
       quota_exhausted_fallback: document.getElementById("setting-quota-fallback").value,
       title_template: document.getElementById("setting-title-template").value,
       description_template: document.getElementById("setting-desc-template").value,
+      active_channel_profile: document.getElementById("channel-profile-select") ? document.getElementById("channel-profile-select").value : "default",
+      category_id: document.getElementById("setting-category-id") ? document.getElementById("setting-category-id").value : "24",
+      schedule_strategy: document.getElementById("setting-schedule-strategy") ? document.getElementById("setting-schedule-strategy").value : "local_scheduler",
+      playlist_id: document.getElementById("setting-playlist-id") ? (document.getElementById("setting-playlist-id").value.trim() || null) : null,
+      altered_content: document.getElementById("setting-altered-content") ? document.getElementById("setting-altered-content").checked : false,
+      link_related_video: document.getElementById("setting-link-related-video") ? document.getElementById("setting-link-related-video").checked : true,
+      auto_pin_comment: document.getElementById("setting-auto-pin-comment") ? document.getElementById("setting-auto-pin-comment").checked : false,
+      pin_comment_template: document.getElementById("setting-pin-comment-template") ? document.getElementById("setting-pin-comment-template").value : "📌 Watch the full video by {channel}: {video_url}",
     },
     llm: {
       provider: document.getElementById("setting-active-provider").value,
@@ -1453,6 +1850,21 @@ async function saveAllSettings() {
       words_per_burst: parseInt(document.getElementById("setting-words-per-burst").value, 10),
       karaoke_pop_scale: parseFloat(document.getElementById("setting-pop-scale").value),
       margin_v: parseInt(document.getElementById("setting-margin-v").value, 10),
+      text_transform: document.getElementById("setting-text-transform") ? document.getElementById("setting-text-transform").value : "uppercase",
+      hook_banner_style: document.getElementById("setting-hook-banner-style") ? document.getElementById("setting-hook-banner-style").value : "neon_box",
+    },
+    branding: {
+      layout_mode: document.getElementById("setting-layout-mode") ? document.getElementById("setting-layout-mode").value : "split_50_50",
+      color_grading: document.getElementById("setting-color-grading") ? document.getElementById("setting-color-grading").value : "none",
+      watermark_text: document.getElementById("setting-watermark-text") ? (document.getElementById("setting-watermark-text").value.trim() || "@AutoShorts") : "@AutoShorts",
+      watermark_position: document.getElementById("setting-watermark-pos") ? document.getElementById("setting-watermark-pos").value : "top_right",
+      watermark_opacity: document.getElementById("setting-watermark-opacity") ? parseFloat(document.getElementById("setting-watermark-opacity").value) : 0.85,
+    },
+    audio_mastering: {
+      voice_boost: document.getElementById("setting-voice-boost") ? document.getElementById("setting-voice-boost").checked : true,
+      target_lufs: document.getElementById("setting-target-lufs") ? parseFloat(document.getElementById("setting-target-lufs").value) : -14.0,
+      bg_music_volume: document.getElementById("setting-bg-music-volume") ? parseFloat(document.getElementById("setting-bg-music-volume").value) : 0.18,
+      enable_sfx: document.getElementById("setting-sfx-enabled") ? document.getElementById("setting-sfx-enabled").checked : true,
     },
     job_defaults: {
       min_duration_seconds: parseInt(document.getElementById("setting-min-duration").value, 10),
@@ -1714,7 +2126,7 @@ function syncPresetCardHighlight() {
   if (!select) return;
   const val = select.value || "neon";
 
-  ["neon", "minimal", "pill"].forEach(p => {
+  ["neon", "hormozi", "mrbeast", "pill", "minimal", "cyberpunk", "cinematic"].forEach(p => {
     const card = document.getElementById(`preset-card-${p}`);
     if (card) {
       card.classList.toggle("active", p === val);
@@ -1725,6 +2137,9 @@ function syncPresetCardHighlight() {
   if (mainPreset && mainPreset.value !== val) {
     mainPreset.value = val;
   }
+
+  syncCaptionCards();
+  updatePhoneCanvasPreview();
 }
 
 function togglePasswordInput(inputId, btn) {
@@ -2118,4 +2533,471 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// =============================================================================
+// AutoShorts Studio Systems (1-Click Profiles, Live 9:16 Canvas & Shortcuts)
+// =============================================================================
+
+const STUDIO_PROFILES = {
+  viral_split: {
+    id: "viral_split",
+    name: "Viral Split (Hormozi + Subway)",
+    layout_mode: "split_50_50",
+    style_preset: "hormozi",
+    text_transform: "uppercase",
+    subtitle_position: "center",
+    progress_bar_position: "seam",
+    color_grading: "vibrant",
+    background: "subway",
+    dopamine: "high",
+  },
+  podcast_focus: {
+    id: "podcast_focus",
+    name: "Podcast Focus (70/30 Minimal)",
+    layout_mode: "split_70_30",
+    style_preset: "minimal",
+    text_transform: "none",
+    subtitle_position: "bottom_safe",
+    progress_bar_position: "top",
+    color_grading: "warm",
+    background: "auto",
+    dopamine: "low",
+  },
+  gaming_max: {
+    id: "gaming_max",
+    name: "Gaming Max (MrBeast + Minecraft)",
+    layout_mode: "split_50_50",
+    style_preset: "mrbeast",
+    text_transform: "uppercase",
+    subtitle_position: "center",
+    progress_bar_position: "top",
+    color_grading: "vibrant",
+    background: "minecraft",
+    dopamine: "high",
+  },
+  clean_blur: {
+    id: "clean_blur",
+    name: "Clean Blurred 16:9 (No Gameplay)",
+    layout_mode: "full_blur_bg",
+    style_preset: "pill",
+    text_transform: "uppercase",
+    subtitle_position: "bottom_safe",
+    progress_bar_position: "bottom",
+    color_grading: "crisp",
+    background: "auto",
+    dopamine: "medium",
+  },
+  cinematic_full: {
+    id: "cinematic_full",
+    name: "Cinematic Full 9:16",
+    layout_mode: "full_center_crop",
+    style_preset: "cinematic",
+    text_transform: "title",
+    subtitle_position: "bottom_safe",
+    progress_bar_position: "none",
+    color_grading: "cinematic",
+    background: "auto",
+    dopamine: "medium",
+  },
+  pip_reaction: {
+    id: "pip_reaction",
+    name: "PiP Reaction Box",
+    layout_mode: "pip_gameplay",
+    style_preset: "neon",
+    text_transform: "uppercase",
+    subtitle_position: "bottom_safe",
+    progress_bar_position: "top",
+    color_grading: "vibrant",
+    background: "minecraft",
+    dopamine: "high",
+  },
+};
+
+function initStudioProfiles() {
+  loadStudioProfiles();
+
+  // Attach auto-preview listeners to all quick customizer inputs
+  const watchIds = [
+    "subtitle-position-select",
+    "text-transform-select",
+    "color-grading-select",
+    "progressbar-pos-select",
+    "watermark-input",
+    "category-id-select",
+    "layout-mode-select",
+    "style-preset-select",
+    "background-select",
+    "dopamine-select"
+  ];
+
+  watchIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("input", () => updatePhoneCanvasPreview());
+      el.addEventListener("change", () => updatePhoneCanvasPreview());
+    }
+  });
+}
+
+function applyStudioProfile(profileId) {
+  let profile = STUDIO_PROFILES[profileId];
+  if (!profile) {
+    try {
+      const customs = JSON.parse(localStorage.getItem("autoshorts_custom_profiles") || "{}");
+      if (customs[profileId]) profile = customs[profileId];
+    } catch (e) {}
+  }
+  if (!profile) return;
+
+  const layoutSel = document.getElementById("layout-mode-select");
+  if (layoutSel && profile.layout_mode) layoutSel.value = profile.layout_mode;
+
+  const styleSel = document.getElementById("style-preset-select");
+  if (styleSel && profile.style_preset) styleSel.value = profile.style_preset;
+
+  const textTrans = document.getElementById("text-transform-select");
+  if (textTrans && profile.text_transform) textTrans.value = profile.text_transform;
+
+  const subPos = document.getElementById("subtitle-position-select");
+  if (subPos && profile.subtitle_position) subPos.value = profile.subtitle_position;
+
+  const progBar = document.getElementById("progressbar-pos-select");
+  if (progBar && profile.progress_bar_position) progBar.value = profile.progress_bar_position;
+
+  const lutSel = document.getElementById("color-grading-select");
+  if (lutSel && profile.color_grading) lutSel.value = profile.color_grading;
+
+  const bgMain = document.getElementById("background-select");
+  const bgAlias = document.getElementById("bg-select");
+  if (profile.background) {
+    if (bgMain) bgMain.value = profile.background;
+    if (bgAlias) bgAlias.value = profile.background;
+  }
+
+  const dopSel = document.getElementById("dopamine-select");
+  if (dopSel && profile.dopamine) dopSel.value = profile.dopamine;
+
+  // Update active pill UI
+  const pills = document.querySelectorAll("#preset-pills-container .preset-pill");
+  pills.forEach(p => {
+    p.classList.toggle("active", p.getAttribute("data-profile-id") === profileId);
+  });
+
+  syncLayoutCards();
+  syncCaptionCards();
+  syncPresetCardHighlight();
+  updatePhoneCanvasPreview();
+  showToast(`⚡ Loaded "${profile.name}" Profile`);
+}
+
+async function promptSaveCurrentProfile() {
+  const name = prompt("Enter a name for your custom Studio Profile:", "My Custom Preset");
+  if (!name || !name.trim()) return;
+
+  const profileId = "custom_" + Date.now();
+  const profileConfig = {
+    id: profileId,
+    name: name.trim(),
+    layout_mode: document.getElementById("layout-mode-select") ? document.getElementById("layout-mode-select").value : "split_50_50",
+    style_preset: document.getElementById("style-preset-select") ? document.getElementById("style-preset-select").value : "neon",
+    text_transform: document.getElementById("text-transform-select") ? document.getElementById("text-transform-select").value : "uppercase",
+    subtitle_position: document.getElementById("subtitle-position-select") ? document.getElementById("subtitle-position-select").value : "bottom_safe",
+    progress_bar_position: document.getElementById("progressbar-pos-select") ? document.getElementById("progressbar-pos-select").value : "none",
+    color_grading: document.getElementById("color-grading-select") ? document.getElementById("color-grading-select").value : "none",
+    background: document.getElementById("background-select") ? document.getElementById("background-select").value : "minecraft",
+    dopamine: document.getElementById("dopamine-select") ? document.getElementById("dopamine-select").value : "medium",
+  };
+
+  // Try backend POST /api/studio/profiles
+  try {
+    await fetch("/api/studio/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profileConfig),
+    });
+  } catch (err) {
+    console.debug("Studio profile backend save fallback:", err);
+  }
+
+  // Save to localStorage
+  try {
+    const customs = JSON.parse(localStorage.getItem("autoshorts_custom_profiles") || "{}");
+    customs[profileId] = profileConfig;
+    localStorage.setItem("autoshorts_custom_profiles", JSON.stringify(customs));
+  } catch (err) {}
+
+  addCustomProfilePill(profileConfig);
+  applyStudioProfile(profileId);
+  showToast(`✓ Profile "${name.trim()}" saved!`);
+}
+
+async function loadStudioProfiles() {
+  let backendProfiles = [];
+  try {
+    const res = await fetch("/api/studio/profiles");
+    if (res.ok) {
+      backendProfiles = await res.json();
+    }
+  } catch (e) {}
+
+  let localProfiles = {};
+  try {
+    localProfiles = JSON.parse(localStorage.getItem("autoshorts_custom_profiles") || "{}");
+  } catch (e) {}
+
+  const merged = {};
+  if (Array.isArray(backendProfiles)) {
+    backendProfiles.forEach(p => { if (p && p.id) merged[p.id] = p; });
+  }
+  Object.values(localProfiles).forEach(p => { if (p && p.id) merged[p.id] = p; });
+
+  Object.values(merged).forEach(p => {
+    if (!STUDIO_PROFILES[p.id]) {
+      addCustomProfilePill(p);
+    }
+  });
+}
+
+function addCustomProfilePill(profile) {
+  const container = document.getElementById("preset-pills-container");
+  if (!container) return;
+
+  if (container.querySelector(`[data-profile-id="${profile.id}"]`)) return;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "preset-pill";
+  btn.setAttribute("data-profile-id", profile.id);
+  btn.onclick = () => applyStudioProfile(profile.id);
+  btn.innerHTML = `
+    <span class="pill-emoji">⭐</span>
+    <span class="pill-label">${escapeHtml(profile.name)}</span>
+    <span class="pill-meta">${escapeHtml(profile.style_preset)}</span>
+  `;
+  container.appendChild(btn);
+}
+
+// Visual Layout Cards Sync
+function selectLayoutMode(layout) {
+  const sel = document.getElementById("layout-mode-select");
+  if (sel) {
+    sel.value = layout;
+    syncLayoutCards();
+    updatePhoneCanvasPreview();
+  }
+}
+
+function syncLayoutCards() {
+  const sel = document.getElementById("layout-mode-select");
+  if (!sel) return;
+  const val = sel.value || "split_50_50";
+  const cards = document.querySelectorAll("#layout-cards-grid .layout-card");
+  cards.forEach(c => {
+    c.classList.toggle("active", c.getAttribute("data-layout") === val);
+  });
+}
+
+// Visual Caption Cards Sync
+function selectCaptionPreset(preset) {
+  const sel = document.getElementById("style-preset-select");
+  if (sel) {
+    sel.value = preset;
+    syncCaptionCards();
+    syncPresetCardHighlight();
+    updatePhoneCanvasPreview();
+  }
+}
+
+function syncCaptionCards() {
+  const sel = document.getElementById("style-preset-select");
+  if (!sel) return;
+  const val = sel.value || "neon";
+  const cards = document.querySelectorAll("#caption-cards-grid .caption-card");
+  cards.forEach(c => {
+    c.classList.toggle("active", c.getAttribute("data-preset") === val);
+  });
+}
+
+// Interactive 9:16 Live Phone Mockup Previewer
+let _captionAnimRunning = true;
+let _captionAnimTimer = null;
+let _captionWordIndex = 0;
+const _samplePhrases = [
+  ["THIS", "NEW", "AI", "TOOL"],
+  ["CHANGES", "EVERYTHING", "FOREVER"],
+  ["WAIT", "TILL", "THE", "END", "😱"],
+  ["100%", "ON-DEVICE", "OFFLINE"],
+  ["CREATE", "VIRAL", "SHORTS", "NOW"]
+];
+let _phraseIndex = 0;
+
+function updatePhoneCanvasPreview() {
+  const screen = document.getElementById("phone-screen");
+  if (!screen) return;
+
+  const layoutMode = document.getElementById("layout-mode-select") ? document.getElementById("layout-mode-select").value : "split_50_50";
+  const stylePreset = document.getElementById("style-preset-select") ? document.getElementById("style-preset-select").value : "neon";
+  const subtitlePos = document.getElementById("subtitle-position-select") ? document.getElementById("subtitle-position-select").value : "bottom_safe";
+  const colorGrading = document.getElementById("color-grading-select") ? document.getElementById("color-grading-select").value : "none";
+  const progressBarPos = document.getElementById("progressbar-pos-select") ? document.getElementById("progressbar-pos-select").value : "none";
+  const watermarkText = (document.getElementById("watermark-input") ? document.getElementById("watermark-input").value.trim() : "") || "@AutoShorts";
+  const backgroundTheme = document.getElementById("background-select") ? document.getElementById("background-select").value : "minecraft";
+
+  // Layer 1: Layout Mode
+  ["layout-split_50_50", "layout-split_70_30", "layout-full_blur_bg", "layout-full_center_crop", "layout-pip_gameplay"].forEach(cls => {
+    screen.classList.remove(cls);
+  });
+  screen.classList.add(`layout-${layoutMode}`);
+
+  // Layer 2: Color LUT
+  ["lut-none", "lut-vibrant", "lut-cinematic", "lut-warm", "lut-crisp"].forEach(cls => {
+    screen.classList.remove(cls);
+  });
+  screen.classList.add(`lut-${colorGrading}`);
+
+  // Layer 3: Progress Bar
+  const progBar = document.getElementById("phone-progressbar");
+  if (progBar) {
+    if (progressBarPos === "none") {
+      progBar.style.display = "none";
+    } else {
+      progBar.style.display = "block";
+      progBar.className = `phone-progressbar pos-${progressBarPos}`;
+    }
+  }
+
+  // Layer 5: Caption Preset & Position
+  const captionsLayer = document.getElementById("phone-captions-layer");
+  if (captionsLayer) {
+    ["pos-bottom_safe", "pos-center", "pos-top_safe"].forEach(c => captionsLayer.classList.remove(c));
+    captionsLayer.classList.add(`pos-${subtitlePos}`);
+
+    ["preset-neon", "preset-hormozi", "preset-mrbeast", "preset-pill", "preset-minimal", "preset-cyberpunk", "preset-cinematic"].forEach(c => captionsLayer.classList.remove(c));
+    captionsLayer.classList.add(`preset-${stylePreset}`);
+  }
+
+  // Layer 6: Watermark
+  const wmTextEl = document.getElementById("canvas-watermark-text");
+  if (wmTextEl) wmTextEl.textContent = watermarkText;
+
+  // Layer 7: Safe-Zone Handle
+  const shortsHandle = document.getElementById("canvas-shorts-handle");
+  if (shortsHandle) shortsHandle.textContent = watermarkText;
+
+  // Gameplay badge text
+  const gameBadge = document.getElementById("canvas-gameplay-badge");
+  if (gameBadge) {
+    const bgNames = {
+      minecraft: "Minecraft Parkour",
+      subway: "Subway Surfers",
+      gta: "GTA Car Stunts",
+      auto: "Procedural Background",
+    };
+    gameBadge.textContent = bgNames[backgroundTheme] || "Gameplay Background";
+  }
+
+  // Legend badges
+  const layoutBadge = document.getElementById("canvas-layout-badge");
+  if (layoutBadge) {
+    const layoutNames = {
+      split_50_50: "📐 50/50 Split",
+      split_70_30: "📐 70/30 Podcast",
+      full_blur_bg: "📐 Blurred 16:9",
+      full_center_crop: "📐 Full 9:16",
+      pip_gameplay: "📐 PiP Reaction",
+    };
+    layoutBadge.textContent = layoutNames[layoutMode] || layoutMode;
+  }
+
+  const presetBadge = document.getElementById("canvas-preset-badge");
+  if (presetBadge) {
+    const presetNames = {
+      neon: "🎨 Neon Pop",
+      hormozi: "🎨 Alex Hormozi",
+      mrbeast: "🎨 MrBeast Pop",
+      pill: "🎨 Pill Box",
+      minimal: "🎨 Minimalist",
+      cyberpunk: "🎨 Cyberpunk",
+      cinematic: "🎨 Cinematic",
+    };
+    presetBadge.textContent = presetNames[stylePreset] || stylePreset;
+  }
+
+  const lutBadge = document.getElementById("canvas-lut-badge");
+  if (lutBadge) {
+    lutBadge.textContent = `✨ LUT: ${colorGrading.charAt(0).toUpperCase() + colorGrading.slice(1)}`;
+  }
+
+  renderCaptionWords();
+}
+
+function renderCaptionWords() {
+  const container = document.getElementById("canvas-caption-burst");
+  if (!container) return;
+
+  const textTransform = document.getElementById("text-transform-select") ? document.getElementById("text-transform-select").value : "uppercase";
+  const words = _samplePhrases[_phraseIndex % _samplePhrases.length];
+
+  container.innerHTML = words.map((w, idx) => {
+    let wordText = w;
+    if (textTransform === "uppercase") wordText = w.toUpperCase();
+    else if (textTransform === "title") wordText = w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    else if (textTransform === "none") wordText = w;
+
+    const isActive = idx === (_captionWordIndex % words.length);
+    return `<span class="word-item ${isActive ? 'word-active' : ''}">${escapeHtml(wordText)}</span>`;
+  }).join(" ");
+}
+
+function initCaptionAnimationTicker() {
+  if (_captionAnimTimer) clearInterval(_captionAnimTimer);
+  _captionAnimTimer = setInterval(() => {
+    if (!_captionAnimRunning) return;
+    _captionWordIndex++;
+    const words = _samplePhrases[_phraseIndex % _samplePhrases.length];
+    if (_captionWordIndex >= words.length) {
+      _captionWordIndex = 0;
+      _phraseIndex = (_phraseIndex + 1) % _samplePhrases.length;
+    }
+    renderCaptionWords();
+  }, 750);
+}
+
+function toggleCaptionAnimation() {
+  _captionAnimRunning = !_captionAnimRunning;
+  const btn = document.getElementById("toggle-caption-anim-btn");
+  if (btn) {
+    btn.textContent = _captionAnimRunning ? "⏸ Pause" : "▶ Animate";
+    btn.classList.toggle("active", _captionAnimRunning);
+  }
+}
+
+function toggleSafeZoneOverlay() {
+  const overlay = document.getElementById("phone-safezone-overlay");
+  const btn = document.getElementById("toggle-safezone-btn");
+  if (overlay) {
+    overlay.classList.toggle("visible");
+    if (btn) btn.classList.toggle("active", overlay.classList.contains("visible"));
+  }
+}
+
+function initKeyboardShortcuts() {
+  document.addEventListener("keydown", (e) => {
+    const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
+
+    if (e.key === "Escape") {
+      closeSettingsModal();
+      closeEditJobModal();
+      closePreviewModal();
+      closeStageModal();
+      closeEdgeLoginModal();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      submitJobs();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "," && !isInput) {
+      e.preventDefault();
+      openSettingsModal();
+    }
+  });
 }

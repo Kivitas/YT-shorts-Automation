@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,65 @@ class CredentialsError(AutoShortsError):
 
 class UploadFailedError(AutoShortsError):
     """Raised when a video upload fails permanently."""
+
+
+def build_compliant_tags(
+    base_tags: Sequence[str] | None,
+    custom_tags: Sequence[str] | None = None,
+) -> list[str]:
+    """Merge and sanitize tags for YouTube API compliance.
+
+    Deduplicates tags while preserving order, strips '<' and '>', ensures '#Shorts' / 'Shorts'
+    tag presence, and enforces YouTube API's 500-character combined length cap.
+    """
+    raw_list: list[str] = []
+    if base_tags:
+        raw_list.extend(base_tags)
+    if custom_tags:
+        raw_list.extend(custom_tags)
+
+    cleaned_tags: list[str] = []
+    seen: set[str] = set()
+    has_shorts = False
+
+    for t in raw_list:
+        if not t:
+            continue
+        cleaned = str(t).replace("<", "").replace(">", "").strip()
+        if not cleaned:
+            continue
+        low = cleaned.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        if low in ("shorts", "#shorts"):
+            has_shorts = True
+        cleaned_tags.append(cleaned)
+
+    if not has_shorts:
+        cleaned_tags.append("Shorts")
+
+    # Enforce YouTube API's 500-character combined length cap (tags separated by commas)
+    compliant: list[str] = []
+    current_len = 0
+    shorts_tag = "Shorts"
+
+    for tag in cleaned_tags:
+        cost = len(tag) + (1 if compliant else 0)
+        if current_len + cost <= 500:
+            compliant.append(tag)
+            current_len += cost
+        else:
+            continue
+
+    # Ensure Shorts is retained even if list was truncated
+    if not any(t.lower() in ("shorts", "#shorts") for t in compliant):
+        while compliant and (current_len + len(shorts_tag) + 1 > 500):
+            removed = compliant.pop()
+            current_len -= len(removed) + 1
+        compliant.append(shorts_tag)
+
+    return compliant
 
 
 def _get_google_libraries() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -143,16 +203,86 @@ class YouTubeApiUploader:
     # Upload Protocol Implementation
     # -------------------------------------------------------------------------
 
+    def add_to_playlist(self, video_id: str, playlist_id: str) -> bool:
+        """Add an uploaded video to a YouTube playlist via playlistItems.insert.
+
+        Non-fatal: logs a warning on error and returns False.
+        """
+        if not video_id or not playlist_id:
+            return False
+        try:
+            service = self.get_service()
+            body = {
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": video_id,
+                    },
+                }
+            }
+            req = service.playlistItems().insert(part="snippet", body=body)
+            req.execute()
+            if self.quota_tracker:
+                self.quota_tracker.record_general(50)
+            logger.info("Video %s successfully added to playlist %s.", video_id, playlist_id)
+            return True
+        except Exception as e:
+            logger.warning("Failed to add video %s to playlist %s: %s", video_id, playlist_id, e)
+            return False
+
+    def post_comment(self, video_id: str, comment_text: str) -> str | None:
+        """Post a top-level comment to an uploaded video via commentThreads.insert.
+
+        Non-fatal: logs a warning on error and returns None.
+        """
+        if not video_id or not comment_text:
+            return None
+        try:
+            service = self.get_service()
+            body = {
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {
+                            "textOriginal": comment_text,
+                        }
+                    },
+                }
+            }
+            req = service.commentThreads().insert(part="snippet", body=body)
+            resp = req.execute()
+            comment_id = resp.get("id") if isinstance(resp, dict) else None
+            if self.quota_tracker:
+                self.quota_tracker.record_general(50)
+            logger.info("Comment successfully posted to video %s (id: %s).", video_id, comment_id)
+            return comment_id
+        except Exception as e:
+            logger.warning("Failed to post comment to video %s: %s", video_id, e)
+            return None
+
     def upload(
         self,
-        path: Path,
-        title: str,
-        description: str,
-        tags: list[str],
+        path: Path | None = None,
+        title: str = "",
+        description: str = "",
+        tags: list[str] | Sequence[str] | None = None,
         privacy: str = "unlisted",
+        category_id: str | None = None,
+        default_language: str | None = None,
+        altered_content: bool | None = None,
+        publish_at: str | None = None,
+        playlist_id: str | None = None,
+        auto_pin_comment: bool | None = None,
+        pin_comment_text: str | None = None,
+        *,
+        video_path: Path | None = None,
+        privacy_status: str | None = None,
+        custom_tags: Sequence[str] | None = None,
+        **kwargs: Any,
     ) -> UploadResult:
-        """Upload a video MP4 using chunked resumable insert."""
-        target_path = Path(path).resolve()
+        """Upload a video MP4 using chunked resumable insert with advanced metadata & scheduling."""
+        target_path = Path(video_path if video_path is not None else (path or "")).resolve()
         if not target_path.is_file():
             raise FileNotFoundError(f"Video file not found for upload: {target_path}")
 
@@ -174,19 +304,54 @@ class YouTubeApiUploader:
         service = self.get_service()
         _, _, _, _, HttpError, MediaFileUpload = _get_google_libraries()
 
-        privacy_status = privacy or self.config.privacy_status
+        effective_privacy = (
+            privacy_status or privacy or getattr(self.config, "privacy_status", "unlisted")
+        )
+        effective_category = (
+            category_id or self.category_id or getattr(self.config, "category_id", None) or "24"
+        )
+        if custom_tags is not None or kwargs.get("custom_tags") is not None:
+            effective_tags = build_compliant_tags(
+                tags, custom_tags=custom_tags or kwargs.get("custom_tags")
+            )
+        else:
+            effective_tags = list(tags) if tags is not None else []
+
+        snippet: dict[str, Any] = {
+            "title": final_title,
+            "description": description,
+            "tags": effective_tags,
+            "categoryId": str(effective_category),
+        }
+
+        lang = default_language or getattr(self.config, "default_language", None)
+        if lang:
+            snippet["defaultLanguage"] = lang
+            snippet["defaultAudioLanguage"] = (
+                getattr(self.config, "default_audio_language", None) or lang
+            )
+
+        status: dict[str, Any] = {
+            "privacyStatus": effective_privacy,
+            "selfDeclaredMadeForKids": False,
+        }
+
+        eff_altered = (
+            altered_content
+            if altered_content is not None
+            else getattr(self.config, "altered_content", None)
+        )
+        if eff_altered is not None:
+            status["containsSyntheticMedia"] = bool(eff_altered)
+
+        # Native Server-Side Scheduling (publish_at ISO-8601 UTC string)
+        if publish_at:
+            status["privacyStatus"] = "private"
+            status["publishAt"] = str(publish_at)
 
         body = {
-            "snippet": {
-                "title": final_title,
-                "description": description,
-                "tags": tags or [],
-                "categoryId": str(self.category_id),
-            },
-            "status": {
-                "privacyStatus": privacy_status,
-                "selfDeclaredMadeForKids": False,
-            },
+            "snippet": snippet,
+            "status": status,
         }
 
         media = MediaFileUpload(
@@ -211,9 +376,9 @@ class YouTubeApiUploader:
 
         while response is None:
             try:
-                status, response = insert_request.next_chunk()
-                if status:
-                    pct = int(status.progress() * 100)
+                status_res, response = insert_request.next_chunk()
+                if status_res:
+                    pct = int(status_res.progress() * 100)
                     logger.debug(f"Resumable upload progress: {pct}%")
                 retry_count = 0  # Reset retry counter on successful chunk
             except (HttpError, OSError, ConnectionError) as ex:
@@ -248,7 +413,25 @@ class YouTubeApiUploader:
         if not video_id:
             raise UploadFailedError(f"YouTube response missing video ID: {response}")
 
-        returned_privacy = response.get("status", {}).get("privacyStatus", privacy_status)
+        returned_privacy = response.get("status", {}).get("privacyStatus", status["privacyStatus"])
+
+        # Post-upload actions
+        eff_playlist = playlist_id or getattr(self.config, "playlist_id", None)
+        if eff_playlist:
+            self.add_to_playlist(video_id, str(eff_playlist))
+
+        eff_auto_pin = (
+            auto_pin_comment
+            if auto_pin_comment is not None
+            else getattr(self.config, "auto_pin_comment", False)
+        )
+        if eff_auto_pin:
+            comment_text = (
+                pin_comment_text
+                or getattr(self.config, "pin_comment_text", None)
+                or "Watch more clips on our channel! #Shorts"
+            )
+            self.post_comment(video_id, str(comment_text))
 
         if self.quota_tracker:
             self.quota_tracker.record_upload(1)

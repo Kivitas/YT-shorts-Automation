@@ -14,9 +14,11 @@ from autoshorts.media.compositor import (
     extract_16khz_mono_wav,
 )
 from autoshorts.media.dopamine_effects import (
+    build_color_grading_filter,
     build_complex_filtergraph,
     build_jumpcut_select_filter,
     build_progress_bar_filter,
+    build_watermark_filter,
     build_zoom_punch_filter,
     get_dopamine_preset,
     pick_background_asset,
@@ -235,11 +237,12 @@ def test_complex_filtergraph_with_high_dopamine():
     assert "color=c=red@0.8" in fg
     # Subtitles
     assert "subtitles=" in fg
-    # Audio loudnorm & ducking & SFX
-    assert "loudnorm=I=-14:LRA=7:tp=-1" in fg
+    # Audio voice boost EQ, loudnorm & ducking & event-synced SFX
+    assert "highpass=f=85,equalizer=f=3200" in fg
+    assert "loudnorm=I=-14:TP=-1.0:LRA=7" in fg
     assert "sidechaincompress=" in fg
     assert "alimiter=limit=-1.0dB" in fg
-    assert "[3:a]volume=0.4[sfx_audio]" in fg
+    assert "[3:a]volume=0.4,adelay=4000|4000[sfx_audio]" in fg
     assert out_v == "[outv]"
     assert out_a == "[master_a]"
 
@@ -267,9 +270,251 @@ def test_complex_filtergraph_with_jumpcuts():
     assert "select='not(between(t,2.00,4.00))'" in fg
     assert "aselect='not(between(t,2.00,4.00))'" in fg
     assert "[top_cut][bottom]vstack=inputs=2[stacked]" in fg
-    assert "[a_cut]loudnorm=I=-14:LRA=7:tp=-1" in fg
+    assert (
+        "[a_cut]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7"
+        in fg
+    )
     assert out_v == "[outv]"
     assert out_a == "[master_a]"
+
+
+def test_all_five_layout_modes():
+    """Verify all 5 layout modes build valid FFmpeg filtergraphs with exact geometries."""
+    preset = get_dopamine_preset("medium")
+
+    # 1. split_50_50
+    fg_50, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="split_50_50",
+    )
+    assert "[0:v]scale=1080:960" in fg_50
+    assert "[1:v]scale=1080:960" in fg_50
+    assert "vstack=inputs=2" in fg_50
+
+    # 2. split_70_30
+    fg_70, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="split_70_30",
+    )
+    assert "[0:v]scale=1080:1344" in fg_70
+    assert "[1:v]scale=1080:576" in fg_70
+    assert "vstack=inputs=2" in fg_70
+
+    # 3. full_blur_bg (Single source)
+    fg_blur, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="full_blur_bg",
+    )
+    assert "boxblur=40:5" in fg_blur
+    assert "scale=1080:608" in fg_blur
+    assert "overlay=x=(W-w)/2:y=(H-h)/2" in fg_blur
+    assert "[1:v]" not in fg_blur  # Single source!
+
+    # 4. full_center_crop (Single source)
+    fg_crop, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="full_center_crop",
+    )
+    assert "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" in fg_crop
+    assert "[1:v]" not in fg_crop  # Single source!
+
+    # 5. pip_gameplay
+    fg_pip, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="pip_gameplay",
+    )
+    assert "[0:v]scale=1080:1920" in fg_pip
+    assert "[1:v]scale=380:380" in fg_pip
+    assert "overlay=x=W-w-48:y=H-h-420" in fg_pip
+
+
+def test_color_grading_presets():
+    """Verify color grading presets return correct filter strings and wire into filtergraph."""
+    assert build_color_grading_filter("none") == ""
+    assert "eq=saturation=1.28" in build_color_grading_filter("vibrant")
+    assert "eq=contrast=1.12" in build_color_grading_filter("cinematic")
+    assert "gamma_r=1.08" in build_color_grading_filter("warm")
+    assert "unsharp=5:5:1.2" in build_color_grading_filter("crisp")
+
+    # Verify wired in complex filtergraph
+    preset = get_dopamine_preset("low")
+    fg, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=False,
+        subtitles_path="subs.ass",
+        duration_sec=15.0,
+        dopamine_preset=preset,
+        color_grading="cinematic",
+    )
+    assert "[stacked]eq=contrast=1.12" in fg
+    assert "[graded]subtitles=" in fg
+
+
+def test_watermark_drawtext_filter():
+    """Verify watermark filter escaping, positions, and opacity."""
+    assert build_watermark_filter(None) == ""
+
+    # Escaping special characters: colons, quotes
+    wm_str = build_watermark_filter("@Channel:Live's", position="top_right", opacity=0.75)
+    assert r"@Channel\:Live\'s" in wm_str
+    assert "white@0.75" in wm_str
+    assert "x=w-tw-60:y=180" in wm_str
+
+    # Other positions
+    wm_left = build_watermark_filter("@Tag", position="top_left")
+    assert "x=60:y=180" in wm_left
+
+    wm_br = build_watermark_filter("@Tag", position="bottom_right")
+    assert "x=w-tw-160:y=h-th-420" in wm_br
+
+    wm_bc = build_watermark_filter("@Tag", position="bottom_center")
+    assert "x=(w-tw)/2:y=h-th-380" in wm_bc
+
+    # Integration in filtergraph
+    preset = get_dopamine_preset("low")
+    fg, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=False,
+        subtitles_path="subs.ass",
+        duration_sec=15.0,
+        dopamine_preset=preset,
+        watermark_text="@AutoShorts",
+        watermark_position="top_right",
+    )
+    assert "drawtext=text='@AutoShorts'" in fg
+    assert "[watermarked]subtitles=" in fg
+
+
+def test_progress_bar_positions_all():
+    """Verify progress bar positions: top, bottom, seam, and none."""
+    # top: y=0
+    bar_top, _ = build_progress_bar_filter(30.0, position="top")
+    assert ":y=0[with_bar]" in bar_top
+
+    # bottom: y=1908 (1920 - 12)
+    bar_bot, _ = build_progress_bar_filter(30.0, position="bottom")
+    assert ":y=1908[with_bar]" in bar_bot
+
+    # seam for 50/50: y=954
+    bar_seam50, _ = build_progress_bar_filter(30.0, position="seam", layout_mode="split_50_50")
+    assert ":y=954[with_bar]" in bar_seam50
+
+    # seam for 70/30: y=1338
+    bar_seam70, _ = build_progress_bar_filter(30.0, position="seam", layout_mode="split_70_30")
+    assert ":y=1338[with_bar]" in bar_seam70
+
+    # none: passthrough copy
+    bar_none, _ = build_progress_bar_filter(30.0, position="none")
+    assert "copy[with_bar]" in bar_none
+
+
+def test_voice_boost_and_audio_mastering():
+    """Verify audio mastering with voice boost EQ toggle and custom LUFS."""
+    preset = get_dopamine_preset("medium")
+
+    # voice_boost=True (default)
+    fg_boost, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=25.0,
+        dopamine_preset=preset,
+        voice_boost=True,
+        target_lufs=-16.0,
+        bg_music_volume=0.20,
+    )
+    assert "highpass=f=85,equalizer=f=3200" in fg_boost
+    assert "loudnorm=I=-16:TP=-1.0:LRA=7" in fg_boost
+    assert "alimiter=limit=-1.0dB" in fg_boost
+
+    # voice_boost=False
+    fg_noboost, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=25.0,
+        dopamine_preset=preset,
+        voice_boost=False,
+    )
+    assert "highpass" not in fg_noboost
+    assert "equalizer" not in fg_noboost
+    assert "loudnorm=I=-14:TP=-1.0:LRA=7" in fg_noboost
+
+
+def test_event_synced_sfx_adelay():
+    """Verify transition SFX is delay-aligned to first zoom punch-in timestamp."""
+    edl = EditDecisionList(
+        zoom_punch_ins=[ZoomPunchIn(timestamp=2.5, scale=1.15, duration=0.8, emphasis_word="BOOM")]
+    )
+    preset = get_dopamine_preset("high")
+
+    fg, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=30.0,
+        dopamine_preset=preset,
+        edl=edl,
+        sfx_input_index=3,
+    )
+    # 2.5s = 2500ms -> adelay=2500|2500
+    assert "[3:a]volume=0.4,adelay=2500|2500[sfx_audio]" in fg
+
+
+def test_compositor_single_source_full_blur_bg(tmp_path: Path):
+    """Verify that compose() with layout_mode='full_blur_bg' does not add background input."""
+    src_video = tmp_path / "src.mp4"
+    src_video.write_bytes(b"dummy")
+    sub_file = tmp_path / "subs.ass"
+    sub_file.write_text("[Script Info]\n", encoding="utf-8")
+    out_file = tmp_path / "out.mp4"
+
+    comp = FFmpegCompositor()
+    captured_cmd = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"rendered")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+    ):
+        comp.compose(
+            job_id="job_single_src",
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=sub_file,
+            output_path=out_file,
+            layout_mode="full_blur_bg",
+            color_grading="vibrant",
+            watermark_text="@AutoShorts",
+        )
+
+    cmd_str = " ".join(captured_cmd)
+    # Background input (e.g. lavfi or background_path) should NOT be present
+    assert "color=c=0x16213e" not in cmd_str
+    # Filtergraph should contain full_blur_bg elements
+    assert "boxblur=40:5" in cmd_str
+    assert "eq=saturation=1.28" in cmd_str
+    assert "drawtext=text='@AutoShorts'" in cmd_str
 
 
 # -----------------------------------------------------------------------------

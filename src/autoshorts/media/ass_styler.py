@@ -3,9 +3,11 @@
 Produces SubStation Alpha (.ass) scripts formatted for 1080x1920 vertical Shorts:
 - 2-4 word bursts (word chunker)
 - Word-level active karaoke highlight with \\t scaling animation (100% -> 115% -> 100%)
-- First-3s hook title card with fade effects
-- Safe-zone positioning avoiding YouTube Shorts UI chrome
-- Keyword and emoji emphasis styling
+- 7 Built-in Studio Presets (neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic)
+- Typography controls: text transforms (uppercase, title, none), custom hex colors
+- Safe-zone positioning avoiding YouTube Shorts UI chrome (center, bottom_safe, top_safe)
+- Hook title banner styling (neon_box, pill, minimal, none)
+- Emoji rendering toggle and Segoe UI Emoji font wrapper
 """
 
 from __future__ import annotations
@@ -91,9 +93,50 @@ EMOJI_REGEX = re.compile(
     flags=re.UNICODE,
 )
 
-# 3 Distinct Caption Style Presets per PLAN.md & visual polish specification
+
+def hex_to_ass_color(color_str: str) -> str:
+    """Convert hex color (#RRGGBB, #AARRGGBB, #RGB) to ASS color format (&HAABBGGRR / &H00BBGGRR).
+
+    If color_str starts with '#' (e.g. '#FFE600'), converts '#RRGGBB' to '&H00BBGGRR'.
+    If already starts with '&H' or '&h', returns as-is.
+    """
+    if not color_str:
+        return "&H00FFFFFF"
+    s = color_str.strip()
+    if s.upper().startswith("&H"):
+        return s.upper() if s.startswith("&h") else s
+    if s.startswith("#"):
+        hex_val = s.lstrip("#")
+        if len(hex_val) == 6:
+            r = hex_val[0:2]
+            g = hex_val[2:4]
+            b = hex_val[4:6]
+            return f"&H00{b.upper()}{g.upper()}{r.upper()}"
+        elif len(hex_val) == 8:
+            r = hex_val[0:2]
+            g = hex_val[2:4]
+            b = hex_val[4:6]
+            a = hex_val[6:8]
+            return f"&H{a.upper()}{b.upper()}{g.upper()}{r.upper()}"
+        elif len(hex_val) == 3:
+            r = hex_val[0] * 2
+            g = hex_val[1] * 2
+            b = hex_val[2] * 2
+            return f"&H00{b.upper()}{g.upper()}{r.upper()}"
+    return s
+
+
+def strip_emojis(text: str) -> str:
+    """Remove Unicode emojis from text cleanly."""
+    cleaned = EMOJI_REGEX.sub("", text)
+    return re.sub(r" +", " ", cleaned).strip()
+
+
+# 7 Distinct Caption Style Presets per PLAN.md & visual polish specification
 CAPTION_PRESETS: dict[str, dict[str, Any]] = {
     "neon": {
+        "font_name": "Montserrat ExtraBold",
+        "font_size": 76,
         "active_color": "&H0000E6FF",  # Yellow #FFE600 (BGR)
         "emphasis_color": "&H00FFF000",  # Cyan #00F0FF (BGR)
         "primary_color": "&H00FFFFFF",  # Crisp White
@@ -104,6 +147,8 @@ CAPTION_PRESETS: dict[str, dict[str, Any]] = {
         "shadow": 4,
     },
     "minimal": {
+        "font_name": "Inter SemiBold",
+        "font_size": 64,
         "active_color": "&H0066FF00",  # Emerald #00FF66 (BGR)
         "emphasis_color": "&H0066FF00",  # Emerald #00FF66 (BGR)
         "primary_color": "&H00FFFFFF",  # Crisp White
@@ -111,17 +156,67 @@ CAPTION_PRESETS: dict[str, dict[str, Any]] = {
         "back_color": "&H40000000",
         "border_style": 1,
         "outline": 2,  # Subtle outline
-        "shadow": 2,  # Subtle shadow
+        "shadow": 1,
     },
     "pill": {
+        "font_name": "Montserrat Bold",
+        "font_size": 68,
         "active_color": "&H0000E6FF",  # Yellow #FFE600 (BGR)
         "emphasis_color": "&H00FFF000",  # Cyan #00F0FF (BGR)
         "primary_color": "&H00FFFFFF",  # Crisp White
-        "outline_color": "&HA0000000",  # Opaque dark translucent backing box
+        "outline_color": "&HA0000000",  # Translucent dark pill box
         "back_color": "&HA0000000",
         "border_style": 3,  # BorderStyle=3 opaque backing box behind words
         "outline": 6,  # Box padding
         "shadow": 0,
+    },
+    "hormozi": {
+        "font_name": "Impact",
+        "font_size": 86,
+        "active_color": "&H0055FF00",  # Active Neon Green #00FF55 (BGR)
+        "emphasis_color": "&H0000F0FF",  # Emphasis Bright Yellow #FFF000 (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": "&H00000000",  # Heavy 12px Black outline
+        "back_color": "&H80000000",
+        "border_style": 1,
+        "outline": 12,
+        "shadow": 5,
+    },
+    "mrbeast": {
+        "font_name": "Montserrat ExtraBold",
+        "font_size": 82,
+        "active_color": "&H0000B8FF",  # Active Vivid Orange #FFB800 (BGR)
+        "emphasis_color": "&H0077FF00",  # Emphasis Lime #00FF77 (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": "&H00000000",  # 10px Black stroke
+        "back_color": "&H80000000",
+        "border_style": 1,
+        "outline": 10,
+        "shadow": 4,
+    },
+    "cyberpunk": {
+        "font_name": "Orbitron",
+        "font_size": 74,
+        "active_color": "&H007F00FF",  # Active Magenta #FF007F (BGR)
+        "emphasis_color": "&H0000FFFF",  # Emphasis Acid Yellow #FFFF00 (BGR)
+        "primary_color": "&H00FFF000",  # Cyan #00F0FF (BGR)
+        "outline_color": "&H00330011",  # 8px Dark Violet outline
+        "back_color": "&H80000000",
+        "border_style": 1,
+        "outline": 8,
+        "shadow": 6,
+    },
+    "cinematic": {
+        "font_name": "Georgia",
+        "font_size": 58,
+        "active_color": "&H0037AFD4",  # Active Gold #D4AF37 (BGR)
+        "emphasis_color": "&H002B91C4",  # Emphasis Warm Ochre #C4912B (BGR)
+        "primary_color": "&H00F0F5F5",  # Off-White
+        "outline_color": "&H00141E28",  # 2px Umber outline
+        "back_color": "&H40000000",
+        "border_style": 1,
+        "outline": 2,
+        "shadow": 3,
     },
 }
 
@@ -288,13 +383,6 @@ def remap_words_for_jump_cuts(
 
     Removes words that fall inside a jump cut ([cut_start, cut_end]).
     Shifts all subsequent word timestamps earlier by the cumulative duration of preceding jump cuts.
-
-    Args:
-        words: Sequence of TimedWord objects or dictionaries.
-        jump_cuts: Sequence of JumpCut objects specifying intervals excised from media.
-
-    Returns:
-        List of TimedWord instances with adjusted timestamps and excised words removed.
     """
     if not words:
         return []
@@ -307,7 +395,6 @@ def remap_words_for_jump_cuts(
                 res.append(TimedWord.from_dict(w))
         return res
 
-    # Filter and sort cuts chronologically
     sorted_cuts = sorted(
         [c for c in jump_cuts if c.cut_end > c.cut_start >= 0],
         key=lambda c: c.cut_start,
@@ -319,9 +406,6 @@ def remap_words_for_jump_cuts(
     for item in words:
         w = item if isinstance(item, TimedWord) else TimedWord.from_dict(item)
 
-        # Check if word falls inside any jump cut
-        # A word falls inside a cut if its midpoint is within [cut_start, cut_end]
-        # or if it is strictly contained within [cut_start, cut_end]
         midpoint = (w.start + w.end) / 2.0
         inside_cut = any(
             (c.cut_start <= midpoint <= c.cut_end)
@@ -331,7 +415,6 @@ def remap_words_for_jump_cuts(
         if inside_cut:
             continue
 
-        # Calculate cumulative shift: sum of durations of all cuts occurring before this word
         cum_shift = 0.0
         w_start = w.start
         w_end = w.end
@@ -340,11 +423,9 @@ def remap_words_for_jump_cuts(
             if c.cut_end <= w_start:
                 cum_shift += cut_dur
             elif c.cut_start < w_start < c.cut_end:
-                # Partial overlap on start boundary
                 cum_shift += w_start - c.cut_start
                 w_start = c.cut_end
             elif c.cut_start < w_end < c.cut_end:
-                # Partial overlap on end boundary
                 w_end = c.cut_start
 
         new_start = max(0.0, w_start - cum_shift)
@@ -373,13 +454,24 @@ def build_ass_script(
     hook_in_sec: float = 0.0,
     jump_cuts: Sequence[JumpCut] | None = None,
     style_preset: str = "neon",
+    text_transform: str = "uppercase",
+    subtitle_position: str = "center",
+    hook_banner_style: str = "neon_box",
+    enable_emojis: bool = True,
+    primary_color: str | None = None,
+    active_color: str | None = None,
+    emphasis_color: str | None = None,
+    outline_color: str | None = None,
+    font_name: str | None = None,
+    font_size: int | None = None,
+    **kwargs: Any,
 ) -> str:
     """Generate complete SubStation Alpha (.ass) file contents for a 1080x1920 Short.
 
     Includes:
     - [Script Info] for 1080x1920
-    - [V4+ Styles] supporting presets ('neon', 'minimal', 'pill')
-    - [Events] with active-word pop animation, safe-zone positioning, and hook card
+    - [V4+ Styles] supporting 7 presets ('neon', 'minimal', 'pill', 'hormozi', 'mrbeast', 'cyberpunk', 'cinematic')
+    - [Events] with active-word pop animation, safe-zone positioning, typography transforms, and hook card
     """
     if config is None:
         config = SubtitlesConfig()
@@ -389,31 +481,97 @@ def build_ass_script(
     )
     preset = CAPTION_PRESETS.get(preset_name, CAPTION_PRESETS["neon"])
 
-    font_name = config.font_name
-    font_size = config.font_size
-    # Enforce mobile Shorts UI safe zones: clear of bottom 350px and right 150px
-    margin_v = max(350, config.safe_zone_margin_v)
+    # Determine font name: explicit param > config override > preset > default
+    if font_name is not None:
+        resolved_font_name = font_name
+    elif config.font_name != "Montserrat ExtraBold":
+        resolved_font_name = config.font_name
+    elif preset_name != "neon" and "font_name" in preset:
+        resolved_font_name = preset["font_name"]
+    else:
+        resolved_font_name = config.font_name
+
+    # Determine font size: explicit param > config override > preset > default
+    if font_size is not None:
+        resolved_font_size = font_size
+    elif config.font_size != 76:
+        resolved_font_size = config.font_size
+    elif preset_name != "neon" and "font_size" in preset:
+        resolved_font_size = preset["font_size"]
+    else:
+        resolved_font_size = config.font_size
+
+    # Subtitle vertical position safe zones:
+    # "center" -> default 780 or config.safe_zone_margin_v
+    # "bottom_safe" -> 420
+    # "top_safe" -> 1450
+    sub_pos = (subtitle_position or "center").strip().lower()
+    if sub_pos == "bottom_safe":
+        margin_v = 420
+    elif sub_pos == "top_safe":
+        margin_v = 1450
+    elif sub_pos == "center":
+        margin_v = max(350, config.safe_zone_margin_v)
+    else:
+        try:
+            margin_v = max(350, int(sub_pos))
+        except (ValueError, TypeError):
+            margin_v = max(350, config.safe_zone_margin_v)
+
     margin_r = 150
     margin_l = 80
 
-    if active_color_override:
-        active_color = active_color_override
+    # Resolve colors with hex_to_ass_color support
+    if active_color:
+        resolved_active_color = hex_to_ass_color(active_color)
+    elif active_color_override:
+        resolved_active_color = hex_to_ass_color(active_color_override)
     elif config.active_color != "&H0000FFFF":
-        active_color = config.active_color
+        resolved_active_color = hex_to_ass_color(config.active_color)
     else:
-        active_color = preset["active_color"]
+        resolved_active_color = preset["active_color"]
 
-    emphasis_color = preset["emphasis_color"]
-    primary_color = (
-        config.primary_color if config.primary_color != "&H00FFFFFF" else preset["primary_color"]
-    )
-    outline_color = (
-        config.outline_color if config.outline_color != "&H00000000" else preset["outline_color"]
-    )
+    if emphasis_color:
+        resolved_emphasis_color = hex_to_ass_color(emphasis_color)
+    else:
+        resolved_emphasis_color = preset["emphasis_color"]
+
+    if primary_color:
+        resolved_primary_color = hex_to_ass_color(primary_color)
+    elif config.primary_color != "&H00FFFFFF":
+        resolved_primary_color = hex_to_ass_color(config.primary_color)
+    else:
+        resolved_primary_color = preset["primary_color"]
+
+    if outline_color:
+        resolved_outline_color = hex_to_ass_color(outline_color)
+    elif config.outline_color != "&H00000000":
+        resolved_outline_color = hex_to_ass_color(config.outline_color)
+    else:
+        resolved_outline_color = preset["outline_color"]
+
     back_color = preset["back_color"]
     border_style = preset["border_style"]
     outline = preset["outline"]
     shadow = preset["shadow"]
+
+    # Hook card banner style definition
+    hb_style = (hook_banner_style or "neon_box").strip().lower()
+    if hb_style == "pill":
+        hook_style_def = (
+            f"Style: HookCard,Montserrat Black,64,{resolved_active_color},{resolved_primary_color},"
+            f"{resolved_outline_color},&HA0000000,-1,0,0,0,100,100,1,0,3,8,0,8,{margin_l},{margin_r},220,1"
+        )
+    elif hb_style == "minimal":
+        hook_style_def = (
+            f"Style: HookCard,Montserrat Bold,60,{resolved_primary_color},{resolved_active_color},"
+            f"{resolved_outline_color},&H40000000,-1,0,0,0,100,100,1,0,1,2,1,8,{margin_l},{margin_r},220,1"
+        )
+    else:  # neon_box (default)
+        hook_style_def = (
+            f"Style: HookCard,Montserrat Black,64,{resolved_active_color},{resolved_primary_color},"
+            f"{resolved_outline_color},&H90000000,-1,0,0,0,100,100,1,0,1,6,3,8,{margin_l},{margin_r},220,1"
+        )
 
     # If hook_in trimming was applied, offset word timestamps
     if hook_in_sec > 0:
@@ -455,13 +613,10 @@ def build_ass_script(
             "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
         ),
         (
-            f"Style: DopamineYellow,{font_name},{font_size},{primary_color},{active_color},"
-            f"{outline_color},{back_color},-1,0,0,0,100,100,2,0,{border_style},{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
+            f"Style: DopamineYellow,{resolved_font_name},{resolved_font_size},{resolved_primary_color},{resolved_active_color},"
+            f"{resolved_outline_color},{back_color},-1,0,0,0,100,100,2,0,{border_style},{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
         ),
-        (
-            f"Style: HookCard,Montserrat Black,64,{active_color},{primary_color},"
-            f"{outline_color},&H90000000,-1,0,0,0,100,100,1,0,1,6,3,8,{margin_l},{margin_r},220,1"
-        ),
+        hook_style_def,
         (
             f"Style: Watermark,Montserrat Medium,36,&H80FFFFFF,&H00FFFFFF,&H80000000,"
             f"&H80000000,0,0,0,0,100,100,1,0,1,3,1,2,{margin_l},{margin_r},380,1"
@@ -471,13 +626,24 @@ def build_ass_script(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    # Hook title card in the first few seconds (Layer 1)
-    if hook_title:
-        clean_hook = hook_title.strip().upper()
+    # Hook title card in the first few seconds (Layer 1) - skip if hook_banner_style == "none"
+    if hook_title and hb_style != "none":
+        raw_hook = hook_title.strip()
+        if text_transform == "uppercase":
+            clean_hook = raw_hook.upper()
+        elif text_transform == "title":
+            clean_hook = raw_hook.title()
+        else:
+            clean_hook = raw_hook
+
         hook_end = min(hook_duration_sec, 3.0)
         hook_start_str = format_ass_timestamp(0.0)
         hook_end_str = format_ass_timestamp(hook_end)
-        formatted_hook = format_emojis_for_ass(clean_hook, base_font="Montserrat Black")
+        if not enable_emojis:
+            formatted_hook = strip_emojis(clean_hook)
+        else:
+            formatted_hook = format_emojis_for_ass(clean_hook, base_font="Montserrat Black")
+
         lines.append(
             f"Dialogue: 1,{hook_start_str},{hook_end_str},HookCard,,0,0,0,,"
             f"{{\\fad(200,300)}}{formatted_hook}"
@@ -504,22 +670,57 @@ def build_ass_script(
             # Assemble full chunk line with active word styled
             rendered_words: list[str] = []
             for j, w in enumerate(chunk.words):
-                w_text = w.word.strip().upper()
-                w_formatted = format_emojis_for_ass(w_text, base_font=font_name)
+                raw_w = w.word.strip()
+                if text_transform == "uppercase":
+                    w_text = raw_w.upper()
+                elif text_transform == "title":
+                    w_text = raw_w.title()
+                else:
+                    w_text = raw_w
+
+                if not enable_emojis:
+                    w_formatted = strip_emojis(w_text)
+                else:
+                    w_formatted = format_emojis_for_ass(w_text, base_font=resolved_font_name)
+
                 if j == idx:
-                    # Active word: pop animation + micro-tilt bounce + active color highlight
                     emphasis = is_emphasis_word(w_text)
-                    scale_max = 125 if emphasis else 118
-                    color_tag = (
-                        emphasis_color if (emphasis and preset_name == "neon") else active_color
-                    )
-                    word_line = (
-                        f"{{\\frz-2\\t(0,80,\\fscx{scale_max}\\fscy{scale_max})"
-                        f"\\t(80,160,\\fscx100\\fscy100)\\t(80,160,\\frz0)\\c{color_tag}&}}{w_formatted}"
-                    )
+                    color_tag = resolved_emphasis_color if emphasis else resolved_active_color
+
+                    # Preset-specific animation and scale pops
+                    if preset_name == "hormozi":
+                        scale_val = 138 if emphasis else 130
+                        word_line = (
+                            f"{{\\t(0,70,\\fscx{scale_val}\\fscy{scale_val})"
+                            f"\\t(70,140,\\fscx100\\fscy100)\\c{color_tag}&}}{w_formatted}"
+                        )
+                    elif preset_name == "mrbeast":
+                        scale_val = 125 if emphasis else 118
+                        word_line = (
+                            f"{{\\frz-3\\t(0,80,\\fscx{scale_val}\\fscy{scale_val}\\frz3)"
+                            f"\\t(80,160,\\fscx100\\fscy100\\frz0)\\c{color_tag}&}}{w_formatted}"
+                        )
+                    elif preset_name == "minimal":
+                        scale_val = 110 if emphasis else 106
+                        word_line = (
+                            f"{{\\t(0,80,\\fscx{scale_val}\\fscy{scale_val})"
+                            f"\\t(80,160,\\fscx100\\fscy100)\\c{color_tag}&}}{w_formatted}"
+                        )
+                    elif preset_name == "cinematic":
+                        scale_val = 112 if emphasis else 108
+                        word_line = (
+                            f"{{\\t(0,90,\\fscx{scale_val}\\fscy{scale_val})"
+                            f"\\t(90,180,\\fscx100\\fscy100)\\c{color_tag}&}}{w_formatted}"
+                        )
+                    else:  # neon, pill, cyberpunk
+                        scale_max = 125 if emphasis else 118
+                        word_line = (
+                            f"{{\\frz-2\\t(0,80,\\fscx{scale_max}\\fscy{scale_max})"
+                            f"\\t(80,160,\\fscx100\\fscy100)\\t(80,160,\\frz0)\\c{color_tag}&}}{w_formatted}"
+                        )
                 else:
                     # Inactive word in this chunk
-                    word_line = f"{{\\c{primary_color}&}}{w_formatted}"
+                    word_line = f"{{\\c{resolved_primary_color}&}}{w_formatted}"
                 rendered_words.append(word_line)
 
             dialogue_text = " ".join(rendered_words)
@@ -552,6 +753,17 @@ def write_ass_file(
     hook_in_sec: float = 0.0,
     jump_cuts: Sequence[JumpCut] | None = None,
     style_preset: str = "neon",
+    text_transform: str = "uppercase",
+    subtitle_position: str = "center",
+    hook_banner_style: str = "neon_box",
+    enable_emojis: bool = True,
+    primary_color: str | None = None,
+    active_color: str | None = None,
+    emphasis_color: str | None = None,
+    outline_color: str | None = None,
+    font_name: str | None = None,
+    font_size: int | None = None,
+    **kwargs: Any,
 ) -> Path:
     """Generate and atomically write an ASS subtitle file to disk."""
     dest = Path(output_path).resolve()
@@ -565,5 +777,16 @@ def write_ass_file(
         hook_in_sec=hook_in_sec,
         jump_cuts=jump_cuts,
         style_preset=style_preset,
+        text_transform=text_transform,
+        subtitle_position=subtitle_position,
+        hook_banner_style=hook_banner_style,
+        enable_emojis=enable_emojis,
+        primary_color=primary_color,
+        active_color=active_color,
+        emphasis_color=emphasis_color,
+        outline_color=outline_color,
+        font_name=font_name,
+        font_size=font_size,
+        **kwargs,
     )
     return atomic_write(dest, content, mode="w", encoding="utf-8")

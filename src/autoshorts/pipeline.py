@@ -12,6 +12,7 @@ Includes stage artifact caching, failure resumption, state transitions, and conc
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import threading
@@ -659,18 +660,34 @@ class ShortsPipeline:
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
 
-    def _run_subtitles_stage(self, job: Job) -> None:
+    def _run_subtitles_stage(self, job: Job, use_cached_words: bool = True) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "subtitles_generation")
         try:
             sel = job.selected_clips[0]
             work_dir = get_work_dir() / job.id
             raw_cut_path = Path(job.raw_video_path) if job.raw_video_path else None
             ass_path = work_dir / f"{job.id}.ass"
+            aligned_words_cache = work_dir / "aligned_words.json"
 
             words: list[dict[str, Any]] = []
 
+            # 0. Check for existing cached aligned_words.json (user transcript edits)
+            if use_cached_words and aligned_words_cache.is_file():
+                try:
+                    with open(aligned_words_cache, "r", encoding="utf-8") as f:
+                        cached_data = json.load(f)
+                        if isinstance(cached_data, list) and cached_data:
+                            words = cached_data
+                            logger.info(
+                                "Job %s: Loaded %d words from cached aligned_words.json",
+                                job.id,
+                                len(words),
+                            )
+                except Exception as c_err:
+                    logger.debug("Failed loading cached aligned_words.json: %s", c_err)
+
             # 1. Try extracting 16kHz WAV and running align_words for exact karaoke timing
-            if raw_cut_path and raw_cut_path.is_file():
+            if not words and raw_cut_path and raw_cut_path.is_file():
                 try:
                     wav_path = work_dir / f"{job.id}_cut.wav"
                     extract_16khz_mono_wav(raw_cut_path, wav_path)
@@ -690,6 +707,14 @@ class ShortsPipeline:
                     for i, w in enumerate(text_tokens)
                 ]
 
+            # Save aligned_words.json for transcript editing & fast re-rendering
+            if words:
+                try:
+                    with open(aligned_words_cache, "w", encoding="utf-8") as f:
+                        json.dump(words, f, indent=2)
+                except Exception as f_err:
+                    logger.debug("Failed saving aligned_words.json: %s", f_err)
+
             channel_credit = job.video_metadata.channel if job.video_metadata else None
             hook = sel.hook_text or (job.edl.recommended_hook if job.edl else "") or None
             hook_in = job.edl.hook_in_sec if (job.edl and job.edl.hook_in_sec > 0) else 0.0
@@ -701,17 +726,50 @@ class ShortsPipeline:
                 self.config.subtitles, "style_preset", "neon"
             )
 
-            write_ass_file(
-                output_path=ass_path,
-                words=words,
-                hook_title=hook,
-                config=self.config.subtitles,
-                onscreen_credit=channel_credit,
-                total_duration_sec=total_dur,
-                hook_in_sec=hook_in,
-                jump_cuts=jump_cuts,
-                style_preset=style_preset,
+            text_transform = getattr(job, "text_transform", None) or getattr(
+                getattr(self.config, "subtitles", None), "text_transform", "uppercase"
             )
+            subtitle_position = getattr(job, "subtitle_position", None) or getattr(
+                getattr(self.config, "subtitles", None), "subtitle_position", "center"
+            )
+            hook_banner_style = getattr(job, "hook_banner_style", None) or getattr(
+                getattr(self.config, "subtitles", None), "hook_banner_style", "neon_box"
+            )
+            enable_emojis = getattr(job, "enable_emojis", None)
+            if enable_emojis is None:
+                enable_emojis = getattr(
+                    getattr(self.config, "subtitles", None), "enable_emojis", True
+                )
+
+            ass_kwargs: dict[str, Any] = {
+                "output_path": ass_path,
+                "words": words,
+                "hook_title": hook,
+                "config": self.config.subtitles,
+                "onscreen_credit": channel_credit,
+                "total_duration_sec": total_dur,
+                "hook_in_sec": hook_in,
+                "jump_cuts": jump_cuts,
+                "style_preset": style_preset,
+            }
+            extra_ass_kwargs = {
+                "text_transform": text_transform,
+                "subtitle_position": subtitle_position,
+                "hook_banner_style": hook_banner_style,
+                "enable_emojis": enable_emojis,
+            }
+            try:
+                sig = inspect.signature(write_ass_file)
+                has_varkw = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                )
+                for k, v in extra_ass_kwargs.items():
+                    if has_varkw or k in sig.parameters:
+                        ass_kwargs[k] = v
+            except Exception:
+                ass_kwargs.update(extra_ass_kwargs)
+
+            write_ass_file(**ass_kwargs)
 
             job.subtitles_path = str(ass_path)
             job.transition_to(JobStatus.SUBTITLES_GENERATED)
@@ -733,6 +791,7 @@ class ShortsPipeline:
         job: Job,
         background_category: str | None = None,
         dopamine_level: str | None = None,
+        **kwargs: Any,
     ) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "compositing")
         try:
@@ -744,33 +803,90 @@ class ShortsPipeline:
             output_dir.mkdir(parents=True, exist_ok=True)
             master_path = output_dir / f"{job.id}_master.mp4"
 
-            dopamine = dopamine_level or self.config.job_defaults.dopamine_level
+            dopamine = (
+                dopamine_level
+                or getattr(job, "dopamine_level", None)
+                or self.config.job_defaults.dopamine_level
+            )
             bg_style = (
                 background_category
+                or getattr(job, "background_category", None)
                 or sel.background_style
                 or self.config.job_defaults.background_category
             )
             bg_file, _ = pick_background_asset(category=bg_style)
 
-            # Run FFmpeg master compositing
-            self.compositor.compose(
-                job_id=job.id,
-                source_clip=Path(job.raw_video_path),  # type: ignore[arg-type]
-                edl=job.edl,
-                background_path=bg_file,
-                subtitles_path=Path(job.subtitles_path),  # type: ignore[arg-type]
-                output_path=master_path,
-                dopamine_level=dopamine,
+            branding_cfg = getattr(self.config, "branding", None)
+            layout_mode = (
+                getattr(job, "layout_mode", None)
+                or getattr(branding_cfg, "layout_mode", None)
+                or getattr(self.config.media, "layout_mode", "split_50_50")
             )
+            color_grading = (
+                getattr(job, "color_grading", None)
+                or getattr(branding_cfg, "color_grading", None)
+                or "none"
+            )
+            watermark_text = getattr(job, "watermark_text", None) or getattr(
+                branding_cfg, "watermark_text", None
+            )
+            watermark_position = getattr(job, "watermark_position", None) or getattr(
+                branding_cfg, "watermark_position", "top_right"
+            )
+            progress_bar_position = getattr(job, "progress_bar_position", None) or getattr(
+                branding_cfg, "progress_bar_position", "seam"
+            )
+
+            comp_kwargs: dict[str, Any] = {
+                "job_id": job.id,
+                "source_clip": Path(job.raw_video_path),  # type: ignore[arg-type]
+                "edl": job.edl,
+                "background_path": bg_file,
+                "subtitles_path": Path(job.subtitles_path),  # type: ignore[arg-type]
+                "output_path": master_path,
+                "dopamine_level": dopamine,
+            }
+            extra_comp: dict[str, Any] = {
+                "layout_mode": layout_mode,
+                "color_grading": color_grading,
+                "watermark_text": watermark_text,
+                "watermark_position": watermark_position,
+                "progress_bar_position": progress_bar_position,
+            }
+            try:
+                c_sig = inspect.signature(self.compositor.compose)
+                has_varkw = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in c_sig.parameters.values()
+                )
+                for k, v in extra_comp.items():
+                    if has_varkw or k in c_sig.parameters:
+                        comp_kwargs[k] = v
+            except Exception:
+                comp_kwargs.update(extra_comp)
+
+            # Run FFmpeg master compositing
+            self.compositor.compose(**comp_kwargs)
             job.rendered_video_path = str(master_path)
 
             # Optional low-resolution fast preview
             if self.config.media.generate_lowres_preview:
                 preview_path = output_dir / f"{job.id}_preview.mp4"
+                prev_kwargs: dict[str, Any] = {
+                    "source_clip": master_path,
+                    "output_path": preview_path,
+                }
                 try:
-                    self.compositor.generate_preview(
-                        source_clip=master_path, output_path=preview_path
+                    p_sig = inspect.signature(self.compositor.generate_preview)
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in p_sig.parameters.values()
                     )
+                    for k, v in extra_comp.items():
+                        if has_varkw or k in p_sig.parameters:
+                            prev_kwargs[k] = v
+                except Exception:
+                    pass
+                try:
+                    self.compositor.generate_preview(**prev_kwargs)
                     job.preview_video_path = str(preview_path)
                 except Exception as p_err:
                     logger.warning("Job %s: Low-res preview generation failed: %s", job.id, p_err)
@@ -791,6 +907,99 @@ class ShortsPipeline:
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
             raise
+
+    def rerender_job(self, job_id: str, **overrides: Any) -> Job:
+        """Fast 1-click re-render of subtitles and compositing stages skipping re-download and re-scoring."""
+        job = self.state_manager.get_job(job_id)
+        if not job:
+            raise AutoShortsError(f"Job {job_id} not found in state database")
+
+        # Apply overrides
+        for key in (
+            "layout_mode",
+            "style_preset",
+            "color_grading",
+            "watermark_text",
+            "watermark_position",
+            "progress_bar_position",
+            "text_transform",
+            "subtitle_position",
+            "hook_banner_style",
+            "enable_emojis",
+            "privacy_status",
+            "dopamine_level",
+            "background_category",
+        ):
+            if key in overrides and overrides[key] is not None:
+                try:
+                    setattr(job, key, overrides[key])
+                except (ValueError, AttributeError):
+                    if hasattr(job, "__dict__"):
+                        job.__dict__[key] = overrides[key]
+
+        if "hook_text" in overrides and overrides["hook_text"] is not None:
+            ht = str(overrides["hook_text"])
+            if job.selected_clips:
+                job.selected_clips[0].hook_text = ht
+            if job.edl:
+                job.edl.recommended_hook = ht
+
+        if "clip_title" in overrides and overrides["clip_title"] is not None:
+            ct = str(overrides["clip_title"])
+            if job.selected_clips:
+                job.selected_clips[0].title = ct
+            if job.edl:
+                job.edl.recommended_title = ct
+
+        if "background_category" in overrides and overrides["background_category"] is not None:
+            bg_cat = str(overrides["background_category"])
+            if job.selected_clips:
+                job.selected_clips[0].background_style = bg_cat
+            if job.edl and hasattr(job.edl, "background_style_recommendation"):
+                try:
+                    job.edl.background_style_recommendation = bg_cat
+                except Exception:
+                    pass
+
+        # Verify raw video file exists
+        raw_path = Path(job.raw_video_path) if job.raw_video_path else None
+        if not raw_path or not raw_path.is_file():
+            # Check work directory candidates (section_*.mp4 or *_raw.mp4)
+            work_dir = get_work_dir() / job.id
+            candidates = (
+                list(work_dir.glob("section_*.mp4"))
+                + list(work_dir.glob("*_raw.mp4"))
+                + list(work_dir.glob(f"{job.id}*.mp4"))
+            )
+            found = False
+            for cand in candidates:
+                if cand.is_file():
+                    job.raw_video_path = str(cand)
+                    found = True
+                    break
+            if not found:
+                raise AutoShortsError(
+                    f"Raw cut video not found for job {job_id}; cannot re-render without raw source."
+                )
+
+        # Reset status to allow stage transitions through valid state machine
+        job.status = JobStatus.DOWNLOADING_SECTION
+        self.state_manager.save_job(job)
+
+        with self._render_lock:
+            # Re-run Stage 7: Subtitle (.ass) Generation (using cached aligned_words.json if present)
+            self._run_subtitles_stage(job, use_cached_words=True)
+
+            # Re-run Stage 8: Compositing
+            self._run_compositing_stage(
+                job,
+                background_category=overrides.get("background_category"),
+                dopamine_level=overrides.get("dopamine_level"),
+            )
+
+        self.state_manager.save_job(job)
+        logger.info("Job %s fast re-render complete; ready for review.", job.id)
+        return job
 
     def _prepare_upload_metadata(self, job: Job) -> tuple[str, str]:
         sel = job.selected_clips[0]

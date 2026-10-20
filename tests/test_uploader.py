@@ -22,6 +22,7 @@ from autoshorts.uploader.verifier import YouTubeVerifier
 from autoshorts.uploader.youtube_api import (
     UploadFailedError,
     YouTubeApiUploader,
+    build_compliant_tags,
 )
 
 
@@ -519,3 +520,193 @@ def test_studio_open_login_session_error_state():
     assert success is False
     assert LOGIN_SESSION_STATE["status"] == "error"
     assert "Edge crash mock" in LOGIN_SESSION_STATE["error"]
+
+
+def test_build_compliant_tags():
+    """Verify build_compliant_tags deduplicates, strips < >, enforces #Shorts and 500-char cap."""
+    # 1. Deduplication preserving order, stripping < and >
+    res1 = build_compliant_tags(["<tech>", "AI", "TECH", "coding>"], ["ai", "python"])
+    assert "tech" in res1
+    assert "coding" in res1
+    assert "python" in res1
+    assert "Shorts" in res1
+    # Check deduplication
+    assert len([t for t in res1 if t.lower() == "tech"]) == 1
+    assert len([t for t in res1 if t.lower() == "ai"]) == 1
+
+    # 2. If #Shorts already present, don't duplicate
+    res2 = build_compliant_tags(["#Shorts", "gaming"])
+    assert res2.count("#Shorts") == 1
+    assert "Shorts" not in res2
+
+    # 3. 500-char cap enforcement
+    long_tags = [f"tag_number_{i:04d}_with_some_long_filler_text" for i in range(50)]
+    res3 = build_compliant_tags(long_tags)
+    total_len = sum(len(t) for t in res3) + len(res3) - 1
+    assert total_len <= 500
+    assert any(t.lower() in ("shorts", "#shorts") for t in res3)
+
+
+def test_youtube_api_server_side_scheduling_publish_at(dummy_video: Path):
+    """Verify publish_at sets privacyStatus='private' and publishAt in videos.insert body."""
+    mock_service = MagicMock()
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.return_value = (
+        None,
+        {"id": "sched_vid_123", "status": {"privacyStatus": "private"}},
+    )
+    mock_service.videos().insert.return_value = mock_insert_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    res = uploader.upload(
+        path=dummy_video,
+        title="Scheduled Video",
+        description="desc",
+        tags=["test"],
+        publish_at="2026-10-25T15:00:00Z",
+    )
+
+    assert res.video_id == "sched_vid_123"
+    call_body = mock_service.videos().insert.call_args[1]["body"]
+    assert call_body["status"]["privacyStatus"] == "private"
+    assert call_body["status"]["publishAt"] == "2026-10-25T15:00:00Z"
+
+
+def test_youtube_api_altered_content_and_languages(dummy_video: Path):
+    """Verify altered_content sets containsSyntheticMedia and defaultLanguage is populated."""
+    mock_service = MagicMock()
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.return_value = (
+        None,
+        {"id": "alt_vid_123", "status": {"privacyStatus": "unlisted"}},
+    )
+    mock_service.videos().insert.return_value = mock_insert_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    uploader.upload(
+        path=dummy_video,
+        title="Altered Video",
+        description="desc",
+        tags=["test"],
+        altered_content=True,
+        default_language="es",
+    )
+
+    call_body = mock_service.videos().insert.call_args[1]["body"]
+    assert call_body["status"]["containsSyntheticMedia"] is True
+    assert call_body["snippet"]["defaultLanguage"] == "es"
+    assert call_body["snippet"]["defaultAudioLanguage"] == "es"
+
+
+def test_youtube_api_post_upload_actions(dummy_video: Path):
+    """Verify add_to_playlist and post_comment are called after upload when configured."""
+    mock_service = MagicMock()
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.return_value = (
+        None,
+        {"id": "post_vid_123", "status": {"privacyStatus": "unlisted"}},
+    )
+    mock_service.videos().insert.return_value = mock_insert_req
+
+    mock_playlist_req = MagicMock()
+    mock_playlist_req.execute.return_value = {"id": "pl_item_1"}
+    mock_service.playlistItems().insert.return_value = mock_playlist_req
+
+    mock_comment_req = MagicMock()
+    mock_comment_req.execute.return_value = {"id": "comm_1"}
+    mock_service.commentThreads().insert.return_value = mock_comment_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+
+    # Direct helper test
+    assert uploader.add_to_playlist("post_vid_123", "PL999") is True
+    mock_service.playlistItems().insert.assert_called_with(
+        part="snippet",
+        body={
+            "snippet": {
+                "playlistId": "PL999",
+                "resourceId": {"kind": "youtube#video", "videoId": "post_vid_123"},
+            }
+        },
+    )
+
+    assert uploader.post_comment("post_vid_123", "Hello world") == "comm_1"
+    mock_service.commentThreads().insert.assert_called_with(
+        part="snippet",
+        body={
+            "snippet": {
+                "videoId": "post_vid_123",
+                "topLevelComment": {"snippet": {"textOriginal": "Hello world"}},
+            }
+        },
+    )
+
+    # Post-upload actions integrated into upload()
+    uploader.upload(
+        path=dummy_video,
+        title="Post Actions Test",
+        description="desc",
+        tags=["test"],
+        playlist_id="PL_AUTO",
+        auto_pin_comment=True,
+        pin_comment_text="Pinned hook comment",
+    )
+    mock_service.playlistItems().insert.assert_called()
+    mock_service.commentThreads().insert.assert_called()
+
+
+def test_studio_playwright_related_video_and_schedule(dummy_video: Path):
+    """Verify Studio uploader interacts with altered content, related video, and schedule picker."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.url = "https://studio.youtube.com"
+
+    mock_loc = MagicMock()
+    mock_loc.is_visible.return_value = True
+    mock_loc.first = mock_loc
+    mock_loc.nth.return_value = mock_loc
+    mock_loc.get_attribute.return_value = "https://youtu.be/schedEdge11"
+    mock_page.locator.return_value = mock_loc
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    result = uploader.upload(
+        video_path=dummy_video,
+        title="Scheduled Edge Short",
+        description="Studio automation schedule test",
+        altered_content=True,
+        related_video_url="https://youtube.com/watch?v=longVideo999",
+        publish_at="2026-10-25T16:00:00Z",
+    )
+
+    assert result.video_id == "schedEdge11"
+    assert result.privacy_status == "scheduled"
+    assert result.raw_response["is_scheduled"] is True
+    assert result.raw_response["altered_content"] is True
+    assert result.raw_response["related_video_url"] == "https://youtube.com/watch?v=longVideo999"
+
+
+def test_studio_playwright_diagnostic_screenshot_on_failure(
+    dummy_video: Path, tmp_path: Path, monkeypatch
+):
+    """Verify diagnostic screenshot is captured when upload fails."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.goto.side_effect = RuntimeError("DOM timeout mock error")
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    monkeypatch.setattr("autoshorts.uploader.studio_playwright.get_data_dir", lambda: data_dir)
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    with pytest.raises(RuntimeError, match="DOM timeout mock error"):
+        uploader.upload(video_path=dummy_video, title="Fail Short", description="Fail desc")
+
+    mock_page.screenshot.assert_called_once()
+    call_path = mock_page.screenshot.call_args[1]["path"]
+    assert "studio_error_" in call_path

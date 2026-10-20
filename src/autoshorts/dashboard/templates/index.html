@@ -112,7 +112,61 @@
       </div>
     </section>
 
-    <!-- Main Workspace Layout: 2 Columns -->
+    <!-- ⚡ 1-Click Studio Template Profiles Bar -->
+    <section class="studio-presets-section">
+      <div class="card presets-card">
+        <div class="presets-header">
+          <div class="presets-title-wrap">
+            <span class="presets-badge-icon">⚡</span>
+            <div class="presets-title-text">
+              <span class="presets-title">1-Click Studio Profiles</span>
+              <span class="presets-subtitle">Instant Viral Layout, Caption &amp; Dopamine Presets</span>
+            </div>
+          </div>
+          <div class="presets-header-actions">
+            <button id="save-profile-btn" type="button" class="btn btn-secondary btn-sm" onclick="promptSaveCurrentProfile()" title="Save current studio settings as a custom profile">
+              ➕ Save Current as Profile
+            </button>
+          </div>
+        </div>
+        <div class="preset-pills-container" id="preset-pills-container">
+          <!-- Built-in 6 Profiles -->
+          <button type="button" class="preset-pill active" data-profile-id="viral_split" onclick="applyStudioProfile('viral_split')">
+            <span class="pill-emoji">⚡</span>
+            <span class="pill-label">Viral Split</span>
+            <span class="pill-meta">Hormozi • Subway</span>
+          </button>
+          <button type="button" class="preset-pill" data-profile-id="podcast_focus" onclick="applyStudioProfile('podcast_focus')">
+            <span class="pill-emoji">🎙️</span>
+            <span class="pill-label">Podcast Focus</span>
+            <span class="pill-meta">70/30 Minimal</span>
+          </button>
+          <button type="button" class="preset-pill" data-profile-id="gaming_max" onclick="applyStudioProfile('gaming_max')">
+            <span class="pill-emoji">🎮</span>
+            <span class="pill-label">Gaming Max</span>
+            <span class="pill-meta">MrBeast • Minecraft</span>
+          </button>
+          <button type="button" class="preset-pill" data-profile-id="clean_blur" onclick="applyStudioProfile('clean_blur')">
+            <span class="pill-emoji">🌫️</span>
+            <span class="pill-label">Clean Blurred 16:9</span>
+            <span class="pill-meta">No Gameplay • Pill</span>
+          </button>
+          <button type="button" class="preset-pill" data-profile-id="cinematic_full" onclick="applyStudioProfile('cinematic_full')">
+            <span class="pill-emoji">🎬</span>
+            <span class="pill-label">Cinematic Full 9:16</span>
+            <span class="pill-meta">Center Crop • Gold</span>
+          </button>
+          <button type="button" class="preset-pill" data-profile-id="pip_reaction" onclick="applyStudioProfile('pip_reaction')">
+            <span class="pill-emoji">📱</span>
+            <span class="pill-label">PiP Reaction Box</span>
+            <span class="pill-meta">Corner Inset • Neon</span>
+          </button>
+          <!-- Dynamic custom profiles will be appended here -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Workspace Layout: 3 Columns (Inputs | 9:16 Live Canvas | Queue) -->
     <div class="workspace-grid">
       <!-- Left Column: Input Links & Settings -->
       <section class="left-pane">
@@ -141,8 +195,126 @@
               </details>
             </div>
 
+            <!-- Visual Layout Mode Picker Cards -->
+            <div class="picker-section-header">
+              <span class="picker-title">📐 Vertical Layout Mode</span>
+              <span class="picker-subtitle">Dynamic 1080×1920 Framing</span>
+            </div>
+            <div class="layout-cards-grid" id="layout-cards-grid">
+              <div class="layout-card active" data-layout="split_50_50" onclick="selectLayoutMode('split_50_50')">
+                <div class="layout-diagram diagram-split-50">
+                  <div class="diagram-top"><span class="diagram-tag">Host 50%</span></div>
+                  <div class="diagram-seam"></div>
+                  <div class="diagram-bottom"><span class="diagram-tag">Game 50%</span></div>
+                </div>
+                <div class="layout-card-info">
+                  <strong>50/50 Split</strong>
+                  <span>Viral Split Screen</span>
+                </div>
+              </div>
+
+              <div class="layout-card" data-layout="split_70_30" onclick="selectLayoutMode('split_70_30')">
+                <div class="layout-diagram diagram-split-70">
+                  <div class="diagram-top-70"><span class="diagram-tag">Host 70%</span></div>
+                  <div class="diagram-seam"></div>
+                  <div class="diagram-bottom-30"><span class="diagram-tag">Game 30%</span></div>
+                </div>
+                <div class="layout-card-info">
+                  <strong>70/30 Podcast</strong>
+                  <span>Dominant Speaker</span>
+                </div>
+              </div>
+
+              <div class="layout-card" data-layout="full_blur_bg" onclick="selectLayoutMode('full_blur_bg')">
+                <div class="layout-diagram diagram-blur-bg">
+                  <div class="diagram-center-box"><span class="diagram-tag">16:9</span></div>
+                </div>
+                <div class="layout-card-info">
+                  <strong>Blurred 16:9</strong>
+                  <span>Clean (No Gameplay)</span>
+                </div>
+              </div>
+
+              <div class="layout-card" data-layout="full_center_crop" onclick="selectLayoutMode('full_center_crop')">
+                <div class="layout-diagram diagram-center-crop">
+                  <div class="diagram-full"><span class="diagram-tag">9:16 Full</span></div>
+                </div>
+                <div class="layout-card-info">
+                  <strong>Full 9:16</strong>
+                  <span>Immersive Crop</span>
+                </div>
+              </div>
+
+              <div class="layout-card" data-layout="pip_gameplay" onclick="selectLayoutMode('pip_gameplay')">
+                <div class="layout-diagram diagram-pip">
+                  <div class="diagram-full"><span class="diagram-tag">Host</span></div>
+                  <div class="diagram-pip-box"><span class="diagram-tag-sm">PiP</span></div>
+                </div>
+                <div class="layout-card-info">
+                  <strong>PiP Reaction</strong>
+                  <span>Inset Game Box</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Visual Caption Style Cards (All 7 Studio Presets) -->
+            <div class="picker-section-header" style="margin-top: 1rem;">
+              <span class="picker-title">🎨 Caption Style Presets</span>
+              <span class="picker-subtitle">7 Animated ASS Typography Styles</span>
+            </div>
+            <div class="caption-cards-grid" id="caption-cards-grid">
+              <div class="caption-card active" data-preset="neon" onclick="selectCaptionPreset('neon')">
+                <div class="caption-micro-demo demo-neon">
+                  <span class="demo-active">NEON</span> POP
+                </div>
+                <span class="caption-card-title">Neon Pop</span>
+              </div>
+
+              <div class="caption-card" data-preset="hormozi" onclick="selectCaptionPreset('hormozi')">
+                <div class="caption-micro-demo demo-hormozi">
+                  <span class="demo-active">HORMOZI</span>
+                </div>
+                <span class="caption-card-title">Hormozi</span>
+              </div>
+
+              <div class="caption-card" data-preset="mrbeast" onclick="selectCaptionPreset('mrbeast')">
+                <div class="caption-micro-demo demo-mrbeast">
+                  <span class="demo-active">BEAST!</span>
+                </div>
+                <span class="caption-card-title">MrBeast</span>
+              </div>
+
+              <div class="caption-card" data-preset="pill" onclick="selectCaptionPreset('pill')">
+                <div class="caption-micro-demo demo-pill">
+                  <span class="demo-pill-badge">PILL BOX</span>
+                </div>
+                <span class="caption-card-title">Pill Box</span>
+              </div>
+
+              <div class="caption-card" data-preset="minimal" onclick="selectCaptionPreset('minimal')">
+                <div class="caption-micro-demo demo-minimal">
+                  <span class="demo-active">MINIMAL</span>
+                </div>
+                <span class="caption-card-title">Minimalist</span>
+              </div>
+
+              <div class="caption-card" data-preset="cyberpunk" onclick="selectCaptionPreset('cyberpunk')">
+                <div class="caption-micro-demo demo-cyberpunk">
+                  <span class="demo-active">CYBER</span>
+                </div>
+                <span class="caption-card-title">Cyberpunk</span>
+              </div>
+
+              <div class="caption-card" data-preset="cinematic" onclick="selectCaptionPreset('cinematic')">
+                <div class="caption-micro-demo demo-cinematic">
+                  <span class="demo-active">CINEMA</span>
+                </div>
+                <span class="caption-card-title">Cinematic</span>
+              </div>
+            </div>
+
             <!-- Configuration Controls Grid -->
-            <div class="settings-grid">
+            <div class="settings-grid" style="margin-top: 1rem;">
               <div class="control-group">
                 <label for="provider-select">LLM Provider</label>
                 <select id="provider-select">
@@ -153,8 +325,88 @@
               </div>
 
               <div class="control-group">
+                <label for="layout-mode-select">Layout Mode</label>
+                <select id="layout-mode-select" onchange="syncLayoutCards()">
+                  <option value="split_50_50" selected>50/50 Split (Host + Gameplay)</option>
+                  <option value="split_70_30">70/30 Podcast (Dominant Host)</option>
+                  <option value="full_blur_bg">Blurred 16:9 Backdrop (No Gameplay)</option>
+                  <option value="full_center_crop">Full 9:16 Center Crop</option>
+                  <option value="pip_gameplay">PiP Gameplay Box (Reaction)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="style-preset-select">Caption Style Preset</label>
+                <select id="style-preset-select" onchange="syncCaptionCards()">
+                  <option value="neon" selected>Neon Pop (Yellow/Cyan)</option>
+                  <option value="hormozi">Alex Hormozi (Bold Green/Yellow)</option>
+                  <option value="mrbeast">MrBeast Pop (Orange/Lime Wobble)</option>
+                  <option value="pill">High-Contrast Pill Box</option>
+                  <option value="minimal">Clean Minimalist (Emerald)</option>
+                  <option value="cyberpunk">Cyberpunk (Cyan/Magenta Pulse)</option>
+                  <option value="cinematic">Cinematic (Warm Cream/Gold)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="subtitle-position-select">Caption Placement</label>
+                <select id="subtitle-position-select" onchange="updatePhoneCanvasPreview()">
+                  <option value="bottom_safe" selected>Bottom Safe-Zone (MarginV 420)</option>
+                  <option value="center">Center / Seam (MarginV 960)</option>
+                  <option value="top_safe">Top Safe-Zone (MarginV 1450)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="text-transform-select">Text Casing</label>
+                <select id="text-transform-select" onchange="updatePhoneCanvasPreview()">
+                  <option value="uppercase" selected>ALL CAPS (UPPERCASE)</option>
+                  <option value="title">Title Case (Every Word)</option>
+                  <option value="none">As Spoken (No Transform)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="color-grading-select">Color Grading LUT</label>
+                <select id="color-grading-select" onchange="updatePhoneCanvasPreview()">
+                  <option value="none" selected>None (Pass-through)</option>
+                  <option value="vibrant">Vibrant Pop (+28% Sat, Unsharp)</option>
+                  <option value="cinematic">Cinematic Mood (Teal/Orange Contrast)</option>
+                  <option value="warm">Warm Film Tone (Golden Gamma)</option>
+                  <option value="crisp">Crisp Ultra-Detail (High Acutance)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="progressbar-pos-select">Progress Bar</label>
+                <select id="progressbar-pos-select" onchange="updatePhoneCanvasPreview()">
+                  <option value="seam">Center Seam</option>
+                  <option value="top">Top Edge</option>
+                  <option value="bottom">Bottom Edge</option>
+                  <option value="none" selected>None / Hidden</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="watermark-input">Channel Watermark</label>
+                <input type="text" id="watermark-input" placeholder="@YourChannel" value="@AutoShorts" oninput="updatePhoneCanvasPreview()">
+              </div>
+
+              <div class="control-group">
+                <label for="category-id-select">YouTube Category</label>
+                <select id="category-id-select">
+                  <option value="20">20 — Gaming</option>
+                  <option value="22" selected>22 — People &amp; Blogs</option>
+                  <option value="23">23 — Comedy</option>
+                  <option value="24">24 — Entertainment</option>
+                  <option value="27">27 — Education</option>
+                  <option value="28">28 — Science &amp; Technology</option>
+                </select>
+              </div>
+
+              <div class="control-group">
                 <label for="background-select">Background Theme</label>
-                <select id="background-select">
+                <select id="background-select" onchange="updatePhoneCanvasPreview()">
                   <option value="minecraft" selected>Minecraft Parkour</option>
                   <option value="subway">Subway Surfers</option>
                   <option value="gta">GTA Car Stunts</option>
@@ -184,15 +436,6 @@
                   <option value="local" selected>Local Export Folder (Safe)</option>
                   <option value="api">YouTube Data API v3</option>
                   <option value="studio">YouTube Studio (Playwright MS Edge)</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="style-preset-select">Caption Style Preset</label>
-                <select id="style-preset-select">
-                  <option value="neon" selected>Neon Pop (Yellow/Cyan)</option>
-                  <option value="minimal">Clean Minimalist (Emerald)</option>
-                  <option value="pill">High-Contrast Pill Box</option>
                 </select>
               </div>
 
@@ -257,6 +500,169 @@
               </div>
             </div>
             <div id="bg-upload-feedback" class="feedback"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Center Column: 📱 Interactive 9:16 Live Phone Mockup Previewer -->
+      <section class="studio-canvas-pane">
+        <div class="card phone-canvas-card">
+          <div class="card-title">
+            <div class="canvas-title-wrap">
+              <span>📱 9:16 Live Studio Canvas</span>
+              <span class="live-pulse-dot" title="Live Preview Synchronized"></span>
+            </div>
+            <div class="canvas-toolbar">
+              <button type="button" id="toggle-caption-anim-btn" class="btn btn-secondary btn-xs active" onclick="toggleCaptionAnimation()" title="Toggle live karaoke caption playback">
+                ⏸ Pause
+              </button>
+              <button type="button" id="toggle-safezone-btn" class="btn btn-secondary btn-xs active" onclick="toggleSafeZoneOverlay()" title="Toggle YouTube Shorts Safe-Zone HUD">
+                🛡️ HUD
+              </button>
+            </div>
+          </div>
+
+          <div class="phone-canvas-wrapper">
+            <!-- Realistic Smartphone Mockup -->
+            <div id="phone-frame-container" class="phone-frame">
+              <!-- Phone Bezel / Chassis Elements -->
+              <div class="phone-dynamic-island">
+                <div class="camera-lens"></div>
+                <div class="sensor-slit"></div>
+              </div>
+              <div class="phone-status-bar">
+                <span class="status-time">12:30</span>
+                <div class="status-icons">
+                  <span class="status-signal">📶</span>
+                  <span class="status-wifi">5G</span>
+                  <span class="status-battery">🔋</span>
+                </div>
+              </div>
+
+              <!-- Multi-Layer Phone Screen (9:16 Viewport) -->
+              <div id="phone-screen" class="phone-screen layout-split_50_50 lut-none">
+                <!-- Layer 1: Layout Geometry Container -->
+                <div id="phone-layout-layer" class="phone-layout-layer">
+                  <div class="video-container top-video" id="canvas-top-video">
+                    <div class="simulated-video-content">
+                      <div class="video-subject-avatar">🎙️</div>
+                      <div class="audio-waves">
+                        <span class="wave-bar b1"></span>
+                        <span class="wave-bar b2"></span>
+                        <span class="wave-bar b3"></span>
+                        <span class="wave-bar b4"></span>
+                        <span class="wave-bar b5"></span>
+                      </div>
+                      <div class="video-badge-mode" id="canvas-video-mode-badge">Podcast Host (Primary)</div>
+                    </div>
+                  </div>
+
+                  <!-- Seam Divider Line for Split Layouts -->
+                  <div class="layout-seam-divider" id="layout-seam-divider"></div>
+
+                  <div class="video-container bottom-gameplay" id="canvas-bottom-gameplay">
+                    <div class="simulated-gameplay-content">
+                      <div class="gameplay-bg-runner" id="canvas-gameplay-bg"></div>
+                      <div class="gameplay-badge-label" id="canvas-gameplay-badge">Minecraft Parkour</div>
+                    </div>
+                  </div>
+
+                  <!-- Inset PiP Box (Active in pip_gameplay mode) -->
+                  <div class="pip-gameplay-box" id="canvas-pip-box" style="display: none;">
+                    <div class="pip-inner">
+                      <span class="pip-tag">🎮 Game PiP</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Layer 3: Dynamic Progress Bar -->
+                <div id="phone-progressbar" class="phone-progressbar pos-seam" style="display: none;">
+                  <div class="progressbar-fill"></div>
+                </div>
+
+                <!-- Layer 4: Hook Title Banner -->
+                <div id="phone-hook-banner" class="phone-hook-banner hook-style-neon_box">
+                  <span class="hook-banner-text" id="canvas-hook-text">WAIT TILL THE END 😱</span>
+                </div>
+
+                <!-- Layer 5: Live Animated Karaoke Captions -->
+                <div id="phone-captions-layer" class="phone-captions-layer pos-bottom_safe preset-neon">
+                  <div class="caption-burst-container" id="canvas-caption-burst">
+                    <span class="word-item">THIS</span>
+                    <span class="word-item word-active">AI</span>
+                    <span class="word-item">CHANGES</span>
+                    <span class="word-item">EVERYTHING!</span>
+                  </div>
+                </div>
+
+                <!-- Layer 6: Channel Watermark -->
+                <div id="phone-watermark" class="phone-watermark pos-top_right">
+                  <span class="watermark-text" id="canvas-watermark-text">@AutoShorts</span>
+                </div>
+
+                <!-- Layer 7: YouTube Shorts Mobile UI Safe-Zone HUD Overlay -->
+                <div id="phone-safezone-overlay" class="phone-safezone-overlay visible">
+                  <!-- Right Action Stack -->
+                  <div class="shorts-action-stack">
+                    <div class="action-btn-item">
+                      <div class="action-btn-circle">👍</div>
+                      <span class="action-count">248K</span>
+                    </div>
+                    <div class="action-btn-item">
+                      <div class="action-btn-circle">👎</div>
+                      <span class="action-count">Dislike</span>
+                    </div>
+                    <div class="action-btn-item">
+                      <div class="action-btn-circle">💬</div>
+                      <span class="action-count">1.4K</span>
+                    </div>
+                    <div class="action-btn-item">
+                      <div class="action-btn-circle">↗️</div>
+                      <span class="action-count">Share</span>
+                    </div>
+                    <div class="action-btn-item">
+                      <div class="action-btn-disc spinning-disc">💿</div>
+                      <span class="action-count">Remix</span>
+                    </div>
+                  </div>
+
+                  <!-- Bottom Creator & Video Info Stack -->
+                  <div class="shorts-bottom-info">
+                    <div class="shorts-channel-row">
+                      <div class="shorts-avatar">⚡</div>
+                      <span class="shorts-handle" id="canvas-shorts-handle">@AutoShorts</span>
+                      <button type="button" class="shorts-subscribe-btn">Subscribe</button>
+                    </div>
+                    <div class="shorts-related-pill">
+                      <span class="related-play-icon">▶</span>
+                      <span class="related-text">Related video: Full Episode</span>
+                    </div>
+                    <div class="shorts-title-snippet">
+                      How this AI workflow automates 9:16 Shorts <span class="shorts-hashtag">#Shorts #AI</span>
+                    </div>
+                    <div class="shorts-audio-ticker">
+                      <span class="audio-note-icon">♫</span>
+                      <span class="audio-track-title">Original Audio — AutoShorts Studio</span>
+                    </div>
+                  </div>
+
+                  <!-- Red-Hatched Danger Zone Indicators -->
+                  <div class="danger-zone danger-right" title="YouTube Mobile Action Buttons Danger Zone"></div>
+                  <div class="danger-zone danger-bottom" title="YouTube Mobile Title & Audio Bar Danger Zone"></div>
+                  <div class="danger-zone danger-top" title="YouTube Mobile Search & Camera Bar Danger Zone"></div>
+                </div>
+              </div>
+
+              <!-- Phone Home Bar -->
+              <div class="phone-home-indicator"></div>
+            </div>
+
+            <!-- Live Canvas Legend / Badges -->
+            <div class="canvas-badges-row">
+              <span class="badge canvas-badge" id="canvas-layout-badge">📐 50/50 Split</span>
+              <span class="badge canvas-badge" id="canvas-preset-badge">🎨 Neon Pop</span>
+              <span class="badge canvas-badge" id="canvas-lut-badge">✨ LUT: None</span>
+            </div>
           </div>
         </div>
       </section>
@@ -498,6 +904,74 @@
           </div>
 
           <div class="settings-section-card">
+            <div class="section-card-title">Multi-Channel Profile &amp; Publishing Engine</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="channel-profile-select">Active YouTube Channel Profile</label>
+                <select id="channel-profile-select">
+                  <option value="default" selected>Default Channel (@AutoShorts)</option>
+                  <option value="gaming">Gaming Shorts Channel (@GameClips)</option>
+                  <option value="podcast">Podcast Clips Channel (@PodcastHighlights)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-category-id">Default YouTube Category</label>
+                <select id="setting-category-id">
+                  <option value="20">20 — Gaming</option>
+                  <option value="22">22 — People &amp; Blogs</option>
+                  <option value="23">23 — Comedy</option>
+                  <option value="24" selected>24 — Entertainment</option>
+                  <option value="27">27 — Education</option>
+                  <option value="28">28 — Science &amp; Technology</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-schedule-strategy">Publishing &amp; Schedule Strategy</label>
+                <select id="setting-schedule-strategy">
+                  <option value="local_scheduler" selected>Local AutoShorts Scheduler (Paces &amp; Dispatches)</option>
+                  <option value="youtube_publish_at">YouTube Server-Side (Upload now as scheduled private)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-playlist-id">Auto-Add to YouTube Playlist ID</label>
+                <input type="text" id="setting-playlist-id" placeholder="PLxxxxxxxxxxxxxxxxxxxxxxxx">
+              </div>
+
+              <div class="toggle-row" style="grid-column: span 2;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-altered-content">
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Disclose Altered / Synthetic Media compliance tag to YouTube</span>
+              </div>
+
+              <div class="toggle-row" style="grid-column: span 2;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-link-related-video" checked>
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Link Related Video (Pins long-form video pill in Shorts mobile UI via Studio Playwright)</span>
+              </div>
+
+              <div class="toggle-row" style="grid-column: span 2;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-auto-pin-comment">
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Auto-Pin First Comment upon verified YouTube upload</span>
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="setting-pin-comment-template">Auto-Pinned Comment Template</label>
+                <input type="text" id="setting-pin-comment-template" value="📌 Watch the full video by {channel}: {video_url}">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
             <div class="section-card-title">Upload Defaults &amp; Fallback Behavior</div>
             <div class="settings-grid">
               <div class="control-group">
@@ -632,6 +1106,36 @@
                 </div>
               </div>
 
+              <div class="preset-card" id="preset-card-hormozi" onclick="selectPresetOption('hormozi')">
+                <div class="preset-preview-box preview-hormozi">
+                  <span class="word-highlight">HORMOZI</span> BOLD
+                </div>
+                <div class="preset-card-info">
+                  <strong>Alex Hormozi</strong>
+                  <span>Impact green &amp; yellow explosive 130% pop scale.</span>
+                </div>
+              </div>
+
+              <div class="preset-card" id="preset-card-mrbeast" onclick="selectPresetOption('mrbeast')">
+                <div class="preset-preview-box preview-mrbeast">
+                  <span class="word-highlight">MRBEAST!</span>
+                </div>
+                <div class="preset-card-info">
+                  <strong>MrBeast Pop</strong>
+                  <span>Comic wobble pop with orange &amp; lime accents.</span>
+                </div>
+              </div>
+
+              <div class="preset-card" id="preset-card-pill" onclick="selectPresetOption('pill')">
+                <div class="preset-preview-box preview-pill">
+                  <span class="pill-badge">PILL BOX</span> STYLE
+                </div>
+                <div class="preset-card-info">
+                  <strong>High-Contrast Pill Box</strong>
+                  <span>Solid background badge pill for guaranteed readability.</span>
+                </div>
+              </div>
+
               <div class="preset-card" id="preset-card-minimal" onclick="selectPresetOption('minimal')">
                 <div class="preset-preview-box preview-minimal">
                   <span class="word-highlight">CLEAN</span> EMERALD
@@ -642,13 +1146,23 @@
                 </div>
               </div>
 
-              <div class="preset-card" id="preset-card-pill" onclick="selectPresetOption('pill')">
-                <div class="preset-preview-box preview-pill">
-                  <span class="pill-badge">PILL BOX</span> STYLE
+              <div class="preset-card" id="preset-card-cyberpunk" onclick="selectPresetOption('cyberpunk')">
+                <div class="preset-preview-box preview-cyberpunk">
+                  <span class="word-highlight">CYBER</span> PUNK
                 </div>
                 <div class="preset-card-info">
-                  <strong>High-Contrast Pill Box</strong>
-                  <span>Solid background badge pill for guaranteed readability on fast gameplays.</span>
+                  <strong>Cyberpunk</strong>
+                  <span>Cyan &amp; magenta dual neon glow pulse.</span>
+                </div>
+              </div>
+
+              <div class="preset-card" id="preset-card-cinematic" onclick="selectPresetOption('cinematic')">
+                <div class="preset-preview-box preview-cinematic">
+                  <span class="word-highlight">CINEMATIC</span>
+                </div>
+                <div class="preset-card-info">
+                  <strong>Cinematic</strong>
+                  <span>Warm cream &amp; gold lower-third serif typography.</span>
                 </div>
               </div>
             </div>
@@ -658,8 +1172,12 @@
                 <label for="setting-style-preset">Selected Preset</label>
                 <select id="setting-style-preset" onchange="syncPresetCardHighlight()">
                   <option value="neon">neon (Neon Pop Yellow/Cyan)</option>
-                  <option value="minimal">minimal (Clean Minimalist Emerald)</option>
+                  <option value="hormozi">hormozi (Alex Hormozi Green/Yellow)</option>
+                  <option value="mrbeast">mrbeast (MrBeast Comic Wobble)</option>
                   <option value="pill">pill (High-Contrast Pill Box)</option>
+                  <option value="minimal">minimal (Clean Minimalist Emerald)</option>
+                  <option value="cyberpunk">cyberpunk (Cyan/Magenta Pulse)</option>
+                  <option value="cinematic">cinematic (Warm Cream/Gold)</option>
                 </select>
               </div>
 
@@ -676,6 +1194,103 @@
               <div class="control-group">
                 <label for="setting-margin-v">Vertical Safe-Zone Margin (MarginV)</label>
                 <input type="number" id="setting-margin-v" min="50" max="400" value="180">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Studio Framing, Color Grading &amp; Watermark</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="setting-layout-mode">Default Layout Mode</label>
+                <select id="setting-layout-mode">
+                  <option value="split_50_50" selected>50/50 Split (Host + Gameplay)</option>
+                  <option value="split_70_30">70/30 Podcast (Dominant Host)</option>
+                  <option value="full_blur_bg">Blurred 16:9 Backdrop (Zero Gameplay)</option>
+                  <option value="full_center_crop">Full 9:16 Center Crop</option>
+                  <option value="pip_gameplay">PiP Gameplay Box (Reaction)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-color-grading">Default Color Grading LUT</label>
+                <select id="setting-color-grading">
+                  <option value="none" selected>None (Pass-through)</option>
+                  <option value="vibrant">Vibrant Pop (+28% Sat, Unsharp)</option>
+                  <option value="cinematic">Cinematic Mood (Teal/Orange Contrast)</option>
+                  <option value="warm">Warm Film Tone (Golden Gamma)</option>
+                  <option value="crisp">Crisp Ultra-Detail</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-text-transform">Text Casing</label>
+                <select id="setting-text-transform">
+                  <option value="uppercase" selected>ALL CAPS (UPPERCASE)</option>
+                  <option value="title">Title Case (Every Word)</option>
+                  <option value="none">As Spoken (No Transform)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-hook-banner-style">Hook Title Banner Style</label>
+                <select id="setting-hook-banner-style">
+                  <option value="neon_box" selected>Neon Box (Glowing Cyan/Yellow)</option>
+                  <option value="pill">Rounded Pill Badge</option>
+                  <option value="minimal">Clean Minimalist</option>
+                  <option value="none">None / Disabled</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-watermark-text">Channel Watermark Text</label>
+                <input type="text" id="setting-watermark-text" value="@AutoShorts" placeholder="@YourHandle">
+              </div>
+
+              <div class="control-group">
+                <label for="setting-watermark-pos">Watermark Placement</label>
+                <select id="setting-watermark-pos">
+                  <option value="top_right" selected>Top Right Corner</option>
+                  <option value="top_left">Top Left Corner</option>
+                  <option value="bottom_right">Bottom Right Corner</option>
+                  <option value="bottom_center">Bottom Center</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="setting-watermark-opacity">Watermark Opacity (0.1 - 1.0)</label>
+                <input type="number" id="setting-watermark-opacity" step="0.05" min="0.1" max="1.0" value="0.85">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
+            <div class="section-card-title">Audio Mastering &amp; Dynamic SFX</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="setting-target-lufs">Target Loudness (LUFS, EBU R128)</label>
+                <input type="number" id="setting-target-lufs" step="0.5" min="-24.0" max="-9.0" value="-14.0">
+              </div>
+
+              <div class="control-group">
+                <label for="setting-bg-music-volume">Background Music Volume (0.0 - 0.5)</label>
+                <input type="number" id="setting-bg-music-volume" step="0.02" min="0.0" max="0.5" value="0.18">
+              </div>
+
+              <div class="toggle-row" style="grid-column: span 2;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-voice-boost" checked>
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Enable Voice Boost EQ (Highpass 85Hz + 3.2kHz presence clarity)</span>
+              </div>
+
+              <div class="toggle-row" style="grid-column: span 2;">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-sfx-enabled" checked>
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Enable Event-Synced SFX (Whoosh transitions &amp; punch-in pops)</span>
               </div>
             </div>
           </div>
@@ -793,46 +1408,244 @@
     </div>
   </div>
 
-  <!-- Edit Job Metadata Modal -->
+  <!-- Edit Job & Studio Re-Burn Modal (3-Tab Studio Editor) -->
   <div id="edit-job-modal" class="modal-backdrop" onclick="closeEditJobModal(event)">
-    <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-content modal-xl studio-editor-modal" onclick="event.stopPropagation()">
       <div class="modal-header">
-        <h3>✏️ Edit Job Metadata (<span id="edit-job-modal-id">#--</span>)</h3>
+        <div class="settings-modal-title-wrap">
+          <span class="settings-modal-icon">🎬</span>
+          <h3>AutoShorts Studio Editor — Job <span id="edit-job-modal-id">#--</span></h3>
+        </div>
         <button class="btn-close" onclick="closeEditJobModal()">&times;</button>
       </div>
+
+      <!-- 3 Studio Tabs -->
+      <div class="settings-nav-tabs studio-editor-tabs">
+        <button type="button" class="settings-tab-btn active" id="editor-tab-btn-trim" onclick="switchEditorTab('trim')">
+          ✂️ Trim, Layout &amp; Style
+        </button>
+        <button type="button" class="settings-tab-btn" id="editor-tab-btn-transcript" onclick="switchEditorTab('transcript')">
+          📝 Word-Level Transcript &amp; Jump Cuts
+        </button>
+        <button type="button" class="settings-tab-btn" id="editor-tab-btn-publish" onclick="switchEditorTab('publish')">
+          📺 YouTube Publishing &amp; Schedule
+        </button>
+      </div>
+
       <div class="modal-body edit-job-modal-body">
         <input type="hidden" id="edit-job-id">
-        <div class="control-group">
-          <label for="edit-clip-title">Short Title</label>
-          <input type="text" id="edit-clip-title" placeholder="Catchy title...">
-        </div>
-        <div class="control-group">
-          <label for="edit-hook-text">Opening Hook Text</label>
-          <input type="text" id="edit-hook-text" placeholder="Hook text displayed on screen...">
-        </div>
-        <div class="settings-grid" style="margin-bottom: 0;">
-          <div class="control-group">
-            <label for="edit-background-category">Background Gameplay</label>
-            <select id="edit-background-category">
-              <option value="minecraft">Minecraft Parkour</option>
-              <option value="subway">Subway Surfers</option>
-              <option value="gta">GTA Car Stunts</option>
-              <option value="auto">Auto / Procedural</option>
-            </select>
+
+        <!-- Tab 1: Trim, Layout & Style -->
+        <div class="editor-tab-pane active" id="editor-pane-trim">
+          <!-- Start / End Timestamp Trimmer -->
+          <div class="editor-section-card">
+            <div class="section-card-title">
+              <span>✂️ Precision Timestamp Trimmer</span>
+              <span class="hint">Adjust in-point and out-point with sub-second precision</span>
+            </div>
+            <div class="trimmer-controls-grid">
+              <div class="control-group">
+                <label for="edit-start-sec">Start Timestamp (Seconds)</label>
+                <input type="number" id="edit-start-sec" step="0.1" min="0" value="0.0" oninput="updateTrimmerDuration()">
+              </div>
+              <div class="control-group">
+                <label for="edit-end-sec">End Timestamp (Seconds)</label>
+                <input type="number" id="edit-end-sec" step="0.1" min="1" value="45.0" oninput="updateTrimmerDuration()">
+              </div>
+              <div class="control-group trimmer-duration-col">
+                <label>Total Duration</label>
+                <div class="trimmer-duration-display">
+                  <span id="edit-duration-badge" class="badge badge-success">45.0s (✓ Optimal &lt;60s Shorts)</span>
+                </div>
+              </div>
+              <div class="control-group trimmer-action-col">
+                <label>&nbsp;</label>
+                <button type="button" id="apply-trim-btn" class="btn btn-secondary btn-sm" onclick="applyJobTrim()">
+                  ✂️ Save Trim Range
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="control-group">
-            <label for="edit-dopamine-level">Dopamine Level</label>
-            <select id="edit-dopamine-level">
-              <option value="low">Low (Clean, minimal)</option>
-              <option value="medium">Medium (Punch-in, Pop ASS)</option>
-              <option value="high">High (SFX, Zoom, High Energy)</option>
-            </select>
+
+          <!-- Titles & Hooks -->
+          <div class="editor-section-card">
+            <div class="section-card-title">Titles, Hooks &amp; Branding Overrides</div>
+            <div class="control-group">
+              <label for="edit-clip-title">Short Title</label>
+              <input type="text" id="edit-clip-title" placeholder="Catchy title...">
+            </div>
+            <div class="control-group">
+              <label for="edit-hook-text">Opening Hook Text</label>
+              <input type="text" id="edit-hook-text" placeholder="Hook text displayed on screen...">
+            </div>
+
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="edit-layout-mode">Layout Mode</label>
+                <select id="edit-layout-mode">
+                  <option value="split_50_50">50/50 Split (Host + Gameplay)</option>
+                  <option value="split_70_30">70/30 Podcast (Dominant Host)</option>
+                  <option value="full_blur_bg">Blurred 16:9 Backdrop (Zero Gameplay)</option>
+                  <option value="full_center_crop">Full 9:16 Center Crop</option>
+                  <option value="pip_gameplay">PiP Gameplay Box (Reaction Style)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="edit-style-preset">Caption Style Preset</label>
+                <select id="edit-style-preset">
+                  <option value="neon">Neon Pop (Yellow/Cyan Glow)</option>
+                  <option value="hormozi">Alex Hormozi (Bold Neon Green/Yellow)</option>
+                  <option value="mrbeast">MrBeast Pop (Orange/Lime Wobble)</option>
+                  <option value="pill">High-Contrast Pill Box</option>
+                  <option value="minimal">Clean Minimalist (Emerald)</option>
+                  <option value="cyberpunk">Cyberpunk (Cyan/Magenta Pulse)</option>
+                  <option value="cinematic">Cinematic (Warm Cream/Gold)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="edit-color-grading">Color Grading LUT</label>
+                <select id="edit-color-grading">
+                  <option value="none">None (Pass-through)</option>
+                  <option value="vibrant">Vibrant Pop (+28% Saturation, Unsharp)</option>
+                  <option value="cinematic">Cinematic Mood (Teal/Orange Contrast)</option>
+                  <option value="warm">Warm Film Tone (Golden Gamma)</option>
+                  <option value="crisp">Crisp Ultra-Detail</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="edit-watermark">Channel Watermark</label>
+                <input type="text" id="edit-watermark" placeholder="@YourChannel">
+              </div>
+
+              <div class="control-group">
+                <label for="edit-background-category">Background Gameplay</label>
+                <select id="edit-background-category">
+                  <option value="minecraft">Minecraft Parkour</option>
+                  <option value="subway">Subway Surfers</option>
+                  <option value="gta">GTA Car Stunts</option>
+                  <option value="auto">Auto / Procedural</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="edit-dopamine-level">Dopamine Level</label>
+                <select id="edit-dopamine-level">
+                  <option value="low">Low (Clean, minimal)</option>
+                  <option value="medium">Medium (Punch-in, Pop ASS)</option>
+                  <option value="high">High (SFX, Zoom, High Energy)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Word-Level Transcript & Jump Cuts -->
+        <div class="editor-tab-pane" id="editor-pane-transcript" style="display: none;">
+          <div class="editor-section-card">
+            <div class="section-card-title">
+              <span>📝 Aligned Word-Level Transcript</span>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="reloadJobTranscript()">🔄 Reload Transcript</button>
+            </div>
+            <p class="modal-instructions">
+              Click any word to fix typos or toggle emphasis before re-burning subtitles. Changes persist directly into <code>work/&lt;job_id&gt;/aligned_words.json</code>.
+            </p>
+            <div class="word-transcript-editor" id="edit-transcript-word-list">
+              <div class="transcript-placeholder">Loading word-level transcript from whisper alignment...</div>
+            </div>
+
+            <div class="control-group" style="margin-top: 1rem;">
+              <label for="edit-transcript-raw">Quick Raw Text Transcript View / Edit:</label>
+              <textarea id="edit-transcript-raw" rows="4" placeholder="Full transcript text will appear here..."></textarea>
+            </div>
+            <button type="button" id="save-transcript-btn" class="btn btn-secondary btn-sm" onclick="saveJobTranscript()">
+              💾 Save Transcript Corrections
+            </button>
+            <div id="edit-transcript-feedback" class="feedback"></div>
+          </div>
+
+          <div class="editor-section-card">
+            <div class="section-card-title">🎬 Edit Decision List (EDL) Jump Cuts &amp; Punch-Ins</div>
+            <div class="edl-inspection-grid">
+              <div class="edl-box">
+                <div class="edl-box-title">⚡ Excised Jump Cuts (Dead Air)</div>
+                <div id="edit-edl-cuts" class="edl-list-scroll">
+                  <div class="edl-empty">No jump cuts generated yet.</div>
+                </div>
+              </div>
+              <div class="edl-box">
+                <div class="edl-box-title">🔍 Camera Zoom Punch-Ins</div>
+                <div id="edit-edl-zooms" class="edl-list-scroll">
+                  <div class="edl-empty">No zoom punch-ins generated yet.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: YouTube Publishing & Schedule -->
+        <div class="editor-tab-pane" id="editor-pane-publish" style="display: none;">
+          <div class="editor-section-card">
+            <div class="section-card-title">YouTube Metadata &amp; Compliance Overrides</div>
+            <div class="settings-grid">
+              <div class="control-group">
+                <label for="edit-privacy-status">Target Visibility</label>
+                <select id="edit-privacy-status">
+                  <option value="public">Public (Immediate / Slot)</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="edit-category-id">YouTube Category ID</label>
+                <select id="edit-category-id">
+                  <option value="20">20 — Gaming</option>
+                  <option value="22">22 — People &amp; Blogs</option>
+                  <option value="23">23 — Comedy</option>
+                  <option value="24" selected>24 — Entertainment</option>
+                  <option value="27">27 — Education</option>
+                  <option value="28">28 — Science &amp; Technology</option>
+                </select>
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="edit-tags">Custom YouTube Tags (Comma-separated, max 500 chars)</label>
+                <input type="text" id="edit-tags" placeholder="shorts, podcast, ai, gaming, highlights">
+              </div>
+
+              <div class="control-group" style="grid-column: span 2;">
+                <label for="edit-publish-at">Server-Side Scheduled Publish Time (Optional UTC/Local)</label>
+                <input type="datetime-local" id="edit-publish-at">
+                <span class="hint">When set, YouTube holds video private and publishes automatically at this time</span>
+              </div>
+            </div>
+
+            <div class="toggle-row" style="margin-top: 1rem;">
+              <label class="toggle-switch">
+                <input type="checkbox" id="edit-altered-content">
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">Disclose Altered / Synthetic Media to YouTube</span>
+            </div>
+
+            <div class="toggle-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="edit-link-related" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">Link Related Video (Pins long-form source above title in Shorts mobile player)</span>
+            </div>
           </div>
         </div>
       </div>
-      <div class="modal-footer">
+
+      <div class="modal-footer studio-modal-footer">
         <button class="btn btn-secondary btn-sm" onclick="closeEditJobModal()">Cancel</button>
-        <button id="save-job-edit-btn" class="btn btn-primary btn-sm" onclick="saveJobMetadata()">💾 Save Changes</button>
+        <button id="save-job-edit-btn" class="btn btn-primary btn-sm" onclick="saveJobMetadata()">💾 Save Metadata</button>
+        <button id="rerender-job-btn" class="btn btn-primary-gradient btn-sm" onclick="rerenderJob()" title="Re-runs only Stages 7 &amp; 8 with updated layout, subtitles &amp; grading without re-downloading!">⚡ Fast Re-Burn Subtitles &amp; Layout</button>
       </div>
     </div>
   </div>

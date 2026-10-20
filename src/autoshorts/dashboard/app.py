@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 import webbrowser
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -145,6 +146,202 @@ async def scheduler_worker(
 # -----------------------------------------------------------------------------
 
 
+def set_job_attr(job: Job, attr: str, val: Any) -> None:
+    """Safely set an attribute on a Job instance, supporting dynamic fallback."""
+    try:
+        setattr(job, attr, val)
+    except (ValueError, TypeError, AttributeError):
+        if hasattr(job, "__dict__"):
+            job.__dict__[attr] = val
+
+
+DEFAULT_STUDIO_PROFILES = [
+    {
+        "id": "viral_split",
+        "name": "⚡ Viral Split",
+        "description": "50/50 split with neon karaoke pop captions and vibrant color grade",
+        "layout_mode": "split_50_50",
+        "style_preset": "neon",
+        "color_grading": "vibrant",
+        "dopamine_level": "high",
+        "background_category": "minecraft",
+        "subtitle_position": "center",
+        "text_transform": "uppercase",
+    },
+    {
+        "id": "podcast_blur",
+        "name": "🎙️ Podcast Blur",
+        "description": "Blurred background with centered 16:9 video and clean minimal captions",
+        "layout_mode": "full_blur_bg",
+        "style_preset": "minimal",
+        "color_grading": "warm",
+        "dopamine_level": "low",
+        "background_category": "none",
+        "subtitle_position": "bottom_safe",
+        "text_transform": "title",
+    },
+    {
+        "id": "gaming_max",
+        "name": "🎮 Gaming Max Dopamine",
+        "description": "Explosive Hormozi-style captions with subway surfers background",
+        "layout_mode": "split_50_50",
+        "style_preset": "hormozi",
+        "color_grading": "vibrant",
+        "dopamine_level": "ultra",
+        "background_category": "subway",
+        "subtitle_position": "center",
+        "text_transform": "uppercase",
+    },
+    {
+        "id": "cinematic",
+        "name": "🎬 Cinematic Full Crop",
+        "description": "Immersive 9:16 vertical crop with elegant cinematic lower-third captions",
+        "layout_mode": "full_center_crop",
+        "style_preset": "cinematic",
+        "color_grading": "cinematic",
+        "dopamine_level": "none",
+        "background_category": "none",
+        "subtitle_position": "bottom_safe",
+        "text_transform": "none",
+    },
+    {
+        "id": "pip_reaction",
+        "name": "📱 PiP Reaction",
+        "description": "Picture-in-picture commentary style with MrBeast tilted pop captions",
+        "layout_mode": "pip_gameplay",
+        "style_preset": "mrbeast",
+        "color_grading": "crisp",
+        "dopamine_level": "medium",
+        "background_category": "minecraft",
+        "subtitle_position": "center",
+        "text_transform": "uppercase",
+    },
+]
+
+
+def _get_studio_profiles_file() -> Path:
+    from autoshorts.core.paths import get_data_dir
+
+    return get_data_dir() / "studio_profiles.json"
+
+
+def _load_studio_profiles() -> list[dict[str, Any]]:
+    import autoshorts.core.settings_manager as sm
+
+    if hasattr(sm, "get_studio_profiles"):
+        try:
+            res = sm.get_studio_profiles()
+            if isinstance(res, dict):
+                return list(res.values())
+            elif isinstance(res, list):
+                return res
+        except Exception:
+            pass
+
+    prof_file = _get_studio_profiles_file()
+    if prof_file.is_file():
+        try:
+            with open(prof_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                elif isinstance(data, dict):
+                    return list(data.values())
+        except Exception as e:
+            logger.debug("Failed loading studio profiles: %s", e)
+
+    return list(DEFAULT_STUDIO_PROFILES)
+
+
+def _save_studio_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    import autoshorts.core.settings_manager as sm
+
+    if hasattr(sm, "save_studio_profile"):
+        try:
+            return sm.save_studio_profile(profile)
+        except Exception:
+            pass
+
+    prof_file = _get_studio_profiles_file()
+    prof_file.parent.mkdir(parents=True, exist_ok=True)
+    current = _load_studio_profiles()
+
+    prof_id = profile.get("id") or f"profile_{int(time.time())}"
+    profile["id"] = prof_id
+
+    updated = False
+    for idx, p in enumerate(current):
+        if p.get("id") == prof_id:
+            current[idx] = {**p, **profile}
+            updated = True
+            break
+    if not updated:
+        current.append(profile)
+
+    with open(prof_file, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+
+    return profile
+
+
+def _get_channel_profiles_file() -> Path:
+    from autoshorts.core.paths import get_data_dir
+
+    return get_data_dir() / "channel_profiles.json"
+
+
+def _load_channel_profiles() -> list[dict[str, Any]]:
+    import autoshorts.core.settings_manager as sm
+
+    if hasattr(sm, "get_channel_profiles"):
+        try:
+            return sm.get_channel_profiles()
+        except Exception:
+            pass
+
+    chan_file = _get_channel_profiles_file()
+    if chan_file.is_file():
+        try:
+            with open(chan_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            logger.debug("Failed loading channel profiles: %s", e)
+    return []
+
+
+def _save_channel_profile(channel: dict[str, Any]) -> dict[str, Any]:
+    import autoshorts.core.settings_manager as sm
+
+    if hasattr(sm, "save_channel_profile"):
+        try:
+            return sm.save_channel_profile(channel)
+        except Exception:
+            pass
+
+    chan_file = _get_channel_profiles_file()
+    chan_file.parent.mkdir(parents=True, exist_ok=True)
+    current = _load_channel_profiles()
+
+    chan_id = channel.get("id") or f"channel_{int(time.time())}"
+    channel["id"] = chan_id
+
+    updated = False
+    for idx, c in enumerate(current):
+        if c.get("id") == chan_id:
+            current[idx] = {**c, **channel}
+            updated = True
+            break
+    if not updated:
+        current.append(channel)
+
+    with open(chan_file, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+
+    return channel
+
+
 class JobSubmitRequest(BaseModel):
     links: str = Field(..., description="Newline separated links with optional : instructions")
     custom_instructions: str | None = Field(default=None)
@@ -156,6 +353,25 @@ class JobSubmitRequest(BaseModel):
     immediate_upload: bool = Field(default=False)
     style_preset: str | None = Field(default=None)
     privacy_status: str | None = Field(default=None)
+    # Advanced customization and upload fields
+    layout_mode: str | None = Field(default=None)
+    color_grading: str | None = Field(default=None)
+    watermark_text: str | None = Field(default=None)
+    watermark_position: str | None = Field(default=None)
+    progress_bar_position: str | None = Field(default=None)
+    text_transform: str | None = Field(default=None)
+    subtitle_position: str | None = Field(default=None)
+    hook_banner_style: str | None = Field(default=None)
+    enable_emojis: bool | None = Field(default=None)
+    category_id: str | None = Field(default=None)
+    altered_content: bool | None = Field(default=None)
+    custom_tags: list[str] | str | None = Field(default=None)
+    auto_pin_comment: bool | None = Field(default=None)
+    pin_comment_text: str | None = Field(default=None)
+    link_related_video: bool | None = Field(default=None)
+    related_video_url: str | None = Field(default=None)
+    publish_at: str | None = Field(default=None)
+    channel_profile_id: str | None = Field(default=None)
 
 
 SubmitJobsRequest = JobSubmitRequest
@@ -171,6 +387,27 @@ class JobPatchRequest(BaseModel):
     background_category: str | None = Field(default=None, description="Updated background category")
     dopamine_level: str | None = Field(default=None, description="Updated dopamine level")
     custom_instructions: str | None = Field(default=None, description="Updated custom instructions")
+    # Advanced customization and upload fields
+    layout_mode: str | None = Field(default=None)
+    style_preset: str | None = Field(default=None)
+    color_grading: str | None = Field(default=None)
+    watermark_text: str | None = Field(default=None)
+    watermark_position: str | None = Field(default=None)
+    progress_bar_position: str | None = Field(default=None)
+    text_transform: str | None = Field(default=None)
+    subtitle_position: str | None = Field(default=None)
+    hook_banner_style: str | None = Field(default=None)
+    enable_emojis: bool | None = Field(default=None)
+    category_id: str | None = Field(default=None)
+    altered_content: bool | None = Field(default=None)
+    custom_tags: list[str] | str | None = Field(default=None)
+    auto_pin_comment: bool | None = Field(default=None)
+    pin_comment_text: str | None = Field(default=None)
+    link_related_video: bool | None = Field(default=None)
+    related_video_url: str | None = Field(default=None)
+    publish_at: str | None = Field(default=None)
+    channel_profile_id: str | None = Field(default=None)
+    privacy_status: str | None = Field(default=None)
 
 
 class TestProviderRequest(BaseModel):
@@ -435,6 +672,35 @@ def create_app(
             custom_instructions=req.custom_instructions,
         )
 
+        # Forward any custom customization fields onto each Job
+        for job in jobs:
+            for field_name in (
+                "layout_mode",
+                "style_preset",
+                "color_grading",
+                "watermark_text",
+                "watermark_position",
+                "progress_bar_position",
+                "text_transform",
+                "subtitle_position",
+                "hook_banner_style",
+                "enable_emojis",
+                "category_id",
+                "altered_content",
+                "custom_tags",
+                "auto_pin_comment",
+                "pin_comment_text",
+                "link_related_video",
+                "related_video_url",
+                "publish_at",
+                "channel_profile_id",
+                "privacy_status",
+            ):
+                val = getattr(req, field_name, None)
+                if val is not None:
+                    set_job_attr(job, field_name, val)
+            state_mgr.save_job(job)
+
         # Trigger processing in background thread
         for job in jobs:
             background_tasks.add_task(
@@ -517,6 +783,33 @@ def create_app(
                 background_style_recommendation=bg_cat,
             )
 
+        # Forward any custom customization fields onto the Job
+        for field_name in (
+            "layout_mode",
+            "style_preset",
+            "color_grading",
+            "watermark_text",
+            "watermark_position",
+            "progress_bar_position",
+            "text_transform",
+            "subtitle_position",
+            "hook_banner_style",
+            "enable_emojis",
+            "category_id",
+            "altered_content",
+            "custom_tags",
+            "auto_pin_comment",
+            "pin_comment_text",
+            "link_related_video",
+            "related_video_url",
+            "publish_at",
+            "channel_profile_id",
+            "privacy_status",
+        ):
+            val = getattr(req, field_name, None)
+            if val is not None:
+                set_job_attr(job, field_name, val)
+
         job.updated_at = datetime.now(UTC)
         state_mgr.save_job(job)
 
@@ -525,6 +818,219 @@ def create_app(
             "success": True,
             "job": enrich_job_dict(job, current_cfg),
         }
+
+    # -------------------------------------------------------------------------
+    # Word-Level Transcript & EDL Timeline Endpoints
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/jobs/{job_id}/transcript")
+    async def get_job_transcript(job_id: str) -> dict[str, Any]:
+        """Read aligned words or raw transcript for word-level editing."""
+        from autoshorts.core.paths import get_work_dir
+
+        work_dir = get_work_dir() / job_id
+        aligned_cache = work_dir / "aligned_words.json"
+        raw_cache = work_dir / "transcript.json"
+
+        if aligned_cache.is_file():
+            try:
+                words = json.loads(aligned_cache.read_text(encoding="utf-8"))
+                return {
+                    "success": True,
+                    "job_id": job_id,
+                    "words": words,
+                    "source": "aligned_words",
+                }
+            except Exception as e:
+                logger.debug("Failed reading aligned_words.json: %s", e)
+
+        if raw_cache.is_file():
+            try:
+                segments = json.loads(raw_cache.read_text(encoding="utf-8"))
+                flat_words = []
+                for s in segments:
+                    text = s.get("text", "")
+                    toks = text.split()
+                    st = float(s.get("start", 0.0))
+                    dur = float(s.get("duration", s.get("end", st + 2.0) - st))
+                    step = dur / max(1, len(toks))
+                    for i, t in enumerate(toks):
+                        flat_words.append(
+                            {
+                                "word": t,
+                                "start": st + i * step,
+                                "end": st + (i + 1) * step,
+                                "probability": 1.0,
+                            }
+                        )
+                return {
+                    "success": True,
+                    "job_id": job_id,
+                    "words": flat_words,
+                    "source": "transcript",
+                }
+            except Exception as e:
+                logger.debug("Failed reading transcript.json: %s", e)
+
+        raise HTTPException(status_code=404, detail=f"No transcript found for job {job_id}")
+
+    @app.put("/api/jobs/{job_id}/transcript")
+    async def update_job_transcript(job_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        """Update aligned words transcript for a job."""
+        from autoshorts.core.paths import get_work_dir
+
+        work_dir = get_work_dir() / job_id
+        work_dir.mkdir(parents=True, exist_ok=True)
+        aligned_cache = work_dir / "aligned_words.json"
+
+        words = req.get("words")
+        if not isinstance(words, list):
+            raise HTTPException(
+                status_code=400, detail="'words' must be a list of word dictionaries"
+            )
+
+        try:
+            aligned_cache.write_text(json.dumps(words, indent=2), encoding="utf-8")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save aligned words: {e}") from e
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "count": len(words),
+            "message": "Transcript updated successfully.",
+        }
+
+    @app.post("/api/jobs/{job_id}/trim")
+    async def trim_job(job_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        """Update start_sec and end_sec and optional jump_cuts / zoom_punch_ins on job and EDL."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        if "start_sec" not in req or "end_sec" not in req:
+            raise HTTPException(status_code=400, detail="start_sec and end_sec are required")
+
+        try:
+            start_sec = float(req["start_sec"])
+            end_sec = float(req["end_sec"])
+        except (ValueError, TypeError) as e:
+            raise HTTPException(
+                status_code=400, detail=f"start_sec and end_sec must be floats: {e}"
+            ) from e
+
+        if start_sec < 0 or start_sec >= end_sec:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid trim range: start_sec ({start_sec}) must be >= 0 and < end_sec ({end_sec})",
+            )
+
+        duration = end_sec - start_sec
+        if duration > 60.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trimmed duration ({duration:.2f}s) exceeds maximum YouTube Shorts duration of 60.0 seconds",
+            )
+
+        # Update selected_clips
+        if job.selected_clips:
+            for sel in job.selected_clips:
+                sel.candidate.start = start_sec
+                sel.candidate.end = end_sec
+                sel.target_duration = duration
+
+        # Update EDL
+        if job.edl is None:
+            from autoshorts.edit_planner.edl_schema import create_empty_edl
+
+            job.edl = create_empty_edl()
+
+        job.edl.hook_in_sec = start_sec
+        job.edl.hook_out_sec = end_sec
+
+        if "jump_cuts" in req and req["jump_cuts"] is not None:
+            from autoshorts.core.models import JumpCut
+
+            try:
+                job.edl.jump_cuts = [JumpCut(**jc) for jc in req["jump_cuts"]]
+            except Exception as jc_err:
+                logger.debug("Failed parsing jump cuts: %s", jc_err)
+
+        if "zoom_punch_ins" in req and req["zoom_punch_ins"] is not None:
+            from autoshorts.core.models import ZoomPunchIn
+
+            try:
+                job.edl.zoom_punch_ins = [ZoomPunchIn(**zp) for zp in req["zoom_punch_ins"]]
+            except Exception as zp_err:
+                logger.debug("Failed parsing zoom punch ins: %s", zp_err)
+
+        job.updated_at = datetime.now(UTC)
+        state_mgr.save_job(job)
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "start_sec": start_sec,
+            "end_sec": end_sec,
+            "duration": round(duration, 2),
+            "edl": job.edl.model_dump(),
+        }
+
+    @app.post("/api/jobs/{job_id}/rerender")
+    async def rerender_job_endpoint(
+        job_id: str,
+        req: dict[str, Any] | None = None,
+        background_tasks: BackgroundTasks = None,
+    ) -> dict[str, Any]:
+        """Trigger fast re-render of subtitles and compositing stages."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        overrides = req or {}
+        try:
+            updated_job = await asyncio.to_thread(pipe.rerender_job, job_id, **overrides)
+            current_cfg = pipe.config if hasattr(pipe, "config") else cfg
+            return {
+                "success": True,
+                "job": enrich_job_dict(updated_job, current_cfg),
+                "message": "Re-render completed successfully.",
+            }
+        except Exception as e:
+            logger.error("Fast re-render failed for job %s: %s", job_id, e)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # -------------------------------------------------------------------------
+    # 1-Click Studio Profiles & Multi-Channel Endpoints
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/studio/profiles")
+    async def get_studio_profiles() -> dict[str, Any]:
+        """Return 1-Click Studio Template Profiles."""
+        profiles = _load_studio_profiles()
+        return {"success": True, "profiles": profiles, "count": len(profiles)}
+
+    @app.post("/api/studio/profiles")
+    async def save_studio_profile_endpoint(req: dict[str, Any]) -> dict[str, Any]:
+        """Save or update a 1-Click Studio Template Profile."""
+        if not req.get("name"):
+            raise HTTPException(status_code=400, detail="Profile name is required")
+        saved = _save_studio_profile(req)
+        return {"success": True, "profile": saved}
+
+    @app.get("/api/channels")
+    async def get_channels() -> dict[str, Any]:
+        """List Multi-Channel profiles."""
+        channels = _load_channel_profiles()
+        return {"success": True, "channels": channels, "count": len(channels)}
+
+    @app.post("/api/channels")
+    async def save_channel(req: dict[str, Any]) -> dict[str, Any]:
+        """Save or update Multi-Channel profile."""
+        if not req.get("name") and not req.get("handle"):
+            raise HTTPException(status_code=400, detail="Channel name or handle is required")
+        saved = _save_channel_profile(req)
+        return {"success": True, "channel": saved}
 
     @app.post("/api/jobs/{job_id}/retry")
     async def retry_job(job_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:

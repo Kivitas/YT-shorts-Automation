@@ -60,6 +60,7 @@ class PlaywrightStudioUploader:
         headless: bool = False,
         config: Settings | None = None,
         context_factory: Callable[..., Any] | None = None,
+        profile_dir: Path | str | None = None,
     ) -> None:
         """Initialize Studio uploader with dedicated Edge profile directory.
 
@@ -69,11 +70,13 @@ class PlaywrightStudioUploader:
             headless: Whether to run Edge headless (False for interactive sessions).
             config: Optional Settings instance for default privacy/templates.
             context_factory: Optional mockable factory callable returning browser context.
+            profile_dir: Optional alias/override for Edge automation user data directory.
         """
         self.config = config
+        target_dir = profile_dir or edge_profile_dir
         self.edge_profile_dir = (
-            Path(edge_profile_dir).resolve()
-            if edge_profile_dir
+            Path(target_dir).resolve()
+            if target_dir
             else (get_data_dir() / "edge_profile").resolve()
         )
         self.profile_dir = self.edge_profile_dir  # Backward-compatible alias
@@ -477,6 +480,11 @@ class PlaywrightStudioUploader:
         *,
         video_path: Path | None = None,
         privacy_status: str | None = None,
+        altered_content: bool = False,
+        related_video_url: str | None = None,
+        publish_at: str | None = None,
+        profile_dir: Path | str | None = None,
+        **kwargs: Any,
     ) -> UploadResult:
         """Upload video via YouTube Studio web interface using MS Edge persistent profile.
 
@@ -488,6 +496,10 @@ class PlaywrightStudioUploader:
             privacy: Visibility status ('private', 'unlisted', 'public').
             video_path: Keyword alias for target video path.
             privacy_status: Keyword alias for visibility status.
+            altered_content: Whether to disclose synthetic or altered content in Details.
+            related_video_url: Long-form source video link to attach as Shorts Related Video.
+            publish_at: ISO-8601 UTC timestamp string for native scheduled publishing.
+            profile_dir: Optional Edge profile user data directory override.
 
         Returns:
             UploadResult with assigned YouTube video ID and shorts URL.
@@ -495,6 +507,10 @@ class PlaywrightStudioUploader:
         Raises:
             UploadError: If file not found, unauthenticated redirect occurs, or DOM automation fails.
         """
+        if profile_dir is not None:
+            self.edge_profile_dir = Path(profile_dir).resolve()
+            self.profile_dir = self.edge_profile_dir
+
         target_path = Path(video_path if video_path is not None else (path or ""))
         if not target_path.is_file():
             raise UploadError(f"Video file does not exist: {target_path}")
@@ -519,65 +535,101 @@ class PlaywrightStudioUploader:
         )
 
         with self._launch_browser_session(headless=self.headless) as (_context, page):
-            page.goto("https://studio.youtube.com", wait_until="domcontentloaded")
+            try:
+                page.goto("https://studio.youtube.com", wait_until="domcontentloaded")
 
-            # Validate authenticated session
-            raw_url = (
-                page.url() if callable(getattr(page, "url", None)) else getattr(page, "url", "")
-            )
-            current_url = raw_url if isinstance(raw_url, str) else str(raw_url)
-            if "accounts.google.com" in current_url:
-                raise UploadError(
-                    "MS Edge profile is not signed in. Run 'autoshorts edge-login' first."
+                # Validate authenticated session
+                raw_url = (
+                    page.url() if callable(getattr(page, "url", None)) else getattr(page, "url", "")
+                )
+                current_url = raw_url if isinstance(raw_url, str) else str(raw_url)
+                if "accounts.google.com" in current_url:
+                    raise UploadError(
+                        "MS Edge profile is not signed in. Run 'autoshorts edge-login' first."
+                    )
+
+                # Trigger upload dialog: Create -> Upload videos or direct file chooser
+                try:
+                    create_btn = page.locator("ytcp-button#create-icon, #create-icon").first
+                    if create_btn.is_visible(timeout=5000):
+                        create_btn.click()
+                        upload_item = page.locator(
+                            "#text-item-0, ytcp-text-menu #text-item-0"
+                        ).first
+                        if upload_item.is_visible(timeout=3000):
+                            upload_item.click()
+                except Exception as ex:
+                    logger.debug("Create button click bypass: %s", ex)
+
+                # Set file input
+                file_input = page.locator("input[type='file']").first
+                file_input.set_input_files(str(target_path.resolve()))
+
+                # Ensure #Shorts is in title
+                shorts_title = (
+                    title if ("#Shorts" in title or "#shorts" in title) else f"{title} #Shorts"
                 )
 
-            # Trigger upload dialog: Create -> Upload videos or direct file chooser
-            try:
-                create_btn = page.locator("ytcp-button#create-icon, #create-icon").first
-                if create_btn.is_visible(timeout=5000):
-                    create_btn.click()
-                    upload_item = page.locator("#text-item-0, ytcp-text-menu #text-item-0").first
-                    if upload_item.is_visible(timeout=3000):
-                        upload_item.click()
-            except Exception as ex:
-                logger.debug("Create button click bypass: %s", ex)
+                # Fill title textbox (first #textbox)
+                title_box = page.locator("#textbox").nth(0)
+                if hasattr(title_box, "wait_for") and callable(title_box.wait_for):
+                    title_box.wait_for(state="visible", timeout=30000)
+                title_box.fill(shorts_title)
 
-            # Set file input
-            file_input = page.locator("input[type='file']").first
-            file_input.set_input_files(str(target_path.resolve()))
+                # Fill description textbox (second #textbox)
+                if description:
+                    try:
+                        desc_box = page.locator("#textbox").nth(1)
+                        if desc_box.is_visible(timeout=5000):
+                            desc_box.fill(description)
+                    except Exception as ex:
+                        logger.debug("Description box fill warning: %s", ex)
 
-            # Ensure #Shorts is in title
-            shorts_title = (
-                title if ("#Shorts" in title or "#shorts" in title) else f"{title} #Shorts"
-            )
-
-            # Fill title textbox (first #textbox)
-            title_box = page.locator("#textbox").nth(0)
-            if hasattr(title_box, "wait_for") and callable(title_box.wait_for):
-                title_box.wait_for(state="visible", timeout=30000)
-            title_box.fill(shorts_title)
-
-            # Fill description textbox (second #textbox)
-            if description:
+                # Mark "No, it's not made for kids"
                 try:
-                    desc_box = page.locator("#textbox").nth(1)
-                    if desc_box.is_visible(timeout=5000):
-                        desc_box.fill(description)
+                    not_mfk = page.locator(
+                        'tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"], [name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]'
+                    ).first
+                    not_mfk.click()
                 except Exception as ex:
-                    logger.debug("Description box fill warning: %s", ex)
+                    logger.debug("Made for kids selection warning: %s", ex)
 
-            # Mark "No, it's not made for kids"
-            try:
-                not_mfk = page.locator(
-                    'tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"], [name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]'
-                ).first
-                not_mfk.click()
-            except Exception as ex:
-                logger.debug("Made for kids selection warning: %s", ex)
+                # Altered Content Selection in Details
+                try:
+                    toggle_btn = page.locator(
+                        "#toggle-button, ytcp-button#toggle-button, button:has-text('Show more')"
+                    ).first
+                    if hasattr(toggle_btn, "is_visible") and toggle_btn.is_visible(timeout=2500):
+                        toggle_btn.click()
+                        if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
+                            page.wait_for_timeout(400)
+                        else:
+                            time.sleep(0.4)
 
-            # Step through Wizard to Visibility step (click #next-button 3 times)
-            next_btn = page.locator("#next-button").first
-            for _ in range(3):
+                    if altered_content:
+                        alt_radio = page.locator(
+                            'tp-yt-paper-radio-button[name="IS_ALTERED_CONTENT"], '
+                            'tp-yt-paper-radio-button[name="ALTERED_CONTENT_YES"], '
+                            'tp-yt-paper-radio-button:has-text("Yes")'
+                        ).first
+                    else:
+                        alt_radio = page.locator(
+                            'tp-yt-paper-radio-button[name="NOT_ALTERED_CONTENT"], '
+                            'tp-yt-paper-radio-button[name="ALTERED_CONTENT_NO"], '
+                            'tp-yt-paper-radio-button:has-text("No")'
+                        ).first
+
+                    if (
+                        hasattr(alt_radio, "is_visible")
+                        and alt_radio.is_visible(timeout=2500)
+                        or hasattr(alt_radio, "click")
+                    ):
+                        alt_radio.click()
+                except Exception as ex:
+                    logger.debug("Altered content selection warning: %s", ex)
+
+                # Step 1: Advance to Video elements step
+                next_btn = page.locator("#next-button").first
                 if next_btn.is_visible(timeout=8000):
                     next_btn.click()
                     if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
@@ -585,105 +637,192 @@ class PlaywrightStudioUploader:
                     else:
                         time.sleep(0.8)
 
-            # Select requested visibility radio button (PUBLIC, UNLISTED, PRIVATE)
-            clean_privacy = effective_privacy.upper()
-            if clean_privacy in ("PUBLIC", "UNLISTED", "PRIVATE"):
-                vis_key = clean_privacy
-            elif "PUB" in clean_privacy:
-                vis_key = "PUBLIC"
-            elif "PRIV" in clean_privacy:
-                vis_key = "PRIVATE"
-            else:
-                vis_key = "UNLISTED"
-
-            logger.info("Selecting YouTube Studio visibility radio: %s", vis_key)
-            try:
-                vis_selector = f'tp-yt-paper-radio-button[name="{vis_key}"], [name="{vis_key}"]'
-                vis_radio = page.locator(vis_selector).first
-                if hasattr(vis_radio, "wait_for") and callable(vis_radio.wait_for):
+                # Related Video Link in Video elements step
+                if related_video_url:
                     try:
-                        vis_radio.wait_for(state="visible", timeout=5000)
-                    except Exception:
-                        pass
-                is_vis = (
-                    vis_radio.is_visible(timeout=5000)
-                    if callable(getattr(vis_radio, "is_visible", None))
-                    else True
-                )
-                if is_vis:
-                    vis_radio.click()
-                else:
-                    vis_radio.click()
-            except Exception as ex:
-                logger.warning("Could not select visibility radio %s: %s", vis_key, ex)
+                        rel_btn = page.locator(
+                            "#related-video-button, ytcp-button#related-video-button, "
+                            "ytcp-video-metadata-editor-sidepanel #related-video-button, "
+                            "button[aria-label*='Related video'], button:has-text('Related video'), "
+                            "#add-related-video-button"
+                        ).first
+                        if hasattr(rel_btn, "is_visible") and rel_btn.is_visible(timeout=4000):
+                            rel_btn.click()
+                            search_box = page.locator(
+                                "input#search-input, input[type='text'], #search-box input, #textbox"
+                            ).first
+                            if hasattr(search_box, "is_visible") and search_box.is_visible(
+                                timeout=3000
+                            ):
+                                search_box.fill(str(related_video_url))
+                                if hasattr(page, "keyboard") and hasattr(page.keyboard, "press"):
+                                    page.keyboard.press("Enter")
+                                first_res = page.locator(
+                                    "ytcp-video-row, div.video-row, div#results-container ytcp-entity-badge"
+                                ).first
+                                if hasattr(first_res, "is_visible") and first_res.is_visible(
+                                    timeout=2500
+                                ):
+                                    first_res.click()
+                    except Exception as ex:
+                        logger.debug("Related video link warning: %s", ex)
 
-            # Extract video ID from link: a.style-scope.ytcp-video-info
-            video_id = ""
-            try:
-                video_link = page.locator("a.style-scope.ytcp-video-info, a.ytcp-video-info").first
-                if video_link.is_visible(timeout=5000):
-                    raw_href = video_link.get_attribute("href") or video_link.inner_text() or ""
-                    href = raw_href if isinstance(raw_href, str) else ""
-                    match = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", href) or re.search(
-                        r"v=([a-zA-Z0-9_-]{11})", href
+                # Step 2 & 3: Advance through Checks to Visibility step
+                for _ in range(2):
+                    if next_btn.is_visible(timeout=8000):
+                        next_btn.click()
+                        if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
+                            page.wait_for_timeout(800)
+                        else:
+                            time.sleep(0.8)
+
+                # Visibility selection or scheduled publishing
+                is_scheduled = False
+                if publish_at:
+                    try:
+                        sched_radio = page.locator(
+                            'tp-yt-paper-radio-button[name="SCHEDULE"], #schedule-radio-button, [name="SCHEDULE"]'
+                        ).first
+                        if hasattr(sched_radio, "is_visible") and sched_radio.is_visible(
+                            timeout=3000
+                        ):
+                            sched_radio.click()
+                            is_scheduled = True
+                            try:
+                                date_in = page.locator(
+                                    "input[aria-label*='Date'], #datepicker-trigger input"
+                                ).first
+                                if hasattr(date_in, "is_visible") and date_in.is_visible(
+                                    timeout=1500
+                                ):
+                                    date_in.fill(str(publish_at)[:10])
+                            except Exception:
+                                pass
+                    except Exception as ex:
+                        logger.debug("Schedule radio selection warning: %s", ex)
+
+                if not is_scheduled:
+                    clean_privacy = effective_privacy.upper()
+                    if clean_privacy in ("PUBLIC", "UNLISTED", "PRIVATE"):
+                        vis_key = clean_privacy
+                    elif "PUB" in clean_privacy:
+                        vis_key = "PUBLIC"
+                    elif "PRIV" in clean_privacy:
+                        vis_key = "PRIVATE"
+                    else:
+                        vis_key = "UNLISTED"
+
+                    logger.info("Selecting YouTube Studio visibility radio: %s", vis_key)
+                    try:
+                        vis_selector = (
+                            f'tp-yt-paper-radio-button[name="{vis_key}"], [name="{vis_key}"]'
+                        )
+                        vis_radio = page.locator(vis_selector).first
+                        if hasattr(vis_radio, "wait_for") and callable(vis_radio.wait_for):
+                            try:
+                                vis_radio.wait_for(state="visible", timeout=5000)
+                            except Exception:
+                                pass
+                        is_vis = (
+                            vis_radio.is_visible(timeout=5000)
+                            if callable(getattr(vis_radio, "is_visible", None))
+                            else True
+                        )
+                        if is_vis:
+                            vis_radio.click()
+                        else:
+                            vis_radio.click()
+                    except Exception as ex:
+                        logger.warning("Could not select visibility radio %s: %s", vis_key, ex)
+
+                # Extract video ID from link: a.style-scope.ytcp-video-info
+                video_id = ""
+                try:
+                    video_link = page.locator(
+                        "a.style-scope.ytcp-video-info, a.ytcp-video-info"
+                    ).first
+                    if video_link.is_visible(timeout=5000):
+                        raw_href = video_link.get_attribute("href") or video_link.inner_text() or ""
+                        href = raw_href if isinstance(raw_href, str) else ""
+                        match = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", href) or re.search(
+                            r"v=([a-zA-Z0-9_-]{11})", href
+                        )
+                        if match:
+                            video_id = match.group(1)
+                except Exception as ex:
+                    logger.debug("Failed extracting video link from DOM: %s", ex)
+
+                if not video_id:
+                    # Fallback to page content scan
+                    raw_content = (
+                        page.content()
+                        if hasattr(page, "content") and callable(page.content)
+                        else ""
+                    )
+                    content = raw_content if isinstance(raw_content, str) else ""
+                    match = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", content) or re.search(
+                        r"shorts/([a-zA-Z0-9_-]{11})", content
                     )
                     if match:
                         video_id = match.group(1)
-            except Exception as ex:
-                logger.debug("Failed extracting video link from DOM: %s", ex)
+                    else:
+                        video_id = f"studio_{uuid4().hex[:11]}"
 
-            if not video_id:
-                # Fallback to page content scan
-                raw_content = (
-                    page.content() if hasattr(page, "content") and callable(page.content) else ""
-                )
-                content = raw_content if isinstance(raw_content, str) else ""
-                match = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", content) or re.search(
-                    r"shorts/([a-zA-Z0-9_-]{11})", content
-                )
-                if match:
-                    video_id = match.group(1)
-                else:
-                    video_id = f"studio_{uuid4().hex[:11]}"
+                # Complete upload wizard (clicks #done-button, which is labeled "Publish" when Public is selected)
+                done_btn = page.locator("#done-button, #save-button").first
+                try:
+                    if hasattr(done_btn, "wait_for") and callable(done_btn.wait_for):
+                        try:
+                            done_btn.wait_for(state="visible", timeout=8000)
+                        except Exception:
+                            pass
+                    is_done_vis = (
+                        done_btn.is_visible(timeout=5000)
+                        if callable(getattr(done_btn, "is_visible", None))
+                        else True
+                    )
+                    if is_done_vis:
+                        done_btn.click()
+                    else:
+                        done_btn.click()
+                    if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
+                        page.wait_for_timeout(1500)
+                    else:
+                        time.sleep(1.5)
+                except Exception as ex:
+                    logger.warning("Error clicking done/publish button: %s", ex)
 
-            # Complete upload wizard (clicks #done-button, which is labeled "Publish" when Public is selected)
-            done_btn = page.locator("#done-button, #save-button").first
-            try:
-                if hasattr(done_btn, "wait_for") and callable(done_btn.wait_for):
-                    try:
-                        done_btn.wait_for(state="visible", timeout=8000)
-                    except Exception:
-                        pass
-                is_done_vis = (
-                    done_btn.is_visible(timeout=5000)
-                    if callable(getattr(done_btn, "is_visible", None))
-                    else True
+                ret_privacy = "scheduled" if is_scheduled else effective_privacy
+                return UploadResult(
+                    video_id=video_id,
+                    url=f"https://youtube.com/shorts/{video_id}",
+                    status="uploaded",
+                    verified=True,
+                    privacy_status=ret_privacy,
+                    quota_spent=0,
+                    raw_response={
+                        "mode": "studio_playwright",
+                        "channel": self.channel,
+                        "profile_dir": str(self.edge_profile_dir),
+                        "tags": effective_tags,
+                        "altered_content": altered_content,
+                        "related_video_url": related_video_url,
+                        "publish_at": publish_at,
+                        "is_scheduled": is_scheduled,
+                    },
                 )
-                if is_done_vis:
-                    done_btn.click()
-                else:
-                    done_btn.click()
-                if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
-                    page.wait_for_timeout(1500)
-                else:
-                    time.sleep(1.5)
-            except Exception as ex:
-                logger.warning("Error clicking done/publish button: %s", ex)
 
-            return UploadResult(
-                video_id=video_id,
-                url=f"https://youtube.com/shorts/{video_id}",
-                status="uploaded",
-                verified=True,
-                privacy_status=effective_privacy,
-                quota_spent=0,
-                raw_response={
-                    "mode": "studio_playwright",
-                    "channel": self.channel,
-                    "profile_dir": str(self.edge_profile_dir),
-                    "tags": effective_tags,
-                },
-            )
+            except Exception:
+                try:
+                    log_dir = get_data_dir() / "logs"
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    screenshot_path = log_dir / f"studio_error_{int(time.time())}.png"
+                    if hasattr(page, "screenshot") and callable(page.screenshot):
+                        page.screenshot(path=str(screenshot_path))
+                        logger.info("Saved diagnostic failure screenshot to %s", screenshot_path)
+                except Exception as s_err:
+                    logger.debug("Could not save diagnostic screenshot: %s", s_err)
+                raise
 
     def verify(self, video_id: str) -> bool:
         """Verify video status in YouTube Studio or via Shorts URL.

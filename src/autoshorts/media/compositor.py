@@ -30,7 +30,9 @@ from autoshorts.core.config import Settings, load_config
 from autoshorts.core.models import EditDecisionList
 from autoshorts.core.paths import get_assets_dir
 from autoshorts.media.dopamine_effects import (
+    build_color_grading_filter,
     build_complex_filtergraph,
+    build_watermark_filter,
     find_user_audio_assets,
     get_dopamine_preset,
     pick_background_asset,
@@ -303,6 +305,16 @@ class FFmpegCompositor:
         dopamine_level: str | None = None,
         progress_callback: Callable[[float], None] | None = None,
         timeout_sec: float = 300.0,
+        layout_mode: str | None = None,
+        color_grading: str | None = None,
+        watermark_text: str | None = None,
+        watermark_position: str | None = None,
+        watermark_opacity: float | None = None,
+        progress_bar_position: str | None = None,
+        progress_bar_color: str | None = None,
+        voice_boost: bool | None = None,
+        target_lufs: float | None = None,
+        bg_music_volume: float | None = None,
         **kwargs: Any,
     ) -> Path:
         """Render a vertical 1080x1920 Short MP4 via FFmpeg executing the EDL.
@@ -319,6 +331,44 @@ class FFmpegCompositor:
         if not sub_path.is_file():
             raise FileNotFoundError(f"Subtitles file not found: {sub_path}")
 
+        # Resolve studio styling defaults from config branding / audio mastering
+        branding = getattr(self.config, "branding", None)
+        audio_cfg = getattr(self.config, "audio_mastering", None)
+        job_defaults = getattr(self.config, "job_defaults", None)
+
+        eff_layout = layout_mode or getattr(job_defaults, "layout_mode", None) or "split_50_50"
+        eff_color_grading = color_grading or getattr(branding, "color_grading", None) or "none"
+        eff_watermark_text = (
+            watermark_text
+            if watermark_text is not None
+            else getattr(branding, "watermark_text", None)
+        )
+        eff_watermark_pos = (
+            watermark_position or getattr(branding, "watermark_position", None) or "top_right"
+        )
+        eff_watermark_opacity = (
+            watermark_opacity
+            if watermark_opacity is not None
+            else getattr(branding, "watermark_opacity", 0.65)
+        )
+        eff_pb_pos = (
+            progress_bar_position or getattr(branding, "progress_bar_position", None) or "bottom"
+        )
+        eff_pb_color = (
+            progress_bar_color or getattr(branding, "progress_bar_color", None) or "red@0.8"
+        )
+        eff_voice_boost = (
+            voice_boost if voice_boost is not None else getattr(audio_cfg, "voice_boost", True)
+        )
+        eff_target_lufs = (
+            target_lufs if target_lufs is not None else getattr(audio_cfg, "target_lufs", -14.0)
+        )
+        eff_bg_music_vol = (
+            bg_music_volume
+            if bg_music_volume is not None
+            else getattr(audio_cfg, "bg_music_volume", 0.18)
+        )
+
         # Determine target duration and trim points
         clip_duration = probe_media_duration(src)
         hook_in = 0.0
@@ -332,11 +382,12 @@ class FFmpegCompositor:
 
         target_duration = max(1.0, min(60.0, hook_out - hook_in))
         logger.info(
-            "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs)",
+            "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs, layout=%s)",
             job_id,
             target_duration,
             hook_in,
             hook_out,
+            eff_layout,
         )
 
         level = dopamine_level or self.config.job_defaults.dopamine_level
@@ -349,59 +400,64 @@ class FFmpegCompositor:
             cmd.extend(["-ss", f"{hook_in:.3f}"])
         cmd.extend(["-t", f"{target_duration:.3f}", "-i", str(src)])
 
-        # Input 1: Background video or procedural lavfi
-        bg_file: Path | None = None
-        bg_offset = 0.0
+        # Single source vs multi-source layouts
+        is_single_source = eff_layout in ("full_blur_bg", "full_center_crop")
+        has_bg_file = False
+        next_input_idx = 1 if is_single_source else 2
 
-        if background_path:
-            p = Path(background_path).resolve()
-            if p.is_file():
-                bg_file = p
-                bg_dur = probe_media_duration(p)
-                max_offset = max(0.0, bg_dur - target_duration)
-                bg_offset = random.uniform(0.0, min(180.0, max_offset))
+        if not is_single_source:
+            # Input 1: Background video or procedural lavfi
+            bg_file: Path | None = None
+            bg_offset = 0.0
 
-        if bg_file is None:
-            # Try to pick from assets directory based on EDL or config
-            bg_style = (
-                (edl.background_style_recommendation if edl else None)
-                or self.config.job_defaults.background_category
-                or "minecraft"
-            )
-            bg_file, bg_offset = pick_background_asset(category=bg_style)
+            if background_path:
+                p = Path(background_path).resolve()
+                if p.is_file():
+                    bg_file = p
+                    bg_dur = probe_media_duration(p)
+                    max_offset = max(0.0, bg_dur - target_duration)
+                    bg_offset = random.uniform(0.0, min(180.0, max_offset))
 
-        if bg_file and bg_file.is_file():
-            cmd.extend(
-                [
-                    "-ss",
-                    f"{bg_offset:.3f}",
-                    "-stream_loop",
-                    "-1",
-                    "-t",
-                    f"{target_duration:.3f}",
-                    "-i",
-                    str(bg_file),
-                ]
-            )
-            has_bg_file = True
-        else:
-            # Procedural fallback background via lavfi color/gradients
-            cmd.extend(
-                [
-                    "-f",
-                    "lavfi",
-                    "-t",
-                    f"{target_duration:.3f}",
-                    "-i",
-                    f"color=c=0x16213e:s=1080x960:r=30:d={target_duration:.3f}",
-                ]
-            )
-            has_bg_file = False
+            if bg_file is None:
+                # Try to pick from assets directory based on EDL or config
+                bg_style = (
+                    (edl.background_style_recommendation if edl else None)
+                    or self.config.job_defaults.background_category
+                    or "minecraft"
+                )
+                bg_file, bg_offset = pick_background_asset(category=bg_style)
+
+            if bg_file and bg_file.is_file():
+                cmd.extend(
+                    [
+                        "-ss",
+                        f"{bg_offset:.3f}",
+                        "-stream_loop",
+                        "-1",
+                        "-t",
+                        f"{target_duration:.3f}",
+                        "-i",
+                        str(bg_file),
+                    ]
+                )
+                has_bg_file = True
+            else:
+                # Procedural fallback background via lavfi color/gradients
+                cmd.extend(
+                    [
+                        "-f",
+                        "lavfi",
+                        "-t",
+                        f"{target_duration:.3f}",
+                        "-i",
+                        f"color=c=0x16213e:s=1080x960:r=30:d={target_duration:.3f}",
+                    ]
+                )
+                has_bg_file = False
 
         # Optional audio assets (music, sfx)
         music_idx: int | None = None
         sfx_idx: int | None = None
-        next_input_idx = 2
 
         if preset.enable_music_ducking:
             music_files = find_user_audio_assets("music")
@@ -436,6 +492,16 @@ class FFmpegCompositor:
             has_background_video=has_bg_file,
             music_input_index=music_idx,
             sfx_input_index=sfx_idx,
+            layout_mode=eff_layout,
+            color_grading=eff_color_grading,
+            watermark_text=eff_watermark_text,
+            watermark_position=eff_watermark_pos,
+            watermark_opacity=eff_watermark_opacity,
+            progress_bar_position=eff_pb_pos,
+            progress_bar_color=eff_pb_color,
+            voice_boost=eff_voice_boost,
+            target_lufs=eff_target_lufs,
+            bg_music_volume=eff_bg_music_vol,
         )
 
         cmd.extend(["-filter_complex", filtergraph])
@@ -495,6 +561,11 @@ class FFmpegCompositor:
         output_path: Path | str,
         max_duration_sec: float = 30.0,
         timeout_sec: float = 30.0,
+        layout_mode: str | None = None,
+        color_grading: str | None = None,
+        watermark_text: str | None = None,
+        watermark_position: str | None = None,
+        watermark_opacity: float | None = None,
         **kwargs: Any,
     ) -> Path:
         """Render a rapid 540x960 15fps low-resolution preview MP4 in <6s for dashboard scrub."""
@@ -507,6 +578,24 @@ class FFmpegCompositor:
 
         tmp_dest = dest.with_name(f".tmp_prev_{dest.name}")
 
+        vf_filters = ["scale=540:960:force_original_aspect_ratio=increase,crop=540:960,fps=15"]
+        if color_grading and color_grading != "none":
+            cg = build_color_grading_filter(color_grading)
+            if cg:
+                vf_filters.append(cg)
+        if watermark_text:
+            wm = build_watermark_filter(
+                watermark_text=watermark_text,
+                position=watermark_position or "top_right",
+                opacity=watermark_opacity or 0.65,
+                width=540,
+                height=960,
+            )
+            if wm:
+                vf_filters.append(wm)
+
+        vf_arg = ",".join(vf_filters)
+
         # Fast 540x960 15fps with ultrafast preset
         cmd = [
             self.ffmpeg_binary,
@@ -516,7 +605,7 @@ class FFmpegCompositor:
             "-i",
             str(src),
             "-vf",
-            "scale=540:960:force_original_aspect_ratio=increase,crop=540:960,fps=15",
+            vf_arg,
             "-c:v",
             "libx264",
             "-preset",

@@ -72,20 +72,54 @@ media:
   generate_lowres_preview: true    # Renders 540x960 fast preview for dashboard
 
 subtitles:
-  style_preset: "neon"             # "neon", "minimal", or "pill"
+  style_preset: "neon"             # "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic"
   font_name: "Montserrat ExtraBold"
   font_size: 76
   words_per_burst: 3
   karaoke_highlight: true
   active_color: "&H0000FFFF"       # Vibrant Yellow
   primary_color: "&H00FFFFFF"      # White
+  emphasis_color: "&H00FFF000"     # Cyan / Emphasis Glow
   outline_color: "&H00000000"      # Black
   safe_zone_margin_v: 780          # Centers over 960px boundary
+  karaoke_pop_scale: 118           # Word pop scale percent (e.g. 118 for 1.18x)
+  text_transform: "uppercase"      # "uppercase", "title", "none"
+  position: "center"               # "bottom_safe", "center", "top_safe"
+  hook_banner_style: "neon_box"    # "neon_box", "pill", "minimal", "none"
+  enable_emojis: true              # Segoe UI Emoji inline rendering
+
+branding:
+  layout_mode: "split_50_50"       # "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
+  color_grading: "none"            # "none", "vibrant", "cinematic", "warm", "crisp"
+  watermark_text: null             # Channel watermark text (e.g. "@MyChannel")
+  watermark_position: "top_right"  # "top_right", "top_left", "bottom_right", "bottom_center"
+  watermark_opacity: 0.65          # 0.1 to 1.0
+  progress_bar_position: "seam"    # "top", "bottom", "seam", "none"
+  progress_bar_color: "#FFE600"    # Progress bar hex color
+  progress_bar_height: 12          # Height in pixels (4 to 24)
+  hook_opener: "none"              # "none", "zoom_burst", "flash"
+  outro_cta_text: null             # Optional 2-second outro CTA badge
+
+audio_mastering:
+  voice_boost: true                # Highpass filter + vocal presence EQ boost
+  target_lufs: -14.0               # YouTube Shorts loudness parity target (-24.0 to -9.0 LUFS)
+  bg_music_volume: 0.20            # Background music ducking volume (0.0 to 0.50)
+  enable_sfx: true                 # Event-synced whoosh / pop transition SFX
 
 upload:
   mode: "api"                      # "api" (Data API v3), "studio" (Playwright Edge), "local" (export only)
   default_privacy_status: "public" # "private", "unlisted", "public"
   privacy_status: "unlisted"       # "private", "unlisted", "public"
+  category_id: "24"                # 20: Gaming, 22: People & Blogs, 24: Entertainment, 27: Education, 28: Sci & Tech
+  default_language: "en"           # Video language code
+  altered_content: false           # Synthetic / Altered Media disclosure checkbox
+  custom_tags: []                  # Additional tags for upload
+  auto_pin_comment: false          # Automatically post and pin attribution comment
+  pin_comment_template: "📌 Watch the full video by {channel}: {video_url}"
+  playlist_id: null                # Optional YouTube Playlist ID to append upload to
+  link_related_video: true         # Link related long-form video in YouTube Studio
+  schedule_strategy: "local_scheduler" # "local_scheduler" or "youtube_publish_at"
+  active_channel_profile: "default" # Active multi-channel profile id
   title_template: "{hook} | {channel} #Shorts"
   description_template: |
     {hook}
