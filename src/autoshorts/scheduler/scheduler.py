@@ -14,14 +14,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from autoshorts.core.config import SchedulerConfig, Settings
+from autoshorts.core.config import SchedulerConfig, Settings, UploadConfig
 from autoshorts.core.contracts import Cleaner, Uploader
-from autoshorts.core.exceptions import AutoShortsError
+from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
 from autoshorts.core.models import JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.power_management import allow_system_sleep, prevent_system_sleep
 from autoshorts.scheduler.slot_generator import SlotGenerator
+from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +81,24 @@ class SpreadScheduler:
         self.rng = rng or random.Random()
 
         if scheduler_config is not None:
+            self.settings = None
             self.config = scheduler_config
         elif config is not None:
-            self.config = config.scheduler
+            if hasattr(config, "scheduler"):
+                self.settings = config
+                self.config = config.scheduler
+            else:
+                self.settings = None
+                self.config = config
         else:
+            self.settings = None
             self.config = SchedulerConfig()
+
+        if self.settings and hasattr(self.settings, "upload") and hasattr(self.config, "upload"):
+            try:
+                self.config.upload = self.settings.upload
+            except Exception:
+                pass
 
         self.slot_generator = SlotGenerator(
             config=self.config,
@@ -93,6 +108,15 @@ class SpreadScheduler:
             rng=self.rng,
             clock=self.clock,
         )
+
+    @property
+    def upload_config(self) -> UploadConfig:
+        """Return active UploadConfig from settings or scheduler config."""
+        if self.settings and hasattr(self.settings, "upload"):
+            return self.settings.upload
+        if hasattr(self.config, "upload") and self.config.upload is not None:
+            return self.config.upload
+        return UploadConfig()
 
     # -------------------------------------------------------------------------
     # Core Constraints Checks
@@ -331,10 +355,16 @@ class SpreadScheduler:
             return None
 
         if not self.quota_tracker.can_upload():
-            logger.warning(
-                f"Upload bucket budget unavailable. Fallback: {self.quota_tracker.fallback_mode}."
+            upload_cfg = self.upload_config
+            fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+            if fallback_mode != "studio":
+                logger.warning(
+                    f"Upload bucket budget unavailable. Fallback: {self.quota_tracker.fallback_mode}."
+                )
+                return None
+            logger.info(
+                "Upload bucket quota exhausted, but fallback is 'studio'. Proceeding with Studio dispatch."
             )
-            return None
 
         if not self.uploader:
             logger.error("No Uploader configured for scheduler. Cannot dispatch slot.")
@@ -363,17 +393,78 @@ class SpreadScheduler:
                 self.state_manager.save_job(job)
                 self.state_manager.update_job_status(job_id, JobStatus.UPLOADING)
 
-        try:
-            result = self.uploader.upload(
-                path=video_path,
-                title=title,
-                description=description,
-                tags=tags,
-                privacy=privacy,
-            )
+        upload_cfg = self.upload_config
+        fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+        default_privacy = (
+            getattr(upload_cfg, "default_privacy_status", None)
+            or getattr(upload_cfg, "privacy_status", None)
+            or privacy
+            or "unlisted"
+        )
 
-            # Record quota spend if uploader does not have its own tracker
-            if getattr(self.uploader, "quota_tracker", None) is None:
+        uploader_to_use = self.uploader
+        fell_back_to_studio = False
+        effective_privacy = privacy
+
+        is_yt_api = (
+            isinstance(self.uploader, YouTubeApiUploader)
+            or type(self.uploader).__name__ == "YouTubeApiUploader"
+        )
+
+        # Pre-upload check: if API quota exhausted and fallback is studio
+        if is_yt_api and not self.quota_tracker.can_upload() and fallback_mode == "studio":
+            logger.warning(
+                "YouTube API quota exhausted (can_upload is False) for job %s. "
+                "Falling back to YouTube Studio automation.",
+                job_id,
+            )
+            self.state_manager.record_stage_start(job_id, "studio_fallback")
+            uploader_to_use = PlaywrightStudioUploader(config=self.settings or self.config)
+            fell_back_to_studio = True
+            effective_privacy = default_privacy
+
+        try:
+            try:
+                kwargs: dict[str, Any] = {
+                    "path": video_path,
+                    "title": title,
+                    "description": description,
+                    "tags": tags,
+                    "privacy": effective_privacy,
+                }
+                if isinstance(uploader_to_use, PlaywrightStudioUploader):
+                    kwargs["privacy_status"] = effective_privacy
+                result = uploader_to_use.upload(**kwargs)
+            except Exception as up_err:
+                is_quota_err = isinstance(up_err, QuotaExhaustedError) or (
+                    "quota" in str(up_err).lower()
+                    or "quotaexceeded" in str(up_err).lower()
+                    or "403" in str(up_err)
+                )
+                if is_quota_err and fallback_mode == "studio" and not fell_back_to_studio:
+                    logger.warning(
+                        "Encountered quota exhaustion error (%s) for job %s. "
+                        "Falling back to YouTube Studio automation.",
+                        up_err,
+                        job_id,
+                    )
+                    self.state_manager.record_stage_start(job_id, "studio_fallback")
+                    uploader_to_use = PlaywrightStudioUploader(config=self.settings or self.config)
+                    fell_back_to_studio = True
+                    effective_privacy = default_privacy
+                    result = uploader_to_use.upload(
+                        path=video_path,
+                        title=title,
+                        description=description,
+                        tags=tags,
+                        privacy=effective_privacy,
+                        privacy_status=effective_privacy,
+                    )
+                else:
+                    raise
+
+            # Record quota spend if API quota was consumed
+            if not fell_back_to_studio and getattr(uploader_to_use, "quota_tracker", None) is None:
                 self.quota_tracker.record_upload(1)
 
             # Verify if applicable
@@ -381,23 +472,31 @@ class SpreadScheduler:
             if job and job.status == JobStatus.UPLOADING:
                 self.state_manager.update_job_status(job_id, JobStatus.VERIFYING)
 
-            verified = self.uploader.verify(result.video_id)
+            verified = uploader_to_use.verify(result.video_id)
             if verified:
                 result.verified = True
-                if getattr(self.uploader, "quota_tracker", None) is None:
+                if (
+                    not fell_back_to_studio
+                    and getattr(uploader_to_use, "quota_tracker", None) is None
+                ):
                     self.quota_tracker.record_general(1)
 
+            if fell_back_to_studio:
+                if isinstance(result.raw_response, dict):
+                    result.raw_response["fallback"] = "studio_automation"
+                    result.raw_response["fallback_reason"] = "quota_exhausted"
+
             # Mark slot and job completed
+            quota_spent = 0 if fell_back_to_studio else 1
             self.state_manager.update_scheduled_slot_status(
                 job_id=job_id,
                 status="COMPLETED",
                 youtube_video_id=result.video_id,
-                quota_spent=1,
+                quota_spent=quota_spent,
             )
             job = self.state_manager.get_job(job_id)
-            if job and job.status == JobStatus.VERIFYING:
-                self.state_manager.update_job_status(job_id, JobStatus.COMPLETED)
-            elif job and job.status != JobStatus.COMPLETED:
+            if job:
+                job.upload_result = result
                 job.status = JobStatus.COMPLETED
                 self.state_manager.save_job(job)
 

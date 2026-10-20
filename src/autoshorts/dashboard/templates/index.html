@@ -40,36 +40,36 @@
       <!-- Upload Bucket -->
       <div class="card metric-card">
         <div class="metric-header">
-          <span class="metric-title">Upload Quota Bucket</span>
+          <span class="metric-title">YouTube API Uploads</span>
           <span class="metric-tag">100 / day</span>
         </div>
-        <div class="metric-value" id="upload-spend">0 <span class="metric-sub">/ 100 calls</span></div>
+        <div class="metric-value" id="upload-spend">0 <span class="metric-sub">/ 100 free uploads today</span></div>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="upload-bar" style="width: 0%;"></div>
         </div>
-        <div class="metric-footer" id="upload-remaining">100 remaining today (PT)</div>
+        <div class="metric-footer" id="upload-remaining">100 free uploads remaining today</div>
       </div>
 
       <!-- General Bucket -->
       <div class="card metric-card">
         <div class="metric-header">
-          <span class="metric-title">General Quota Pool</span>
+          <span class="metric-title">API Calls Pool</span>
           <span class="metric-tag">10,000 / day</span>
         </div>
         <div class="metric-value" id="general-spend">0 <span class="metric-sub">/ 10,000 units</span></div>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="general-bar" style="width: 0%;"></div>
         </div>
-        <div class="metric-footer" id="general-remaining">10,000 remaining</div>
+        <div class="metric-footer" id="general-remaining">10,000 units remaining</div>
       </div>
 
       <!-- Rolling Hour Rate Limit Gauge -->
       <div class="card metric-card rate-limit-card">
         <div class="metric-header">
-          <span class="metric-title">Rolling Rate Limit</span>
+          <span class="metric-title">Hourly Anti-Spam Pacing</span>
           <span class="metric-tag" id="rolling-rate-tag">7 / hr cap</span>
         </div>
-        <div class="metric-value" id="rolling-rate-val">0 <span class="metric-sub">/ 7 uploads</span></div>
+        <div class="metric-value" id="rolling-rate-val">0 <span class="metric-sub">/ 7 uploads this hour</span></div>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill gauge-fill" id="rolling-rate-bar" style="width: 0%;"></div>
         </div>
@@ -79,15 +79,15 @@
       <!-- Daily Cap & PT Reset Clock -->
       <div class="card metric-card scheduler-card">
         <div class="metric-header">
-          <span class="metric-title">Scheduler &amp; PT Reset</span>
+          <span class="metric-title">Upload Pacing &amp; Schedule</span>
           <span class="metric-tag" id="scheduler-status-tag">ACTIVE</span>
         </div>
-        <div class="countdown-row">
-          <span class="countdown-clock" id="pt-countdown-clock">--:--:--</span>
-          <span class="countdown-label">until PT reset</span>
+        <div class="pacing-status-row">
+          <div class="pacing-status-main" id="pacing-status-main">Queue Idle</div>
+          <div class="pacing-status-sub" id="pacing-status-sub">No pending videos waiting to upload</div>
         </div>
         <div class="metric-sub-line">
-          <span id="daily-cap-val">0 <span class="metric-sub">/ 50 uploaded today</span></span>
+          <span id="daily-cap-val">Daily Uploads: 0 / 50 • Reset in --h --m</span>
         </div>
         <div class="scheduler-actions">
           <button id="scheduler-toggle-btn" class="btn btn-secondary btn-sm" onclick="toggleScheduler()">
@@ -180,6 +180,37 @@
             </button>
           </div>
         </div>
+
+        <!-- Gameplay Backgrounds Panel -->
+        <div class="card gameplay-card">
+          <div class="card-title">
+            <span>🎮 Gameplay Backgrounds</span>
+            <span class="gameplay-badge" id="bg-clips-indicator">Minecraft: 0 clips | Subway Surfers: 0 clips</span>
+          </div>
+          <div class="gameplay-content">
+            <div class="gameplay-actions">
+              <button id="download-bg-btn" class="btn btn-secondary btn-sm" onclick="downloadFreeGameplayClips()">
+                📥 Auto-Download Free Gameplay Clips
+              </button>
+            </div>
+            <!-- File Dropzone -->
+            <div class="dropzone" id="bg-dropzone" ondragover="handleBgDragOver(event)" ondragleave="handleBgDragLeave(event)" ondrop="handleBgDrop(event)">
+              <div class="dropzone-inner">
+                <span class="dropzone-icon">📁</span>
+                <span class="dropzone-prompt">Drag &amp; drop MP4 clips here, or <label for="bg-file-input" class="file-browse-link">browse files</label></span>
+                <input type="file" id="bg-file-input" accept="video/mp4,video/x-m4v,video/*" multiple onchange="handleBgFileSelect(event)" style="display: none;">
+                <div class="dropzone-category-row">
+                  <label for="bg-upload-category">Target Category:</label>
+                  <select id="bg-upload-category" class="inline-select">
+                    <option value="minecraft">Minecraft</option>
+                    <option value="subway">Subway Surfers</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div id="bg-upload-feedback" class="feedback"></div>
+          </div>
+        </div>
       </section>
 
       <!-- Right Column: Job Queue & Active Progress -->
@@ -248,6 +279,48 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" onclick="closeStageModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edge Sign-In Modal -->
+  <div id="edge-login-modal" class="modal-backdrop" onclick="closeEdgeLoginModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="edge-modal-title">🔑 Microsoft Edge YouTube Studio Sign-In</h3>
+        <button class="btn-close" onclick="closeEdgeLoginModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="edge-modal-body">
+        <div class="edge-login-status-container">
+          <div class="edge-login-icon-area">
+            <span class="edge-spin-icon" id="edge-status-spinner">🌐</span>
+          </div>
+          <div class="edge-login-info">
+            <p id="edge-session-desc" class="modal-instructions">
+              Opening Microsoft Edge... Please log in to your Google Account. Once you see YouTube Studio, close the browser window or click 'Done'. Your login session is saved permanently in <code>data/edge_profile</code> on your PC.
+            </p>
+            <div id="edge-live-status-badge" class="badge edge-status-badge">
+              <span class="dot yellow" id="edge-status-dot"></span> <span id="edge-status-text">Opening Microsoft Edge...</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="edge-login-error" class="edge-error-box" style="display: none;">
+          <div class="edge-error-title">⚠️ Sign-In Error</div>
+          <p id="edge-error-message"></p>
+          <div class="edge-troubleshooting">
+            <strong>Troubleshooting Steps:</strong>
+            <ul>
+              <li>Ensure Microsoft Edge is installed on your machine.</li>
+              <li>Close any existing Edge windows: <code>taskkill /F /IM msedge.exe</code>.</li>
+              <li>Or run <code>.venv\Scripts\autoshorts edge-login</code> directly from PowerShell.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" id="edge-modal-footer">
+        <button id="edge-check-status-btn" class="btn btn-secondary btn-sm" onclick="checkEdgeLoginNow()">🔍 Check Login Status</button>
+        <button class="btn btn-primary btn-sm" onclick="closeEdgeLoginModal()">Done</button>
       </div>
     </div>
   </div>

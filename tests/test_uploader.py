@@ -13,7 +13,11 @@ from autoshorts.core.exceptions import UploadError
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.uploader.local_exporter import LocalExportUploader
-from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+from autoshorts.uploader.studio_playwright import (
+    LOGIN_SESSION_STATE,
+    PlaywrightStudioUploader,
+    update_login_session_state,
+)
 from autoshorts.uploader.verifier import YouTubeVerifier
 from autoshorts.uploader.youtube_api import (
     UploadFailedError,
@@ -396,3 +400,122 @@ def test_studio_playwright_verify():
 
     # 4. Empty ID
     assert uploader.verify("") is False
+
+
+def test_studio_check_login_status_missing_profile(tmp_path: Path):
+    """Verify check_login_status returns signed_in=False when profile dir does not exist."""
+    uploader = PlaywrightStudioUploader(edge_profile_dir=tmp_path / "nonexistent_profile")
+    res = uploader.check_login_status()
+    assert res == {"signed_in": False, "channel_name": None}
+
+
+def test_studio_check_login_status_redirect_accounts_google():
+    """Verify check_login_status returns signed_in=False when redirected to accounts.google.com."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.url = "https://accounts.google.com/ServiceLogin?service=youtube"
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    res = uploader.check_login_status()
+    assert res == {"signed_in": False, "channel_name": None}
+
+
+def test_studio_check_login_status_signed_in_with_extracted_channel_name():
+    """Verify check_login_status returns signed_in=True with extracted creator/channel name."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.url = "https://studio.youtube.com/channel/UC12345"
+
+    mock_loc = MagicMock()
+    mock_loc.first = mock_loc
+    mock_loc.is_visible.return_value = True
+    mock_loc.inner_text.return_value = "Tech Creator HQ"
+    mock_page.locator.return_value = mock_loc
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    res = uploader.check_login_status()
+    assert res == {"signed_in": True, "channel_name": "Tech Creator HQ"}
+
+
+def test_studio_check_login_status_signed_in_fallback_active_creator():
+    """Verify check_login_status returns signed_in=True and 'Active Creator' fallback."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.url = "https://studio.youtube.com"
+
+    mock_loc = MagicMock()
+    mock_loc.first = mock_loc
+    mock_loc.is_visible.return_value = True
+    mock_loc.inner_text.return_value = ""
+    mock_loc.get_attribute.return_value = ""
+    mock_page.locator.return_value = mock_loc
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory)
+
+    res = uploader.check_login_status()
+    assert res == {"signed_in": True, "channel_name": "Active Creator"}
+
+
+def test_studio_open_login_session_updates_login_session_state():
+    """Verify open_login_session updates LOGIN_SESSION_STATE to running then signed_in."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.is_closed.return_value = False
+    mock_page.url = "https://studio.youtube.com"
+
+    mock_loc = MagicMock()
+    mock_loc.first = mock_loc
+    mock_loc.is_visible.return_value = True
+    mock_loc.inner_text.return_value = "Channel Alpha"
+    mock_page.locator.return_value = mock_loc
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory, headless=False)
+
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+    success = uploader.open_login_session(timeout_sec=5.0)
+
+    assert success is True
+    assert LOGIN_SESSION_STATE["status"] == "signed_in"
+    assert LOGIN_SESSION_STATE["channel_name"] == "Channel Alpha"
+    assert "Successfully signed in" in LOGIN_SESSION_STATE["message"]
+
+
+def test_studio_open_login_session_window_closed_state():
+    """Verify open_login_session updates LOGIN_SESSION_STATE to not_signed_in on early close."""
+    mock_ctx = MagicMock()
+    mock_page = MagicMock()
+    mock_ctx.pages = [mock_page]
+    mock_page.is_closed.return_value = True
+
+    factory = MagicMock(return_value=mock_ctx)
+    uploader = PlaywrightStudioUploader(context_factory=factory, headless=False)
+
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+    success = uploader.open_login_session(timeout_sec=5.0)
+
+    assert success is False
+    assert LOGIN_SESSION_STATE["status"] == "not_signed_in"
+    assert "Edge closed before sign-in completed" in LOGIN_SESSION_STATE["message"]
+
+
+def test_studio_open_login_session_error_state():
+    """Verify open_login_session updates LOGIN_SESSION_STATE to error on browser exception."""
+    factory = MagicMock(side_effect=RuntimeError("Edge crash mock"))
+    uploader = PlaywrightStudioUploader(context_factory=factory, headless=False)
+
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+    success = uploader.open_login_session(timeout_sec=5.0)
+
+    assert success is False
+    assert LOGIN_SESSION_STATE["status"] == "error"
+    assert "Edge crash mock" in LOGIN_SESSION_STATE["error"]

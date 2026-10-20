@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from autoshorts.core.config import Settings, UploadConfig
-from autoshorts.core.exceptions import AutoShortsError
+from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
 from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import get_data_dir
 from autoshorts.quota.quota_tracker import QuotaTracker
@@ -156,6 +156,13 @@ class YouTubeApiUploader:
         if not target_path.is_file():
             raise FileNotFoundError(f"Video file not found for upload: {target_path}")
 
+        if self.quota_tracker is not None and not self.quota_tracker.can_upload():
+            raise QuotaExhaustedError(
+                bucket="upload",
+                spent=self.quota_tracker.get_upload_spend(),
+                limit=self.quota_tracker.daily_upload_budget,
+            )
+
         # Ensure title contains #Shorts and does not exceed 100 characters
         final_title = title
         if "#shorts" not in final_title.lower():
@@ -210,6 +217,22 @@ class YouTubeApiUploader:
                     logger.debug(f"Resumable upload progress: {pct}%")
                 retry_count = 0  # Reset retry counter on successful chunk
             except (HttpError, OSError, ConnectionError) as ex:
+                err_str = str(ex).lower()
+                is_quota = False
+                if HttpError is not None and isinstance(ex, HttpError):
+                    if hasattr(ex, "resp") and getattr(ex.resp, "status", None) == 403:
+                        is_quota = True
+                if (
+                    "quotaexceeded" in err_str
+                    or "quota exceeded" in err_str
+                    or "daily limit exceeded" in err_str
+                ):
+                    is_quota = True
+
+                if is_quota:
+                    logger.warning("YouTube API quota exceeded detected: %s", ex)
+                    raise QuotaExhaustedError(f"YouTube API quota exceeded: {ex}") from ex
+
                 retry_count += 1
                 if retry_count > self.max_retries:
                     logger.error(f"Upload failed after {self.max_retries} chunk retries: {ex}")

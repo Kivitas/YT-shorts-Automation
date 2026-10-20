@@ -66,3 +66,7 @@ assets/sfx/*
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local Windows Scripts (created locally to avoid SmartScreen prompts)
+*.bat
+

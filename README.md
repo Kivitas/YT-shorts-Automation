@@ -51,9 +51,116 @@ For the exhaustive engineering specification and architecture, see **[PLAN.md](P
 
 ## Quick Start (Windows One-Click Launcher)
 
+> [!NOTE]
+> **Why `start.bat` is excluded from git:**
+> Windows SmartScreen and security software often flag downloaded `.bat` files from the internet as suspicious. To avoid security prompts, create your own local `start.bat` file in this directory.
+
+### Creating Your Local `start.bat` (Step-by-Step)
+
+1. In this project folder, right-click an empty space and choose **New** &rarr; **Text Document**.
+2. Rename the file to **`start.bat`** (ensure file name extensions are visible in File Explorer view settings so it is named `start.bat` rather than `start.bat.txt`).
+3. Right-click **`start.bat`** and click **Edit** (or open it with Notepad).
+4. Copy and paste the following self-healing launcher script into the file and save:
+
+```bat
+@echo off
+setlocal enabledelayedexpansion
+
+title AutoShorts Launcher
+
+echo =====================================================================
+echo                Starting AutoShorts Web Dashboard
+echo =====================================================================
+echo Dashboard URL: http://localhost:8765
+echo Preferred Browser: Microsoft Edge
+echo.
+
+cd /d "%~dp0"
+
+:: 1. Detect uv or python
+set "UV_CMD="
+where uv >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    set "UV_CMD=uv"
+) else if exist "%USERPROFILE%\.local\bin\uv.exe" (
+    set "UV_CMD=%USERPROFILE%\.local\bin\uv.exe"
+)
+
+where python >nul 2>&1
+set "HAS_PYTHON=%ERRORLEVEL%"
+
+:: 2. Check if .venv exists. If not, create it
+if not exist ".venv\Scripts\python.exe" (
+    echo [INFO] Virtual environment not found. Initializing .venv...
+    if defined UV_CMD (
+        echo [INFO] Creating virtual environment using uv...
+        "%UV_CMD%" venv --python 3.12 >nul 2>&1
+        if not exist ".venv\Scripts\python.exe" (
+            "%UV_CMD%" venv
+        )
+    ) else if %HAS_PYTHON% equ 0 (
+        echo [INFO] Creating virtual environment using Python venv...
+        python -m venv .venv
+    ) else (
+        echo [ERROR] Neither Python 3.11+ nor uv was found on your system PATH!
+        echo Please install Python from https://www.python.org/ or uv from https://astral.sh/uv
+        echo Ensure "Add Python to PATH" is checked during setup.
+        pause
+        exit /b 1
+    )
+
+    if not exist ".venv\Scripts\python.exe" (
+        echo [ERROR] Failed to initialize .venv virtual environment.
+        pause
+        exit /b 1
+    )
+    echo [INFO] Virtual environment created successfully.
+)
+
+:: 3. Check if core dependencies are installed
+".venv\Scripts\python.exe" -c "import autoshorts, playwright, imageio_ffmpeg" >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo [INFO] Core dependencies missing or incomplete. Installing packages...
+    if defined UV_CMD (
+        "%UV_CMD%" pip install -e .
+    ) else (
+        if not exist ".venv\Scripts\pip.exe" (
+            echo [INFO] Bootstrapping pip...
+            ".venv\Scripts\python.exe" -m ensurepip --default-pip >nul 2>&1
+        )
+        ".venv\Scripts\python.exe" -m pip install -e .
+    )
+
+    if %ERRORLEVEL% neq 0 (
+        echo [ERROR] Dependency installation failed. Please check your network connection.
+        pause
+        exit /b 1
+    )
+    echo [INFO] Dependencies installed successfully.
+)
+
+:: 4. Open browser to http://localhost:8765
+echo [INFO] Opening browser to http://localhost:8765 ...
+start "" "http://localhost:8765"
+
+:: 5. Launch AutoShorts
+echo [INFO] Launching AutoShorts server...
+".venv\Scripts\python.exe" run.py %*
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [WARNING] AutoShorts exited with error code %ERRORLEVEL%.
+    pause
+)
+
+endlocal
+```
+
+### Running AutoShorts
+
 1. **One-Click Launch**:
-   - Double-click **`start.bat`** in the repository root.
-   - It automatically activates `.venv\Scripts\python.exe` (or falls back to `uv run python` / system `python`), starts the local web server, and launches the dashboard in Microsoft Edge at **`http://localhost:8765`**.
+   - Double-click **`start.bat`**.
+   - It automatically checks for dependencies, verifies/creates `.venv`, opens **`http://localhost:8765`** in your default browser, and launches the web dashboard.
 
 2. **One-Time YouTube Studio Browser Sign-In**:
    - For zero-quota browser automation uploads (`upload.mode: studio`), run:

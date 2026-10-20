@@ -41,6 +41,26 @@ from autoshorts.media.encoder_probe import EncoderInfo, probe_encoder
 logger = logging.getLogger(__name__)
 
 
+def get_ffmpeg_path() -> str:
+    """Resolve FFmpeg executable path.
+
+    Checks system PATH first; if not found, checks for bundled executable from
+    the imageio_ffmpeg package. Falls back to 'ffmpeg'.
+    """
+    resolved = shutil.which("ffmpeg")
+    if resolved:
+        return resolved
+    try:
+        import imageio_ffmpeg
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and Path(exe).is_file():
+            return str(exe)
+    except Exception:
+        pass
+    return "ffmpeg"
+
+
 def probe_media_duration(media_path: Path | str, default: float = 45.0) -> float:
     """Query duration of a media file in seconds using ffprobe."""
     target = Path(media_path).resolve()
@@ -123,7 +143,8 @@ def extract_16khz_mono_wav(
     if not src.is_file():
         raise FileNotFoundError(f"Input file not found for WAV extraction: {src}")
 
-    cmd = [ffmpeg_binary, "-y"]
+    target_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+    cmd = [target_bin, "-y"]
     if start_sec is not None and start_sec > 0:
         cmd.extend(["-ss", f"{start_sec:.3f}"])
     cmd.extend(["-i", str(src)])
@@ -261,7 +282,7 @@ class FFmpegCompositor:
         ffmpeg_binary: str = "ffmpeg",
     ):
         self.config = config or load_config()
-        self.ffmpeg_binary = ffmpeg_binary
+        self.ffmpeg_binary = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
         self.encoder_preferred = encoder_preferred or self.config.media.preferred_encoder
 
     def _get_encoder(self) -> EncoderInfo:
@@ -535,6 +556,7 @@ __all__ = [
     "FFmpegCompositor",
     "FasterWhisperTranscriber",
     "extract_16khz_mono_wav",
+    "get_ffmpeg_path",
     "has_audio_stream",
     "probe_media_duration",
     "run_command_with_cleanup",

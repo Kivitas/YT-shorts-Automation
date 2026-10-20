@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from autoshorts.core.exceptions import ConfigError
@@ -70,6 +70,39 @@ class ActiveWindowConfig(BaseModel):
     timezone: str = "local"
 
 
+class UploadConfig(BaseModel):
+    """YouTube upload protocol, visibility, and attribution templates."""
+
+    mode: Literal["api", "studio", "local"] = "api"
+    privacy_status: Literal["private", "unlisted", "public"] = "unlisted"
+    default_privacy_status: str = "unlisted"
+    quota_exhausted_fallback: str = "studio"
+    title_template: str = "{hook} | {channel} #Shorts"
+    description_template: str = (
+        "{hook}\n\n"
+        "---\n"
+        "📌 ORIGINAL SOURCE ATTRIBUTION:\n"
+        "This video is an educational commentary clip excerpted from:\n"
+        'Video Title: "{title}"\n'
+        "Original Creator: {channel}\n"
+        "Original Video: {video_url}\n"
+        "Channel Link: {channel_url}\n\n"
+        "All rights and intellectual property belong to {channel}. If you are the copyright owner "
+        "and wish for this clip to be removed or modified, please contact the channel owner.\n\n"
+        "#Shorts #Podcasts #Education {hashtags}"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_privacy_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "default_privacy_status" in data and "privacy_status" not in data:
+                data["privacy_status"] = data["default_privacy_status"]
+            elif "privacy_status" in data and "default_privacy_status" not in data:
+                data["default_privacy_status"] = data["privacy_status"]
+        return data
+
+
 class SchedulerConfig(BaseModel):
     """Daily Cap and Persistent Spread Scheduler configuration."""
 
@@ -84,6 +117,7 @@ class SchedulerConfig(BaseModel):
     catch_up_policy: Literal["reschedule_respect_rate_limit", "drop_expired"] = (
         "reschedule_respect_rate_limit"
     )
+    upload: UploadConfig = Field(default_factory=UploadConfig)
 
 
 class QuotaConfig(BaseModel):
@@ -133,27 +167,6 @@ class SubtitlesConfig(BaseModel):
     primary_color: str = "&H00FFFFFF"
     outline_color: str = "&H00000000"
     safe_zone_margin_v: int = 780
-
-
-class UploadConfig(BaseModel):
-    """YouTube upload protocol, visibility, and attribution templates."""
-
-    mode: Literal["api", "studio", "local"] = "api"
-    privacy_status: Literal["private", "unlisted", "public"] = "unlisted"
-    title_template: str = "{hook} | {channel} #Shorts"
-    description_template: str = (
-        "{hook}\n\n"
-        "---\n"
-        "📌 ORIGINAL SOURCE ATTRIBUTION:\n"
-        "This video is an educational commentary clip excerpted from:\n"
-        'Video Title: "{title}"\n'
-        "Original Creator: {channel}\n"
-        "Original Video: {video_url}\n"
-        "Channel Link: {channel_url}\n\n"
-        "All rights and intellectual property belong to {channel}. If you are the copyright owner "
-        "and wish for this clip to be removed or modified, please contact the channel owner.\n\n"
-        "#Shorts #Podcasts #Education {hashtags}"
-    )
 
 
 class CleanupConfig(BaseModel):

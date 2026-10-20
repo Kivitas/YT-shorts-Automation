@@ -736,6 +736,23 @@ input:checked + .slider:before {
   background: linear-gradient(90deg, var(--accent-purple), var(--accent-cyan));
 }
 
+.pacing-status-row {
+  margin-bottom: 0.4rem;
+}
+
+.pacing-status-main {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  letter-spacing: -0.01em;
+  margin-bottom: 0.15rem;
+}
+
+.pacing-status-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
 .countdown-row {
   display: flex;
   align-items: baseline;
@@ -764,6 +781,80 @@ input:checked + .slider:before {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-bottom: 0.5rem;
+}
+
+/* Gameplay Backgrounds Panel */
+.gameplay-card {
+  margin-top: 1rem;
+}
+
+.gameplay-badge {
+  font-size: 0.75rem;
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  background: var(--bg-input);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.gameplay-actions {
+  margin-bottom: 0.75rem;
+}
+
+.dropzone {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  background-color: var(--bg-input);
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.dropzone.dragover {
+  border-color: var(--accent-cyan);
+  background-color: rgba(0, 255, 255, 0.05);
+}
+
+.dropzone-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dropzone-icon {
+  font-size: 1.5rem;
+}
+
+.dropzone-prompt {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.file-browse-link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.dropzone-category-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+}
+
+.inline-select {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
 }
 
 /* Live SSE Log Console */
@@ -931,4 +1022,108 @@ input:checked + .slider:before {
 @keyframes slide-in {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+
+/* Edge Sign-In Modal Styles */
+#edge-login-modal .modal-body {
+  background-color: var(--bg-card);
+  display: block;
+  padding: 1.5rem;
+}
+
+.edge-login-status-container {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.edge-login-icon-area {
+  font-size: 2.2rem;
+  line-height: 1;
+  padding-top: 0.2rem;
+}
+
+.edge-login-info h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  color: var(--text-main);
+}
+
+.modal-instructions {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  line-height: 1.4;
+}
+
+.edge-status-badge {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dot.yellow {
+  background-color: var(--accent-yellow);
+}
+
+.edge-error-box {
+  background-color: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--accent-red);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-top: 1rem;
+  color: var(--text-main);
+}
+
+.edge-error-title {
+  font-weight: 700;
+  color: var(--accent-red);
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+}
+
+.edge-error-box p {
+  font-size: 0.82rem;
+  margin-bottom: 0.75rem;
+  color: #ffb4b0;
+  word-break: break-word;
+}
+
+.edge-troubleshooting {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  border-top: 1px solid rgba(248, 81, 73, 0.3);
+  padding-top: 0.6rem;
+}
+
+.edge-troubleshooting ul {
+  margin-left: 1.25rem;
+  margin-top: 0.3rem;
+}
+
+.edge-troubleshooting li {
+  margin-bottom: 0.3rem;
+}
+
+.edge-troubleshooting code {
+  background-color: var(--bg-input);
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.btn-success {
+  background-color: var(--accent-green) !important;
+  color: #0b0e14 !important;
+  border-color: var(--accent-green) !important;
+  font-weight: 600;
 }

@@ -163,38 +163,98 @@ def find_user_background_videos(
     assets_dir: Path | None = None,
 ) -> list[Path]:
     """Find all valid video files in assets/backgrounds/<category>/."""
+    from autoshorts.media.background_fetcher import normalize_category
+
     base = assets_dir or get_assets_dir()
-    bg_dir = base / "backgrounds" / category
+    clean_cat = normalize_category(category)
+    bg_dir = base / "backgrounds" / clean_cat
     if not bg_dir.is_dir():
-        return []
+        literal_dir = base / "backgrounds" / category
+        if not literal_dir.is_dir():
+            return []
+        bg_dir = literal_dir
 
     valid_extensions = {".mp4", ".mov", ".mkv", ".webm"}
-    return [p for p in bg_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_extensions]
+    return [
+        p
+        for p in bg_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in valid_extensions and p.stat().st_size > 0
+    ]
 
 
 def pick_background_asset(
     category: str = "minecraft",
     assets_dir: Path | None = None,
     total_clip_duration: float = 45.0,
+    auto_fetch: bool = True,
 ) -> tuple[Path | None, float]:
     """Pick a user background video and compute a random start offset.
+
+    When category is selected (or 'auto') and no video files exist, automatically
+    invokes ensure_backgrounds_available(category) to download a clip on the fly
+    before falling back to procedural lavfi gradient.
 
     Returns:
         (video_path, start_offset_seconds)
         If no user video is found, returns (None, 0.0) signaling procedural lavfi fallback.
     """
-    candidates = find_user_background_videos(category=category, assets_dir=assets_dir)
+    from autoshorts.media.background_fetcher import (
+        ensure_backgrounds_available,
+        normalize_category,
+    )
+
+    raw_cat = (category or "minecraft").strip().lower()
+
+    if raw_cat == "auto":
+        # Check if any category already has candidates
+        mc = find_user_background_videos(category="minecraft", assets_dir=assets_dir)
+        sw = find_user_background_videos(category="subway", assets_dir=assets_dir)
+        if mc and not sw:
+            target_cat = "minecraft"
+            candidates = mc
+        elif sw and not mc:
+            target_cat = "subway"
+            candidates = sw
+        elif mc and sw:
+            target_cat = random.choice(["minecraft", "subway"])
+            candidates = mc if target_cat == "minecraft" else sw
+        else:
+            target_cat = "minecraft"
+            candidates = []
+    else:
+        target_cat = normalize_category(raw_cat)
+        candidates = find_user_background_videos(category=target_cat, assets_dir=assets_dir)
+
+    if not candidates and auto_fetch:
+        try:
+            logger.info(
+                "No background video found for '%s'. Attempting on-demand auto-fetch...",
+                target_cat,
+            )
+            ensure_backgrounds_available(
+                category=target_cat,
+                min_clips=1,
+                assets_dir=assets_dir,
+            )
+            candidates = find_user_background_videos(category=target_cat, assets_dir=assets_dir)
+        except Exception as exc:
+            logger.warning(
+                "Failed to auto-fetch background clips for category '%s': %s",
+                target_cat,
+                exc,
+            )
+
     if not candidates:
         logger.warning(
             "No background videos found in assets/backgrounds/%s. Falling back to lavfi background.",
-            category,
+            target_cat,
         )
         return None, 0.0
 
     chosen = random.choice(candidates)
     # Estimate or probe duration if possible, otherwise use a safe random start
     # Background videos are typically 5 to 30 minutes long.
-    # We choose a random start between 0 and 600s, wrapped safely.
+    # We choose a random start between 0 and 180s, wrapped safely.
     random_offset = random.uniform(0.0, 180.0)
     return chosen, random_offset
 

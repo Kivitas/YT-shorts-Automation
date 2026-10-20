@@ -106,13 +106,21 @@ class QuotaExhaustedError(AutoShortsError):
     """Raised when a YouTube Data API quota bucket is exhausted."""
 
     def __init__(
-        self, bucket: str, spent: int, limit: int, reset_time_pt: str | None = None
+        self,
+        bucket: str = "upload",
+        spent: int = 100,
+        limit: int = 100,
+        reset_time_pt: str | None = None,
     ) -> None:
-        msg = f"YouTube API quota bucket '{bucket}' exhausted: {spent}/{limit} calls used"
-        if reset_time_pt:
-            msg += f" (resets at {reset_time_pt} PT)"
+        if spent == 100 and limit == 100 and (" " in bucket or "quota" in bucket.lower()):
+            msg = bucket
+            self.bucket = "upload"
+        else:
+            msg = f"YouTube API quota bucket '{bucket}' exhausted: {spent}/{limit} calls used"
+            if reset_time_pt:
+                msg += f" (resets at {reset_time_pt} PT)"
+            self.bucket = bucket
         super().__init__(msg)
-        self.bucket = bucket
         self.spent = spent
         self.limit = limit
         self.reset_time_pt = reset_time_pt

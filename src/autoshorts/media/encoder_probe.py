@@ -10,6 +10,7 @@ import logging
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -52,9 +53,30 @@ DEFAULT_QSV_ENCODER = EncoderInfo(
 _PROBE_CACHE: dict[str, EncoderInfo] = {}
 
 
+def get_ffmpeg_path() -> str:
+    """Resolve FFmpeg executable path.
+
+    Checks system PATH first; if not found, checks for bundled executable from
+    the imageio_ffmpeg package. Falls back to 'ffmpeg'.
+    """
+    resolved = shutil.which("ffmpeg")
+    if resolved:
+        return resolved
+    try:
+        import imageio_ffmpeg
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and Path(exe).is_file():
+            return str(exe)
+    except Exception:
+        pass
+    return "ffmpeg"
+
+
 def is_ffmpeg_available(ffmpeg_binary: str = "ffmpeg") -> bool:
     """Return True if the FFmpeg binary is found and executable."""
-    resolved = shutil.which(ffmpeg_binary)
+    target = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+    resolved = shutil.which(target) or (target if Path(target).is_file() else None)
     if not resolved:
         return False
     try:
@@ -97,8 +119,9 @@ def run_tiny_test_encode(
     Uses a 256x256 lavfi test pattern to verify that the codec initializes and
     encodes without error on the host graphics driver/hardware.
     """
+    target_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
     cmd = [
-        ffmpeg_binary,
+        target_bin,
         "-y",
         "-v",
         "error",
@@ -142,11 +165,12 @@ def probe_encoder(
 
     Results are cached per preferred setting unless force_refresh is True.
     """
-    cache_key = f"{preferred}:{ffmpeg_binary}"
+    resolved_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+    cache_key = f"{preferred}:{resolved_bin}"
     if not force_refresh and cache_key in _PROBE_CACHE:
         return _PROBE_CACHE[cache_key]
 
-    if not is_ffmpeg_available(ffmpeg_binary):
+    if not is_ffmpeg_available(resolved_bin):
         logger.warning(
             "FFmpeg executable not found on PATH. Falling back to default CPU encoder configuration."
         )
@@ -158,7 +182,7 @@ def probe_encoder(
         verified = run_tiny_test_encode(
             DEFAULT_CPU_ENCODER.codec,
             DEFAULT_CPU_ENCODER.extra_args,
-            ffmpeg_binary=ffmpeg_binary,
+            ffmpeg_binary=resolved_bin,
             timeout_sec=timeout_sec,
         )
         info = EncoderInfo(
@@ -175,7 +199,7 @@ def probe_encoder(
     qsv_success = run_tiny_test_encode(
         DEFAULT_QSV_ENCODER.codec,
         DEFAULT_QSV_ENCODER.extra_args,
-        ffmpeg_binary=ffmpeg_binary,
+        ffmpeg_binary=resolved_bin,
         timeout_sec=timeout_sec,
     )
     if qsv_success:
@@ -197,7 +221,7 @@ def probe_encoder(
     x264_verified = run_tiny_test_encode(
         DEFAULT_CPU_ENCODER.codec,
         DEFAULT_CPU_ENCODER.extra_args,
-        ffmpeg_binary=ffmpeg_binary,
+        ffmpeg_binary=resolved_bin,
         timeout_sec=timeout_sec,
     )
     info = EncoderInfo(

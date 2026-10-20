@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import get_log_stream_handler
 from autoshorts.core.models import Job
-from autoshorts.core.paths import get_output_dir
+from autoshorts.core.paths import get_assets_dir, get_output_dir
 from autoshorts.core.state_manager import StateManager, get_pt_timezone
 from autoshorts.integrations.spark import parse_spark_import
 from autoshorts.media.encoder_probe import probe_encoder
@@ -154,6 +154,11 @@ class SparkImportRequest(BaseModel):
 
 class SchedulerToggleRequest(BaseModel):
     paused: bool | None = None
+
+
+class BackgroundDownloadRequest(BaseModel):
+    categories: list[str] = Field(default_factory=lambda: ["minecraft", "subway"])
+    min_clips: int = Field(default=1)
 
 
 # -----------------------------------------------------------------------------
@@ -541,20 +546,158 @@ def create_app(
         }
 
     # -------------------------------------------------------------------------
+    # Background Assets Management API
+    # -------------------------------------------------------------------------
+
+    @app.get("/api/backgrounds")
+    async def get_backgrounds() -> dict[str, Any]:
+        """Return inventory of available background clips grouped by category."""
+        from autoshorts.media.background_fetcher import get_backgrounds_inventory
+
+        inventory = get_backgrounds_inventory()
+        total_clips = sum(len(clips) for clips in inventory.values())
+        return {
+            "success": True,
+            "total_clips": total_clips,
+            "categories": list(inventory.keys()),
+            "inventory": inventory,
+            **inventory,
+        }
+
+    @app.post("/api/backgrounds/download")
+    async def download_backgrounds(
+        background_tasks: BackgroundTasks,
+        req: BackgroundDownloadRequest | None = None,
+    ) -> dict[str, Any]:
+        """Trigger downloading sample gameplay background clips in the background."""
+        from autoshorts.media.background_fetcher import (
+            download_preset_backgrounds,
+            get_backgrounds_inventory,
+        )
+
+        cats = req.categories if (req and req.categories) else ["minecraft", "subway"]
+        background_tasks.add_task(download_preset_backgrounds, categories=cats)
+        inventory = get_backgrounds_inventory()
+        return {
+            "success": True,
+            "status": "downloading",
+            "message": f"Downloading background clips for categories: {', '.join(cats)}",
+            "categories": cats,
+            "inventory": inventory,
+        }
+
+    @app.post("/api/backgrounds/upload")
+    async def upload_background(
+        request: Request,
+        file: UploadFile,
+        category: str | None = Form(None),
+    ) -> dict[str, Any]:
+        """Upload custom background MP4 clip into specified category directory."""
+        from autoshorts.media.background_fetcher import normalize_category
+        from autoshorts.media.compositor import probe_media_duration
+
+        raw_cat = category or request.query_params.get("category") or "minecraft"
+        clean_cat = normalize_category(raw_cat)
+
+        if not clean_cat.replace("_", "").replace("-", "").isalnum() or ".." in clean_cat:
+            raise HTTPException(status_code=400, detail="Invalid category name")
+
+        filename = Path(file.filename or "uploaded_bg.mp4").name
+        ext = Path(filename).suffix.lower()
+        if ext not in {".mp4", ".mov", ".mkv", ".webm"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Only video files (.mp4, .mov, .mkv, .webm) are supported",
+            )
+
+        target_dir = get_assets_dir() / "backgrounds" / clean_cat
+        target_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = target_dir / filename
+
+        try:
+            with open(dest_path, "wb") as f:  # noqa: ASYNC230
+                while chunk := await file.read(1024 * 1024):
+                    f.write(chunk)
+        except Exception as e:
+            logger.error("Failed to save uploaded background file: %s", e)
+            raise HTTPException(status_code=500, detail=f"Failed to save file: {e}") from e
+
+        file_size = dest_path.stat().st_size
+        duration = probe_media_duration(dest_path, default=0.0)
+
+        return {
+            "success": True,
+            "message": f"Successfully uploaded {filename} to {clean_cat}",
+            "category": clean_cat,
+            "filename": filename,
+            "path": str(dest_path.resolve()),
+            "size_bytes": file_size,
+            "size_mb": round(file_size / (1024 * 1024), 2),
+            "duration": round(duration, 2),
+        }
+
+    # -------------------------------------------------------------------------
     # Authentication & Studio Edge Automation API
     # -------------------------------------------------------------------------
 
     @app.post("/api/auth/edge-login")
     async def edge_login(background_tasks: BackgroundTasks) -> dict[str, Any]:
         """Trigger interactive Microsoft Edge login session for YouTube Studio."""
-        from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+        from autoshorts.uploader.studio_playwright import (
+            PlaywrightStudioUploader,
+            update_login_session_state,
+        )
 
+        update_login_session_state(
+            status="running",
+            message="Microsoft Edge opened. Please sign in to Google/YouTube Studio...",
+            error=None,
+            channel_name=None,
+        )
         uploader = PlaywrightStudioUploader(config=cfg, headless=False)
         background_tasks.add_task(uploader.open_login_session, 300.0)
         return {
             "success": True,
             "message": "Microsoft Edge sign-in session launched. Please complete sign-in in the browser window.",
         }
+
+    @app.get("/api/auth/edge-login/status")
+    async def get_edge_login_status() -> dict[str, Any]:
+        """Return real-time Edge login session status and credential check."""
+        from autoshorts.uploader.studio_playwright import (
+            PlaywrightStudioUploader,
+            get_login_session_state,
+        )
+
+        session_state = get_login_session_state()
+
+        # If an interactive login session is actively running, avoid launching a headless check
+        if session_state.get("status") == "running":
+            login_check = {"signed_in": False, "channel_name": None}
+        else:
+            uploader = PlaywrightStudioUploader(config=cfg)
+            login_check = await asyncio.to_thread(uploader.check_login_status)
+
+        status_val = session_state.get("status", "idle")
+        channel = session_state.get("channel_name") or login_check.get("channel_name")
+        signed_in = bool(login_check.get("signed_in") or status_val == "signed_in")
+
+        if status_val == "idle" and signed_in:
+            status_val = "signed_in"
+
+        return {
+            **session_state,
+            "status": status_val,
+            "channel_name": channel,
+            "signed_in": signed_in,
+            "session": session_state,
+            "login_status": login_check,
+        }
+
+    @app.get("/api/auth/edge-status")
+    async def get_edge_status_alias() -> dict[str, Any]:
+        """Alias for /api/auth/edge-login/status."""
+        return await get_edge_login_status()
 
     # -------------------------------------------------------------------------
     # System Health API

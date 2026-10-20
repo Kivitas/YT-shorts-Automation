@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -22,6 +23,27 @@ from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import get_data_dir
 
 logger = logging.getLogger(__name__)
+
+_LOGIN_STATE_LOCK = threading.Lock()
+LOGIN_SESSION_STATE: dict[str, Any] = {
+    "status": "idle",
+    "message": "",
+    "error": None,
+    "channel_name": None,
+}
+
+
+def get_login_session_state() -> dict[str, Any]:
+    """Return a thread-safe copy of LOGIN_SESSION_STATE."""
+    with _LOGIN_STATE_LOCK:
+        return dict(LOGIN_SESSION_STATE)
+
+
+def update_login_session_state(**kwargs: Any) -> dict[str, Any]:
+    """Update LOGIN_SESSION_STATE in a thread-safe manner."""
+    with _LOGIN_STATE_LOCK:
+        LOGIN_SESSION_STATE.update(kwargs)
+        return dict(LOGIN_SESSION_STATE)
 
 
 class PlaywrightStudioUploader:
@@ -80,12 +102,24 @@ class PlaywrightStudioUploader:
         """
         args = ["--disable-blink-features=AutomationControlled"]
         if self.context_factory is not None:
-            ctx = self.context_factory(
-                user_data_dir=str(self.edge_profile_dir),
-                channel=self.channel,
-                headless=headless,
-                args=args,
-            )
+            try:
+                ctx = self.context_factory(
+                    user_data_dir=str(self.edge_profile_dir),
+                    channel=self.channel,
+                    headless=headless,
+                    args=args,
+                )
+            except Exception as e:
+                logger.warning(
+                    "context_factory failed with channel=%r: %s. Retrying without channel.",
+                    self.channel,
+                    e,
+                )
+                ctx = self.context_factory(
+                    user_data_dir=str(self.edge_profile_dir),
+                    headless=headless,
+                    args=args,
+                )
             page = (
                 ctx.pages[0]
                 if (hasattr(ctx, "pages") and ctx.pages)
@@ -104,17 +138,194 @@ class PlaywrightStudioUploader:
         sync_playwright = self._get_playwright()
         self.edge_profile_dir.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as p:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(self.edge_profile_dir),
-                channel=self.channel,
-                headless=headless,
-                args=args,
-            )
+            context = None
+            if self.channel:
+                try:
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=str(self.edge_profile_dir),
+                        channel=self.channel,
+                        headless=headless,
+                        args=args,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to launch browser with channel=%r: %s. Falling back to default chromium.",
+                        self.channel,
+                        e,
+                    )
+                    context = None
+
+            if context is None:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(self.edge_profile_dir),
+                    headless=headless,
+                    args=args,
+                )
+
             try:
                 page = context.pages[0] if context.pages else context.new_page()
                 yield context, page
             finally:
                 context.close()
+
+    def _extract_channel_name(self, page: Any) -> str | None:
+        """Attempt to extract YouTube channel or creator name from Studio DOM."""
+        selectors = [
+            "#entity-name",
+            "ytcp-entity-badge #entity-name",
+            "ytcp-app #entity-name",
+            "#channel-title",
+            "button#avatar-btn img",
+            "img.ytcp-avatar",
+        ]
+        for sel in selectors:
+            try:
+                loc = page.locator(sel)
+                if hasattr(loc, "first"):
+                    loc = loc.first
+                is_vis = loc.is_visible() if callable(getattr(loc, "is_visible", None)) else False
+                if is_vis is True or (is_vis and not isinstance(is_vis, type(loc))):
+                    text = ""
+                    if hasattr(loc, "inner_text") and callable(loc.inner_text):
+                        text = (loc.inner_text() or "").strip()
+                    if text:
+                        return text
+                    if hasattr(loc, "get_attribute") and callable(loc.get_attribute):
+                        alt = loc.get_attribute("alt") or loc.get_attribute("aria-label") or ""
+                        if alt and isinstance(alt, str) and alt.strip():
+                            clean = re.sub(
+                                r"^(Google Account:\s*|Avatar image for\s*)",
+                                "",
+                                alt.strip(),
+                                flags=re.IGNORECASE,
+                            )
+                            if clean:
+                                return clean
+            except Exception:
+                pass
+        return None
+
+    def _has_saved_profile(self) -> bool:
+        """Check if Edge profile directory exists and contains cookies or session state."""
+        if self.context_factory is not None:
+            return True
+        if not self.edge_profile_dir.is_dir():
+            return False
+
+        cookie_candidates = [
+            self.edge_profile_dir / "Default" / "Network" / "Cookies",
+            self.edge_profile_dir / "Default" / "Cookies",
+            self.edge_profile_dir / "Default" / "Preferences",
+            self.edge_profile_dir / "Default" / "Local Storage",
+            self.edge_profile_dir / "Local State",
+        ]
+        if any(p.exists() for p in cookie_candidates):
+            for cand in [
+                self.edge_profile_dir / "Default" / "Network" / "Cookies",
+                self.edge_profile_dir / "Default" / "Cookies",
+            ]:
+                if cand.is_file():
+                    try:
+                        import sqlite3
+
+                        uri = f"file:{cand.as_posix()}?mode=ro&immutable=1"
+                        with sqlite3.connect(uri, uri=True, timeout=0.5) as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                "SELECT 1 FROM cookies WHERE host_key LIKE '%google%' OR host_key LIKE '%youtube%' LIMIT 1"
+                            )
+                            row = cur.fetchone()
+                            if row is not None:
+                                return True
+                    except Exception:
+                        return True
+            return True
+
+        try:
+            return any(self.edge_profile_dir.iterdir())
+        except Exception:
+            return False
+
+    def check_login_status(self) -> dict[str, Any]:
+        """Check if Edge persistent profile is authenticated with YouTube Studio.
+
+        Checks if ./data/edge_profile exists and contains cookies or session state.
+        Performs a quick headless check to https://studio.youtube.com with an 8-second timeout.
+        If it redirects to accounts.google.com, returns {"signed_in": False, "channel_name": None}.
+        If it lands on Studio, attempts to extract creator name or returns {"signed_in": True, "channel_name": "Active Creator"}.
+
+        Returns:
+            dict with 'signed_in' (bool) and 'channel_name' (str | None).
+        """
+        if not self._has_saved_profile():
+            return {"signed_in": False, "channel_name": None}
+
+        # Avoid collision if another process is actively running the interactive session
+        if LOGIN_SESSION_STATE.get("status") == "running" and self.context_factory is None:
+            return {
+                "signed_in": False,
+                "channel_name": LOGIN_SESSION_STATE.get("channel_name"),
+            }
+
+        try:
+            with self._launch_browser_session(headless=True) as (_context, page):
+                timeout_ms = 8000
+                if hasattr(page, "set_default_timeout") and callable(page.set_default_timeout):
+                    page.set_default_timeout(timeout_ms)
+
+                try:
+                    page.goto(
+                        "https://studio.youtube.com",
+                        timeout=timeout_ms,
+                        wait_until="domcontentloaded",
+                    )
+                except Exception as goto_err:
+                    logger.debug("check_login_status goto warning: %s", goto_err)
+
+                raw_url = (
+                    page.url() if callable(getattr(page, "url", None)) else getattr(page, "url", "")
+                )
+                url = raw_url if isinstance(raw_url, str) else str(raw_url)
+
+                if "accounts.google.com" in url:
+                    return {"signed_in": False, "channel_name": None}
+
+                channel_name = self._extract_channel_name(page)
+                if "studio.youtube.com" in url or channel_name is not None:
+                    return {
+                        "signed_in": True,
+                        "channel_name": channel_name or "Active Creator",
+                    }
+
+                for selector in [
+                    "ytcp-button#create-icon",
+                    "#upload-icon",
+                    "#avatar-btn",
+                    "button#avatar-btn",
+                    "img.ytcp-avatar",
+                ]:
+                    try:
+                        loc = page.locator(selector)
+                        if hasattr(loc, "first"):
+                            loc = loc.first
+                        is_vis = (
+                            loc.is_visible()
+                            if callable(getattr(loc, "is_visible", None))
+                            else False
+                        )
+                        if is_vis is True or (is_vis and not isinstance(is_vis, type(loc))):
+                            return {
+                                "signed_in": True,
+                                "channel_name": channel_name or "Active Creator",
+                            }
+                    except Exception:
+                        pass
+
+                return {"signed_in": False, "channel_name": None}
+
+        except Exception as e:
+            logger.debug("check_login_status error: %s", e)
+            return {"signed_in": False, "channel_name": None}
 
     def open_login_session(self, timeout_sec: float = 300.0) -> bool:
         """Launch headed MS Edge to let operator log into YouTube Studio manually.
@@ -133,14 +344,27 @@ class PlaywrightStudioUploader:
             "Opening MS Edge interactive login session for profile at %s...",
             self.edge_profile_dir,
         )
+        update_login_session_state(
+            status="running",
+            message="Microsoft Edge opened. Please sign in to Google/YouTube Studio...",
+            error=None,
+            channel_name=None,
+        )
+        detected = False
+        window_closed = False
+        channel_name: str | None = None
         try:
             with self._launch_browser_session(headless=False) as (_context, page):
-                page.goto("https://studio.youtube.com", wait_until="domcontentloaded")
+                try:
+                    page.goto("https://studio.youtube.com", wait_until="domcontentloaded")
+                except Exception as goto_err:
+                    logger.debug("Goto studio.youtube.com warning: %s", goto_err)
 
                 start_time = time.time()
                 while time.time() - start_time < timeout_sec:
                     if hasattr(page, "is_closed") and callable(page.is_closed) and page.is_closed():
                         logger.info("Browser window closed by operator.")
+                        window_closed = True
                         break
 
                     raw_url = (
@@ -160,6 +384,8 @@ class PlaywrightStudioUploader:
                         ]:
                             try:
                                 loc = page.locator(selector)
+                                if hasattr(loc, "first"):
+                                    loc = loc.first
                                 is_vis = (
                                     loc.is_visible()
                                     if callable(getattr(loc, "is_visible", None))
@@ -169,32 +395,76 @@ class PlaywrightStudioUploader:
                                     logger.info(
                                         "Successfully detected authenticated YouTube Studio session!"
                                     )
-                                    return True
+                                    detected = True
+                                    channel_name = (
+                                        self._extract_channel_name(page) or "Active Creator"
+                                    )
+                                    break
                             except Exception:
                                 pass
+                        if detected:
+                            break
 
                     time.sleep(1.0)
 
                 # Final post-loop check
-                is_closed = (
-                    page.is_closed() if callable(getattr(page, "is_closed", None)) else False
+                if not detected and not window_closed:
+                    is_closed = (
+                        page.is_closed() if callable(getattr(page, "is_closed", None)) else False
+                    )
+                    if is_closed:
+                        window_closed = True
+                    else:
+                        for selector in ["ytcp-button#create-icon", "#upload-icon", "#avatar-btn"]:
+                            try:
+                                loc = page.locator(selector)
+                                if hasattr(loc, "first"):
+                                    loc = loc.first
+                                is_vis = (
+                                    loc.is_visible()
+                                    if callable(getattr(loc, "is_visible", None))
+                                    else False
+                                )
+                                if is_vis is True or (is_vis and not isinstance(is_vis, type(loc))):
+                                    detected = True
+                                    channel_name = (
+                                        self._extract_channel_name(page) or "Active Creator"
+                                    )
+                                    break
+                            except Exception:
+                                pass
+
+            if detected:
+                ch_name = channel_name or "Active Creator"
+                update_login_session_state(
+                    status="signed_in",
+                    message="Successfully signed in to YouTube Studio! Session saved.",
+                    channel_name=ch_name,
+                    error=None,
                 )
-                if not is_closed:
-                    for selector in ["ytcp-button#create-icon", "#upload-icon", "#avatar-btn"]:
-                        try:
-                            loc = page.locator(selector)
-                            is_vis = (
-                                loc.is_visible()
-                                if callable(getattr(loc, "is_visible", None))
-                                else False
-                            )
-                            if is_vis is True or (is_vis and not isinstance(is_vis, type(loc))):
-                                return True
-                        except Exception:
-                            pass
+                return True
+            else:
+                msg = (
+                    "Edge closed before sign-in completed."
+                    if window_closed
+                    else "Edge login session timed out before sign-in completed."
+                )
+                update_login_session_state(
+                    status="not_signed_in",
+                    message=msg,
+                    error=None,
+                    channel_name=None,
+                )
                 return False
+
         except Exception as e:
             logger.error("Failed during Edge login session: %s", e)
+            update_login_session_state(
+                status="error",
+                message=str(e),
+                error=str(e),
+                channel_name=None,
+            )
             return False
 
     def upload(
@@ -229,8 +499,16 @@ class PlaywrightStudioUploader:
         if not target_path.is_file():
             raise UploadError(f"Video file does not exist: {target_path}")
 
-        default_privacy = self.config.upload.privacy_status if self.config else "unlisted"
-        effective_privacy = (privacy_status or privacy or default_privacy).lower()
+        default_privacy = (
+            (
+                getattr(self.config.upload, "default_privacy_status", None)
+                or getattr(self.config.upload, "privacy_status", None)
+                or "unlisted"
+            )
+            if self.config and hasattr(self.config, "upload")
+            else "unlisted"
+        )
+        effective_privacy = str(privacy_status or privacy or default_privacy).strip().lower()
         effective_tags = list(tags) if tags is not None else []
 
         logger.info(
@@ -307,13 +585,34 @@ class PlaywrightStudioUploader:
                     else:
                         time.sleep(0.8)
 
-            # Select requested visibility radio button
-            vis_key = effective_privacy.upper()
+            # Select requested visibility radio button (PUBLIC, UNLISTED, PRIVATE)
+            clean_privacy = effective_privacy.upper()
+            if clean_privacy in ("PUBLIC", "UNLISTED", "PRIVATE"):
+                vis_key = clean_privacy
+            elif "PUB" in clean_privacy:
+                vis_key = "PUBLIC"
+            elif "PRIV" in clean_privacy:
+                vis_key = "PRIVATE"
+            else:
+                vis_key = "UNLISTED"
+
+            logger.info("Selecting YouTube Studio visibility radio: %s", vis_key)
             try:
-                vis_radio = page.locator(
-                    f'tp-yt-paper-radio-button[name="{vis_key}"], [name="{vis_key}"]'
-                ).first
-                if vis_radio.is_visible(timeout=5000):
+                vis_selector = f'tp-yt-paper-radio-button[name="{vis_key}"], [name="{vis_key}"]'
+                vis_radio = page.locator(vis_selector).first
+                if hasattr(vis_radio, "wait_for") and callable(vis_radio.wait_for):
+                    try:
+                        vis_radio.wait_for(state="visible", timeout=5000)
+                    except Exception:
+                        pass
+                is_vis = (
+                    vis_radio.is_visible(timeout=5000)
+                    if callable(getattr(vis_radio, "is_visible", None))
+                    else True
+                )
+                if is_vis:
+                    vis_radio.click()
+                else:
                     vis_radio.click()
             except Exception as ex:
                 logger.warning("Could not select visibility radio %s: %s", vis_key, ex)
@@ -347,14 +646,29 @@ class PlaywrightStudioUploader:
                 else:
                     video_id = f"studio_{uuid4().hex[:11]}"
 
-            # Complete upload wizard
+            # Complete upload wizard (clicks #done-button, which is labeled "Publish" when Public is selected)
             done_btn = page.locator("#done-button, #save-button").first
-            if done_btn.is_visible(timeout=5000):
-                done_btn.click()
+            try:
+                if hasattr(done_btn, "wait_for") and callable(done_btn.wait_for):
+                    try:
+                        done_btn.wait_for(state="visible", timeout=8000)
+                    except Exception:
+                        pass
+                is_done_vis = (
+                    done_btn.is_visible(timeout=5000)
+                    if callable(getattr(done_btn, "is_visible", None))
+                    else True
+                )
+                if is_done_vis:
+                    done_btn.click()
+                else:
+                    done_btn.click()
                 if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
                     page.wait_for_timeout(1500)
                 else:
                     time.sleep(1.5)
+            except Exception as ex:
+                logger.warning("Error clicking done/publish button: %s", ex)
 
             return UploadResult(
                 video_id=video_id,

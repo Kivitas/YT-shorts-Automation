@@ -10,6 +10,13 @@ from autoshorts.media.ass_styler import (
     offset_words_for_hook,
     write_ass_file,
 )
+from autoshorts.media.background_fetcher import (
+    CURATED_BACKGROUND_SOURCES,
+    download_preset_backgrounds,
+    ensure_backgrounds_available,
+    get_backgrounds_inventory,
+    normalize_category,
+)
 from autoshorts.media.compositor import (
     FasterWhisperTranscriber,
     FFmpegCompositor,
@@ -42,6 +49,7 @@ from autoshorts.media.encoder_probe import (
 )
 
 __all__ = [
+    "CURATED_BACKGROUND_SOURCES",
     "DEFAULT_FORMAT_SPEC",
     "DopaminePreset",
     "DownloadError",
@@ -57,16 +65,20 @@ __all__ = [
     "build_progress_bar_filter",
     "build_zoom_punch_filter",
     "chunk_words",
+    "download_preset_backgrounds",
+    "ensure_backgrounds_available",
     "extract_16khz_mono_wav",
     "find_user_audio_assets",
     "find_user_background_videos",
     "format_ass_timestamp",
     "format_section_arg",
+    "get_backgrounds_inventory",
     "get_dopamine_preset",
     "has_audio_stream",
     "is_emphasis_word",
     "is_ffmpeg_available",
     "is_ffprobe_available",
+    "normalize_category",
     "offset_words_for_hook",
     "pick_background_asset",
     "probe_encoder",

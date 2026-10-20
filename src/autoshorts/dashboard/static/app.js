@@ -3,13 +3,17 @@
 let _jobsCache = [];
 let _ptSecondsRemaining = null;
 let _eventSource = null;
+let _lastQuota = null;
+let _lastScheduler = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   refreshHealth();
   refreshQuota();
   refreshScheduler();
   refreshJobs();
+  refreshBackgrounds();
   initLogStream();
+  checkInitialEdgeAuth();
 
   // PT Countdown ticking every 1 second
   setInterval(() => {
@@ -21,6 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshQuota();
     refreshScheduler();
     refreshJobs();
+    refreshBackgrounds();
   }, 4000);
 });
 
@@ -50,30 +55,45 @@ async function refreshQuota() {
     const res = await fetch("/api/quota");
     if (!res.ok) return;
     const q = await res.json();
+    _lastQuota = q;
 
-    // 1. Upload bucket
+    // 1. YouTube API Uploads
     const upSpend = q.upload_spent || 0;
     const upLimit = q.upload_limit || 100;
     const upPct = Math.min(100, (upSpend / upLimit) * 100);
-    document.getElementById("upload-spend").innerHTML = `${upSpend} <span class="metric-sub">/ ${upLimit} calls</span>`;
-    document.getElementById("upload-bar").style.width = `${upPct}%`;
-    document.getElementById("upload-remaining").textContent = `${q.upload_remaining} remaining today (${q.date_pt || "PT"})`;
+    const upSpendEl = document.getElementById("upload-spend");
+    if (upSpendEl) {
+      upSpendEl.innerHTML = `${upSpend} <span class="metric-sub">/ ${upLimit} free uploads today</span>`;
+    }
+    const upBarEl = document.getElementById("upload-bar");
+    if (upBarEl) upBarEl.style.width = `${upPct}%`;
+    const upRemEl = document.getElementById("upload-remaining");
+    if (upRemEl) {
+      upRemEl.textContent = `${q.upload_remaining !== undefined ? q.upload_remaining : 100} free uploads remaining today`;
+    }
 
-    // 2. General bucket
+    // 2. API Calls Pool
     const genSpend = q.general_spent || 0;
     const genLimit = q.general_limit || 10000;
     const genPct = Math.min(100, (genSpend / genLimit) * 100);
-    document.getElementById("general-spend").innerHTML = `${genSpend} <span class="metric-sub">/ ${genLimit} units</span>`;
-    document.getElementById("general-bar").style.width = `${genPct}%`;
-    document.getElementById("general-remaining").textContent = `${q.general_remaining} remaining pool units`;
+    const genSpendEl = document.getElementById("general-spend");
+    if (genSpendEl) {
+      genSpendEl.innerHTML = `${genSpend} <span class="metric-sub">/ ${genLimit} units</span>`;
+    }
+    const genBarEl = document.getElementById("general-bar");
+    if (genBarEl) genBarEl.style.width = `${genPct}%`;
+    const genRemEl = document.getElementById("general-remaining");
+    if (genRemEl) {
+      genRemEl.textContent = `${q.general_remaining !== undefined ? q.general_remaining : 10000} units remaining`;
+    }
 
-    // 3. Rolling Hour Rate Limit Gauge
+    // 3. Hourly Anti-Spam Pacing
     const rateCount = q.rolling_hour_count !== undefined ? q.rolling_hour_count : 0;
     const rateLimit = q.rolling_hour_limit || 7;
     const ratePct = Math.min(100, (rateCount / rateLimit) * 100);
     const rateValEl = document.getElementById("rolling-rate-val");
     if (rateValEl) {
-      rateValEl.innerHTML = `${rateCount} <span class="metric-sub">/ ${rateLimit} uploads</span>`;
+      rateValEl.innerHTML = `${rateCount} <span class="metric-sub">/ ${rateLimit} uploads this hour</span>`;
     }
     const rateBarEl = document.getElementById("rolling-rate-bar");
     if (rateBarEl) {
@@ -88,18 +108,14 @@ async function refreshQuota() {
     }
     const rateFooterEl = document.getElementById("rolling-rate-footer");
     if (rateFooterEl) {
-      rateFooterEl.textContent = `${rateCount} / ${rateLimit} uploads this rolling hour`;
+      rateFooterEl.textContent = `${rateCount} / ${rateLimit} uploads in rolling 60 min`;
     }
 
-    // 4. Daily Cap & Pacific-Time Countdown Sync
-    const completed = q.completed_today || 0;
-    const dailyCap = q.daily_cap || 50;
-    document.getElementById("daily-cap-val").innerHTML = `${completed} <span class="metric-sub">/ ${dailyCap} uploaded today</span>`;
-
+    // 4. Daily Cap & Pacific-Time Reset Countdown Sync
     if (q.seconds_until_reset !== undefined) {
       _ptSecondsRemaining = q.seconds_until_reset;
-      renderPtCountdown();
     }
+    renderPacingStatus();
   } catch (err) {
     console.debug("Quota refresh error:", err);
   }
@@ -108,23 +124,67 @@ async function refreshQuota() {
 function tickPtCountdown() {
   if (_ptSecondsRemaining !== null && _ptSecondsRemaining > 0) {
     _ptSecondsRemaining -= 1;
-    renderPtCountdown();
+    renderPacingStatus();
   }
 }
 
-function renderPtCountdown() {
+function renderPacingStatus() {
+  const mainEl = document.getElementById("pacing-status-main");
+  const subEl = document.getElementById("pacing-status-sub");
+  const capEl = document.getElementById("daily-cap-val");
+
+  // Determine status
+  const isUploading = _jobsCache && _jobsCache.some(j => j.status === "UPLOADING");
+  const pendingSlots = (_lastScheduler && _lastScheduler.pending_slots) || [];
+
+  let statusMain = "Queue Idle";
+  let statusSub = "No pending videos waiting to upload";
+
+  if (isUploading) {
+    statusMain = "Uploading Now";
+    statusSub = "Active video being uploaded to YouTube...";
+  } else if (pendingSlots.length > 0) {
+    const nextSlot = pendingSlots[0];
+    const targetTime = nextSlot.scheduled_time ? new Date(nextSlot.scheduled_time).getTime() : 0;
+    const now = Date.now();
+    const diffMs = targetTime - now;
+    if (diffMs <= 0) {
+      statusMain = "Next Upload: Due now";
+    } else {
+      const diffMin = Math.max(1, Math.round(diffMs / 60000));
+      const timeStr = diffMin >= 60 ? `${Math.floor(diffMin / 60)}h ${diffMin % 60}m` : `${diffMin}m`;
+      statusMain = `Next Upload: in ${timeStr}`;
+    }
+    statusSub = `${pendingSlots.length} video(s) scheduled in queue`;
+  }
+
+  if (mainEl) mainEl.textContent = statusMain;
+  if (subEl) subEl.textContent = statusSub;
+
+  // Format secondary subtext: "Daily Uploads: 0 / 50 • Reset in 4h 06m (12:30 PM local)"
+  const completed = (_lastQuota && _lastQuota.completed_today) !== undefined ? _lastQuota.completed_today : 0;
+  const dailyCap = (_lastQuota && _lastQuota.daily_cap) || 50;
+
+  let secondaryText = `Daily Uploads: ${completed} / ${dailyCap}`;
+  if (_ptSecondsRemaining !== null && _ptSecondsRemaining >= 0) {
+    const total = _ptSecondsRemaining;
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const resetDate = new Date(Date.now() + total * 1000);
+    const localTimeStr = resetDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    secondaryText = `Daily Uploads: ${completed} / ${dailyCap} • Reset in ${hours}h ${String(minutes).padStart(2, "0")}m (${localTimeStr} local)`;
+  }
+  if (capEl) capEl.textContent = secondaryText;
+
+  // Fallback clock element if present
   const clockEl = document.getElementById("pt-countdown-clock");
-  if (!clockEl || _ptSecondsRemaining === null) return;
-
-  const total = Math.max(0, _ptSecondsRemaining);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-
-  const hStr = String(hours).padStart(2, "0");
-  const mStr = String(minutes).padStart(2, "0");
-  const sStr = String(seconds).padStart(2, "0");
-  clockEl.textContent = `${hStr}:${mStr}:${sStr}`;
+  if (clockEl && _ptSecondsRemaining !== null) {
+    const total = Math.max(0, _ptSecondsRemaining);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    clockEl.textContent = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -136,6 +196,7 @@ async function refreshScheduler() {
     const res = await fetch("/api/scheduler/status");
     if (!res.ok) return;
     const s = await res.json();
+    _lastScheduler = s;
 
     const tag = document.getElementById("scheduler-status-tag");
     const btn = document.getElementById("scheduler-toggle-btn");
@@ -154,6 +215,7 @@ async function refreshScheduler() {
     }
 
     pending.textContent = `${s.pending_count || 0} queued slots`;
+    renderPacingStatus();
   } catch (err) {
     console.debug("Scheduler refresh error:", err);
   }
@@ -331,6 +393,7 @@ function renderJobs(jobs) {
       </div>
     `;
   }).join("");
+  renderPacingStatus();
 }
 
 // -----------------------------------------------------------------------------
@@ -697,30 +760,326 @@ async function cleanJobFiles(jobId) {
   }
 }
 
-async function triggerEdgeLogin() {
-  const btn = document.getElementById("edge-login-btn");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "Launching Edge...";
+let _edgeLoginPollTimer = null;
+
+async function checkInitialEdgeAuth() {
+  try {
+    const res = await fetch("/api/auth/edge-login/status");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.signed_in || data.status === "signed_in") {
+      updateEdgeButtonState(true, data.channel_name);
+    }
+  } catch (err) {
+    console.debug("Initial edge auth check failed:", err);
   }
+}
+
+function updateEdgeButtonState(isSignedIn, channelName) {
+  const btn = document.getElementById("edge-login-btn");
+  if (!btn) return;
+  if (isSignedIn) {
+    btn.textContent = "✓ Edge Signed In";
+    btn.title = `Authenticated with YouTube Studio${channelName ? ` (${channelName})` : ""}`;
+    btn.classList.remove("btn-secondary");
+    btn.classList.add("btn-success");
+  } else {
+    btn.textContent = "🔑 Edge Sign-In";
+    btn.title = "Sign into YouTube Studio via Microsoft Edge";
+    btn.classList.remove("btn-success");
+    btn.classList.add("btn-secondary");
+  }
+}
+
+function openEdgeLoginModal() {
+  const modal = document.getElementById("edge-login-modal");
+  const spinner = document.getElementById("edge-status-spinner");
+  const badge = document.getElementById("edge-live-status-badge");
+  const dot = document.getElementById("edge-status-dot");
+  const statusText = document.getElementById("edge-status-text");
+  const errorBox = document.getElementById("edge-login-error");
+  const verifyBtn = document.getElementById("edge-check-status-btn") || document.getElementById("edge-manual-verify-btn");
+
+  if (errorBox) errorBox.style.display = "none";
+  if (spinner) spinner.textContent = "🌐";
+  if (badge) {
+    badge.style.display = "inline-flex";
+    badge.style.backgroundColor = "";
+    badge.style.borderColor = "";
+    badge.style.color = "";
+  }
+  if (dot) {
+    dot.className = "dot yellow";
+  }
+  if (statusText) {
+    statusText.textContent = "Opening Microsoft Edge... Please log in to your Google Account.";
+  }
+  if (verifyBtn) {
+    verifyBtn.disabled = false;
+    verifyBtn.textContent = "🔍 Check Login Status";
+  }
+
+  if (modal) modal.style.display = "flex";
+}
+
+function closeEdgeLoginModal(e) {
+  stopEdgeLoginPolling();
+  const modal = document.getElementById("edge-login-modal");
+  if (modal) modal.style.display = "none";
+}
+
+function startEdgeLoginPolling() {
+  stopEdgeLoginPolling();
+  pollEdgeLoginStatus();
+  _edgeLoginPollTimer = setInterval(pollEdgeLoginStatus, 2000);
+}
+
+function stopEdgeLoginPolling() {
+  if (_edgeLoginPollTimer) {
+    clearInterval(_edgeLoginPollTimer);
+    _edgeLoginPollTimer = null;
+  }
+}
+
+async function pollEdgeLoginStatus() {
+  try {
+    const res = await fetch("/api/auth/edge-login/status");
+    if (!res.ok) return;
+    const data = await res.json();
+    handleEdgeStatusUpdate(data);
+  } catch (err) {
+    console.debug("Error polling edge login status:", err);
+  }
+}
+
+function handleEdgeStatusUpdate(data) {
+  const status = data.status;
+  const spinner = document.getElementById("edge-status-spinner");
+  const badge = document.getElementById("edge-live-status-badge");
+  const dot = document.getElementById("edge-status-dot");
+  const statusText = document.getElementById("edge-status-text");
+  const errorBox = document.getElementById("edge-login-error");
+  const errorMsg = document.getElementById("edge-error-message");
+
+  if (status === "signed_in" || data.signed_in === true) {
+    stopEdgeLoginPolling();
+    const chName = data.channel_name || "Active Creator";
+    if (spinner) spinner.textContent = "✅";
+    if (dot) dot.className = "dot green";
+    if (badge) {
+      badge.style.display = "inline-flex";
+      badge.style.backgroundColor = "rgba(63, 185, 80, 0.2)";
+      badge.style.borderColor = "var(--accent-green)";
+      badge.style.color = "var(--accent-green)";
+    }
+    if (statusText) {
+      statusText.textContent = `✓ Successfully Authenticated as YouTube Studio Creator! (${chName})`;
+    }
+    updateEdgeButtonState(true, chName);
+    showToast("✓ Successfully Authenticated as YouTube Studio Creator!");
+
+    setTimeout(() => {
+      closeEdgeLoginModal();
+    }, 1800);
+  } else if (status === "error") {
+    stopEdgeLoginPolling();
+    if (spinner) spinner.textContent = "❌";
+    if (badge) badge.style.display = "none";
+    if (errorBox) {
+      errorBox.style.display = "block";
+      if (errorMsg) errorMsg.textContent = data.error || data.message || "An error occurred during Edge sign-in session.";
+    }
+  } else if (status === "not_signed_in") {
+    stopEdgeLoginPolling();
+    if (spinner) spinner.textContent = "⚠️";
+    if (dot) dot.className = "dot yellow";
+    if (statusText) {
+      statusText.textContent = data.message || "Edge closed before sign-in completed.";
+    }
+  } else if (status === "running") {
+    if (spinner) spinner.textContent = "⏳";
+    if (dot) dot.className = "dot yellow";
+    if (statusText) {
+      statusText.textContent = data.message || "Edge browser window opened on your screen. Waiting for sign-in...";
+    }
+  }
+}
+
+async function checkEdgeLoginNow() {
+  const verifyBtn = document.getElementById("edge-check-status-btn") || document.getElementById("edge-manual-verify-btn");
+  const statusText = document.getElementById("edge-status-text");
+  if (verifyBtn) {
+    verifyBtn.disabled = true;
+    verifyBtn.textContent = "Checking...";
+  }
+  if (statusText) statusText.textContent = "Verifying YouTube Studio session...";
+  try {
+    const res = await fetch("/api/auth/edge-login/status");
+    if (res.ok) {
+      const data = await res.json();
+      handleEdgeStatusUpdate(data);
+      if (data.status !== "signed_in" && !data.signed_in) {
+        showToast("Studio session not detected yet. Sign in completely in Edge.");
+      }
+    }
+  } catch (err) {
+    showToast("Verification check error: " + err);
+  } finally {
+    if (verifyBtn) {
+      verifyBtn.disabled = false;
+      verifyBtn.textContent = "🔍 Check Login Status";
+    }
+  }
+}
+
+async function triggerEdgeLogin() {
+  openEdgeLoginModal();
   showToast("Launching Microsoft Edge sign-in session...");
   try {
     const res = await fetch("/api/auth/edge-login", { method: "POST" });
     if (!res.ok) {
       const err = await res.json();
-      alert("Failed to launch Edge login: " + (err.detail || "Server error"));
+      const msg = err.detail || "Failed to launch Edge login session.";
+      const errorBox = document.getElementById("edge-login-error");
+      const errorMsg = document.getElementById("edge-error-message");
+      if (errorBox) errorBox.style.display = "block";
+      if (errorMsg) errorMsg.textContent = msg;
       return;
     }
     const data = await res.json();
     showToast(data.message || "Edge sign-in session opened!");
   } catch (err) {
+    const errorBox = document.getElementById("edge-login-error");
+    const errorMsg = document.getElementById("edge-error-message");
+    if (errorBox) errorBox.style.display = "block";
+    if (errorMsg) errorMsg.textContent = "Network error: " + err;
+    return;
+  }
+
+  startEdgeLoginPolling();
+}
+
+// -----------------------------------------------------------------------------
+// Gameplay Backgrounds Management
+// -----------------------------------------------------------------------------
+
+async function refreshBackgrounds() {
+  try {
+    const res = await fetch("/api/backgrounds");
+    if (!res.ok) return;
+    const data = await res.json();
+    const inv = data.inventory || {};
+    const mc = inv.minecraft ? inv.minecraft.length : (data.minecraft || 0);
+    const subway = inv.subway ? inv.subway.length : (data.subway || 0);
+    const indicator = document.getElementById("bg-clips-indicator");
+    if (indicator) {
+      indicator.textContent = `Minecraft: ${mc} clips | Subway Surfers: ${subway} clips`;
+    }
+  } catch (err) {
+    console.debug("Backgrounds refresh error:", err);
+  }
+}
+
+async function downloadFreeGameplayClips() {
+  const btn = document.getElementById("download-bg-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Downloading Clips...";
+  }
+  showToast("Downloading free gameplay background clips...");
+  try {
+    const res = await fetch("/api/backgrounds/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categories: ["minecraft", "subway"] }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert("Download error: " + (err.detail || "Server error"));
+      return;
+    }
+    const data = await res.json();
+    showToast(data.message || "Background clips downloaded!");
+    setTimeout(refreshBackgrounds, 1500);
+    setTimeout(refreshBackgrounds, 4000);
+  } catch (err) {
     alert("Network error: " + err);
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "🔑 Edge Sign-In";
+      btn.textContent = "📥 Auto-Download Free Gameplay Clips";
     }
   }
+}
+
+function handleBgDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = document.getElementById("bg-dropzone");
+  if (dz) dz.classList.add("dragover");
+}
+
+function handleBgDragLeave(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = document.getElementById("bg-dropzone");
+  if (dz) dz.classList.remove("dragover");
+}
+
+function handleBgDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dz = document.getElementById("bg-dropzone");
+  if (dz) dz.classList.remove("dragover");
+
+  const files = e.dataTransfer.files;
+  if (files && files.length > 0) {
+    uploadBackgroundFiles(files);
+  }
+}
+
+function handleBgFileSelect(e) {
+  const files = e.target.files;
+  if (files && files.length > 0) {
+    uploadBackgroundFiles(files);
+  }
+}
+
+async function uploadBackgroundFiles(files) {
+  const catSelect = document.getElementById("bg-upload-category");
+  const category = (catSelect && catSelect.value) ? catSelect.value : "minecraft";
+  const feedback = document.getElementById("bg-upload-feedback");
+  if (feedback) feedback.textContent = `Uploading ${files.length} file(s)...`;
+
+  let uploadedCount = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("category", category);
+
+    try {
+      const res = await fetch(`/api/backgrounds/upload?category=${encodeURIComponent(category)}`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        uploadedCount++;
+      } else {
+        const err = await res.json();
+        showToast(`Failed to upload ${file.name}: ${err.detail || 'Error'}`);
+      }
+    } catch (err) {
+      showToast(`Upload error for ${file.name}: ${err}`);
+    }
+  }
+
+  if (feedback) {
+    feedback.textContent = `Uploaded ${uploadedCount}/${files.length} clip(s) to ${category}!`;
+    setTimeout(() => { feedback.textContent = ""; }, 4000);
+  }
+  showToast(`Uploaded ${uploadedCount} clip(s) to ${category}`);
+  refreshBackgrounds();
 }
 
 async function copySparkPrompt() {
@@ -765,6 +1124,7 @@ function refreshDashboard() {
   refreshQuota();
   refreshScheduler();
   refreshJobs();
+  refreshBackgrounds();
 }
 
 function escapeHtml(str) {

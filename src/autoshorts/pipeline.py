@@ -35,6 +35,7 @@ from autoshorts.core.exceptions import (
     AutoShortsError,
     DownloadError,
     MetadataFetchError,
+    QuotaExhaustedError,
     TranscriptNotFoundError,
 )
 from autoshorts.core.models import (
@@ -810,14 +811,78 @@ class ShortsPipeline:
         self.state_manager.save_job(job)
 
         stage_id = self.state_manager.record_stage_start(job.id, "immediate_upload")
-        try:
-            result = self.uploader.upload(
-                path=Path(job.rendered_video_path),  # type: ignore[arg-type]
-                title=title,
-                description=desc,
-                tags=["Shorts", "AutoShorts"],
-                privacy=self.config.upload.privacy_status,
+        upload_cfg = getattr(self.config, "upload", None)
+        fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+        default_privacy = (
+            getattr(upload_cfg, "default_privacy_status", None)
+            or getattr(upload_cfg, "privacy_status", None)
+            or "unlisted"
+        )
+        target_privacy = default_privacy
+
+        use_uploader = self.uploader
+        fell_back_to_studio = False
+        is_yt_api = (
+            isinstance(self.uploader, YouTubeApiUploader)
+            or type(self.uploader).__name__ == "YouTubeApiUploader"
+        )
+
+        if (
+            is_yt_api
+            and self.quota_tracker
+            and not self.quota_tracker.can_upload()
+            and fallback_mode == "studio"
+        ):
+            logger.warning(
+                "Job %s: API quota exhausted before immediate upload. Falling back to YouTube Studio automation.",
+                job.id,
             )
+            self.state_manager.record_stage_start(job.id, "studio_fallback")
+            use_uploader = PlaywrightStudioUploader(config=self.config)
+            fell_back_to_studio = True
+
+        try:
+            try:
+                kwargs: dict[str, Any] = {
+                    "path": Path(job.rendered_video_path),  # type: ignore[arg-type]
+                    "title": title,
+                    "description": desc,
+                    "tags": ["Shorts", "AutoShorts"],
+                    "privacy": target_privacy,
+                }
+                if isinstance(use_uploader, PlaywrightStudioUploader):
+                    kwargs["privacy_status"] = target_privacy
+                result = use_uploader.upload(**kwargs)
+            except Exception as up_err:
+                is_quota_err = isinstance(up_err, QuotaExhaustedError) or (
+                    "quota" in str(up_err).lower()
+                    or "quotaexceeded" in str(up_err).lower()
+                    or "403" in str(up_err)
+                )
+                if is_quota_err and fallback_mode == "studio" and not fell_back_to_studio:
+                    logger.warning(
+                        "Job %s: Encountered quota exhaustion error (%s). Falling back to YouTube Studio automation.",
+                        job.id,
+                        up_err,
+                    )
+                    self.state_manager.record_stage_start(job.id, "studio_fallback")
+                    use_uploader = PlaywrightStudioUploader(config=self.config)
+                    fell_back_to_studio = True
+                    result = use_uploader.upload(
+                        path=Path(job.rendered_video_path),  # type: ignore[arg-type]
+                        title=title,
+                        description=desc,
+                        tags=["Shorts", "AutoShorts"],
+                        privacy=target_privacy,
+                        privacy_status=target_privacy,
+                    )
+                else:
+                    raise
+
+            if fell_back_to_studio and isinstance(result.raw_response, dict):
+                result.raw_response["fallback"] = "studio_automation"
+                result.raw_response["fallback_reason"] = "quota_exhausted"
+
             job.upload_result = result
             self.state_manager.save_job(job)
 
@@ -825,7 +890,7 @@ class ShortsPipeline:
             job.transition_to(JobStatus.VERIFYING)
             self.state_manager.save_job(job)
 
-            verified = self.uploader.verify(result.video_id)
+            verified = use_uploader.verify(result.video_id)
             result.verified = verified
             job.upload_result = result
 

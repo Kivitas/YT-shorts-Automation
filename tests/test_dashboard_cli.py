@@ -16,6 +16,10 @@ from autoshorts.core.state_manager import StateManager
 from autoshorts.dashboard.app import create_app
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
+from autoshorts.uploader.studio_playwright import (
+    LOGIN_SESSION_STATE,
+    update_login_session_state,
+)
 
 
 @pytest.fixture
@@ -710,3 +714,166 @@ async def test_dashboard_inbox_watcher_lifespan_polling(tmp_path: Path):
         assert app.state.inbox_watcher is mock_watcher
         time.sleep(0.1)
         assert mock_watcher.poll_once.call_count >= 1
+
+
+def test_dashboard_edge_login_status_endpoint_idle(dashboard_client: dict[str, Any]):
+    """Verify GET /api/auth/edge-login/status returns idle state and login_status."""
+    client: TestClient = dashboard_client["client"]
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.check_login_status",
+        return_value={"signed_in": False, "channel_name": None},
+    ):
+        res = client.get("/api/auth/edge-login/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "idle"
+        assert data["signed_in"] is False
+        assert "login_status" in data
+        assert data["login_status"]["signed_in"] is False
+
+
+def test_dashboard_edge_login_status_endpoint_running(dashboard_client: dict[str, Any]):
+    """Verify GET /api/auth/edge-login/status returns running and skips headless check."""
+    client: TestClient = dashboard_client["client"]
+    update_login_session_state(
+        status="running",
+        message="Microsoft Edge opened. Please sign in to Google/YouTube Studio...",
+        error=None,
+        channel_name=None,
+    )
+
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.check_login_status"
+    ) as mock_check:
+        res = client.get("/api/auth/edge-login/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "running"
+        assert "Microsoft Edge opened" in data["message"]
+        # check_login_status should NOT be called to avoid profile lock collision
+        mock_check.assert_not_called()
+
+
+def test_dashboard_edge_login_status_endpoint_signed_in(dashboard_client: dict[str, Any]):
+    """Verify GET /api/auth/edge-login/status returns signed_in state and channel name."""
+    client: TestClient = dashboard_client["client"]
+    update_login_session_state(
+        status="signed_in",
+        message="Successfully signed in to YouTube Studio! Session saved.",
+        error=None,
+        channel_name="Creator Channel X",
+    )
+
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.check_login_status",
+        return_value={"signed_in": True, "channel_name": "Creator Channel X"},
+    ):
+        res = client.get("/api/auth/edge-login/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "signed_in"
+        assert data["signed_in"] is True
+        assert data["channel_name"] == "Creator Channel X"
+
+
+def test_dashboard_edge_login_status_detected_via_check_login_status(
+    dashboard_client: dict[str, Any],
+):
+    """Verify GET /api/auth/edge-login/status detects authentication from persistent profile check."""
+    client: TestClient = dashboard_client["client"]
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.check_login_status",
+        return_value={"signed_in": True, "channel_name": "Saved Studio Profile"},
+    ):
+        res = client.get("/api/auth/edge-login/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "signed_in"
+        assert data["signed_in"] is True
+        assert data["channel_name"] == "Saved Studio Profile"
+
+
+def test_dashboard_edge_login_post_trigger(dashboard_client: dict[str, Any]):
+    """Verify POST /api/auth/edge-login sets running state and launches session task."""
+    client: TestClient = dashboard_client["client"]
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+
+    with patch("autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session"):
+        res = client.post("/api/auth/edge-login")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["success"] is True
+        assert LOGIN_SESSION_STATE["status"] == "running"
+
+
+def test_dashboard_edge_status_alias_endpoint(dashboard_client: dict[str, Any]):
+    """Verify GET /api/auth/edge-status returns authenticated status alias."""
+    client: TestClient = dashboard_client["client"]
+    update_login_session_state(status="idle", message="", error=None, channel_name=None)
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.check_login_status",
+        return_value={"signed_in": True, "channel_name": "TestChannel"},
+    ):
+        res = client.get("/api/auth/edge-status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["signed_in"] is True
+        assert data["channel_name"] == "TestChannel"
+
+
+def test_dashboard_backgrounds_endpoints(dashboard_client: dict[str, Any], tmp_path: Path):
+    """Verify GET /api/backgrounds and POST /api/backgrounds/download endpoints."""
+    client: TestClient = dashboard_client["client"]
+
+    # 1. GET /api/backgrounds
+    res_get = client.get("/api/backgrounds")
+    assert res_get.status_code == 200
+    data_get = res_get.json()
+    assert "categories" in data_get
+    assert "minecraft" in data_get["categories"]
+    assert "subway" in data_get["categories"]
+
+    # 2. POST /api/backgrounds/download
+    with patch(
+        "autoshorts.media.background_fetcher.download_preset_backgrounds",
+        return_value={"minecraft": ["mock/mc.mp4"], "subway": ["mock/subway.mp4"]},
+    ):
+        res_dl = client.post(
+            "/api/backgrounds/download", json={"categories": ["minecraft", "subway"]}
+        )
+        assert res_dl.status_code == 200
+        data_dl = res_dl.json()
+        assert data_dl["success"] is True
+        assert "minecraft" in data_dl["categories"]
+
+
+def test_dashboard_backgrounds_upload_endpoint(dashboard_client: dict[str, Any]):
+    """Verify POST /api/backgrounds/upload handles file uploads cleanly."""
+    client: TestClient = dashboard_client["client"]
+    dummy_mp4_bytes = b"\x00\x00\x00\x20ftypmp42" + b"\x00" * 100
+
+    files = {"file": ("custom_parkour.mp4", dummy_mp4_bytes, "video/mp4")}
+    data = {"category": "minecraft"}
+
+    res = client.post("/api/backgrounds/upload", files=files, data=data)
+    assert res.status_code == 200
+    res_data = res.json()
+    assert res_data["success"] is True
+    assert res_data["category"] == "minecraft"
+    assert res_data["filename"] == "custom_parkour.mp4"
+
+
+def test_get_ffmpeg_path_detection():
+    """Verify get_ffmpeg_path detects binary via system or imageio_ffmpeg."""
+    from autoshorts.media.compositor import get_ffmpeg_path as comp_get_ffmpeg
+    from autoshorts.media.encoder_probe import get_ffmpeg_path
+
+    p1 = get_ffmpeg_path()
+    p2 = comp_get_ffmpeg()
+    assert p1 is not None and len(p1) > 0
+    assert p2 is not None and len(p2) > 0
+    assert p1 == p2
