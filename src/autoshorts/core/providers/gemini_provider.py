@@ -109,14 +109,32 @@ class GeminiProvider(BaseLLMProvider):
         return models
 
     def resolve_model(self) -> str:
-        """Resolve the model dynamically without any hardcoded model identifier string."""
+        """Resolve the model dynamically, prioritizing gemini-3.5-flash-lite, then flash, then available."""
         if self._resolved_model:
             return self._resolved_model
 
         available = self.list_models()
-        # Choose provider's recommended default: prefer models matching 'flash', else first available
-        preferred = [m for m in available if "flash" in m.lower()]
-        selected = preferred[0] if preferred else available[0]
+        # Priority order:
+        # 1. Exact match or version match for 'gemini-3.5-flash-lite'
+        # 2. Any model containing 'flash-lite'
+        # 3. Any model containing '3.5-flash'
+        # 4. Any model containing 'flash'
+        # 5. First available model
+        lite_35 = [m for m in available if "3.5" in m.lower() and "flash" in m.lower() and "lite" in m.lower()]
+        if lite_35:
+            selected = lite_35[0]
+        else:
+            flash_lite = [m for m in available if "flash" in m.lower() and "lite" in m.lower()]
+            if flash_lite:
+                selected = flash_lite[0]
+            else:
+                flash_35 = [m for m in available if "3.5" in m.lower() and "flash" in m.lower()]
+                if flash_35:
+                    selected = flash_35[0]
+                else:
+                    preferred = [m for m in available if "flash" in m.lower()]
+                    selected = preferred[0] if preferred else available[0]
+
         self._resolved_model = selected
         logger.info("Gemini resolved dynamic default model: %s", redact(selected))
         return selected
