@@ -151,6 +151,10 @@ class ClipSelection(BaseModel):
     thumbnail_path: str | None = Field(
         default=None, description="Path to extracted or rendered thumbnail image"
     )
+    bgm_path: str | None = Field(default=None, description="Explicit background music path")
+    bgm_volume: float | None = Field(
+        default=None, description="BGM volume multiplier (0.0 to 1.0)"
+    )
 
 
 SelectedClip = ClipSelection
@@ -254,6 +258,14 @@ class Job(BaseModel):
     edl: EditDecisionList | None = Field(default=None, description="Generated Edit Decision List")
     raw_video_path: str | None = Field(default=None, description="Path to precision downloaded cut")
     subtitles_path: str | None = Field(default=None, description="Path to generated .ass subtitles")
+    bgm_path: str | None = Field(default=None, description="Explicit background music path")
+    bgm_volume: float | None = Field(default=None, description="BGM volume multiplier (0.0 to 1.0)")
+    viral_master_plan: dict[str, Any] | None = Field(
+        default=None, description="Compiled multi-agent plan"
+    )
+    rhythm_metadata: dict[str, Any] | None = Field(
+        default=None, description="Rhythm and beat grid info"
+    )
     rendered_video_path: str | None = Field(
         default=None, description="Path to master 1080x1920 MP4"
     )

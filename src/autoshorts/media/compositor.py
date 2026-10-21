@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -600,6 +601,10 @@ class FFmpegCompositor:
         target_lufs: float | None = None,
         bg_music_volume: float | None = None,
         crop_focus: str = "center",
+        bg_music_path: Path | str | None = None,
+        bgm_path: Path | str | None = None,
+        bgm_volume: float | None = None,
+        rhythm_ducking_release: int | None = None,
         **kwargs: Any,
     ) -> Path:
         """Render a vertical 1080x1920 Short MP4 via FFmpeg executing the EDL.
@@ -649,9 +654,16 @@ class FFmpegCompositor:
         eff_target_lufs = (
             target_lufs if target_lufs is not None else getattr(audio_cfg, "target_lufs", -14.0)
         )
-        eff_bg_music_vol = (
+        job = kwargs.get("job")
+        effective_bgm = bg_music_path or bgm_path or (getattr(job, "bgm_path", None) if job else None)
+        effective_vol = (
             bg_music_volume
             if bg_music_volume is not None
+            else (bgm_volume if bgm_volume is not None else (getattr(job, "bgm_volume", None) if job else None))
+        )
+        eff_bg_music_vol = (
+            effective_vol
+            if effective_vol is not None
             else getattr(audio_cfg, "bg_music_volume", 0.18)
         )
 
@@ -678,6 +690,9 @@ class FFmpegCompositor:
 
         level = dopamine_level or self.config.job_defaults.dopamine_level
         preset = get_dopamine_preset(level)
+        enable_ducking = bool(effective_bgm) or getattr(preset, "enable_music_ducking", False)
+        if enable_ducking and not getattr(preset, "enable_music_ducking", False):
+            preset = replace(preset, enable_music_ducking=True)
         encoder = self._get_encoder()
 
         # Input 0: Source clip with trim
@@ -745,10 +760,16 @@ class FFmpegCompositor:
         music_idx: int | None = None
         sfx_idx: int | None = None
 
-        if preset.enable_music_ducking:
-            music_files = find_user_audio_assets("music")
-            if music_files:
-                chosen_music = random.choice(music_files)
+        if enable_ducking:
+            chosen_music: Path | str | None = None
+            if effective_bgm:
+                chosen_music = effective_bgm
+            else:
+                music_files = find_user_audio_assets("music")
+                if music_files:
+                    chosen_music = random.choice(music_files)
+
+            if chosen_music:
                 cmd.extend(
                     ["-stream_loop", "-1", "-t", f"{target_duration:.3f}", "-i", str(chosen_music)]
                 )
@@ -790,6 +811,17 @@ class FFmpegCompositor:
             bg_music_volume=eff_bg_music_vol,
             crop_focus=eff_crop_focus,
         )
+
+        effective_release = rhythm_ducking_release or kwargs.get("rhythm_ducking_release")
+        if effective_release is None and job:
+            r_meta = getattr(job, "rhythm_metadata", None)
+            if isinstance(r_meta, dict):
+                effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
+
+        if effective_release is not None and "release=300" in filtergraph:
+            filtergraph = filtergraph.replace(
+                "release=300", f"release={int(effective_release)}"
+            )
 
         cmd.extend(["-filter_complex", filtergraph])
         cmd.extend(["-map", out_v, "-map", out_a])

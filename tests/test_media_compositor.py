@@ -968,3 +968,118 @@ def test_extract_thumbnail_auto_best_frame(tmp_path: Path):
     assert "-frames:v 1" in final_cmd
     assert "-q:v 2" in final_cmd
 
+
+def test_explicit_bg_music_enables_ducking_on_medium_preset(tmp_path: Path):
+    """Verify that passing explicit bg_music_path forces music ducking active
+
+    even on the 'medium' dopamine preset where preset.enable_music_ducking is normally False (CRIT-01).
+    """
+    medium_preset = get_dopamine_preset("medium")
+    assert medium_preset.enable_music_ducking is False
+
+    src_video = tmp_path / "src.mp4"
+    src_video.write_bytes(b"dummy source")
+    sub_file = tmp_path / "subs.ass"
+    sub_file.write_text("[Script Info]\n", encoding="utf-8")
+    bgm_file = tmp_path / "custom_bgm.mp3"
+    bgm_file.write_bytes(b"dummy bgm mp3")
+    out_file = tmp_path / "output.mp4"
+
+    comp = FFmpegCompositor()
+    captured_cmd: list[str] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"rendered bytes")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+    ):
+        comp.compose(
+            job_id="job_bgm_medium_test",
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=sub_file,
+            output_path=out_file,
+            dopamine_level="medium",
+            bg_music_path=bgm_file,
+            bg_music_volume=0.25,
+            rhythm_ducking_release=220,
+        )
+
+    cmd_str = " ".join(captured_cmd)
+    assert str(bgm_file) in cmd_str
+    assert "-stream_loop" in cmd_str
+
+    fg_idx = captured_cmd.index("-filter_complex")
+    filtergraph = captured_cmd[fg_idx + 1]
+
+    # Verify sidechain ducking is present in the filtergraph and parameters match
+    assert "sidechaincompress=" in filtergraph
+    assert "release=220" in filtergraph
+    assert "volume=0.25" in filtergraph
+    assert "amix=inputs=2:duration=first:dropout_transition=2" in filtergraph
+
+
+def test_explicit_bgm_path_alias_and_job_ducking(tmp_path: Path):
+    """Verify bgm_path alias and job.bgm_path/bgm_volume standardized resolution."""
+    from autoshorts.core.models import Job
+
+    src_video = tmp_path / "src2.mp4"
+    src_video.write_bytes(b"dummy source")
+    sub_file = tmp_path / "subs2.ass"
+    sub_file.write_text("[Script Info]\n", encoding="utf-8")
+    bgm_file = tmp_path / "job_bgm.mp3"
+    bgm_file.write_bytes(b"dummy bgm mp3")
+    out_file = tmp_path / "output2.mp4"
+
+    comp = FFmpegCompositor()
+    captured_cmd: list[str] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"rendered bytes")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    job = Job(
+        id="job_bgm_alias",
+        source_url="https://youtube.com/watch?v=123",
+        bgm_path=str(bgm_file),
+        bgm_volume=0.33,
+    )
+
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+    ):
+        comp.compose(
+            job_id=job.id,
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=sub_file,
+            output_path=out_file,
+            dopamine_level="medium",
+            job=job,
+        )
+
+    fg_idx = captured_cmd.index("-filter_complex")
+    filtergraph = captured_cmd[fg_idx + 1]
+    assert str(bgm_file) in " ".join(captured_cmd)
+    assert "sidechaincompress=" in filtergraph
+    assert "volume=0.33" in filtergraph
+
+

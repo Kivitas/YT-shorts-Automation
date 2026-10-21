@@ -1082,7 +1082,6 @@ class ShortsPipeline:
             )
             voice_boost = getattr(audio_cfg, "voice_boost", True)
             target_lufs = getattr(audio_cfg, "target_lufs", -14.0)
-            bg_music_volume = getattr(audio_cfg, "bg_music_volume", 0.20)
             crop_focus = getattr(job, "crop_focus", None) or "center"
 
             comp_kwargs: dict[str, Any] = {
@@ -1104,8 +1103,9 @@ class ShortsPipeline:
                 "progress_bar_color": progress_bar_color,
                 "voice_boost": voice_boost,
                 "target_lufs": target_lufs,
-                "bg_music_volume": bg_music_volume,
+                "bg_music_volume": getattr(job, "bgm_volume", None),
                 "crop_focus": crop_focus,
+                "bg_music_path": getattr(job, "bgm_path", None),
             }
             try:
                 c_sig = inspect.signature(self.compositor.compose)

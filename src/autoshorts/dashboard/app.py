@@ -2696,6 +2696,87 @@ def create_app(
             "edl": job.edl.model_dump(),
         }
 
+    # -------------------------------------------------------------------------
+    # SuperBrain Swarm & Multi-Agent Orchestrator Routes
+    # -------------------------------------------------------------------------
+    from autoshorts.brain.orchestrator import MasterBrainOrchestrator, PreflightCredentialError
+
+    brain_orchestrator = MasterBrainOrchestrator(config=cfg, pipeline_runner=pipe)
+    app.state.brain_orchestrator = brain_orchestrator
+
+    @app.post("/api/brain/orchestrate")
+    async def brain_orchestrate(request: Request) -> dict[str, Any]:
+        """Execute multi-agent DAG orchestration for Mode A (link repurposing) or Mode B (generative)."""
+        body = await request.json()
+        video_url = body.get("video_url")
+        raw_mode = body.get("mode")
+        inferred_mode = raw_mode or ("mode_a" if video_url else "mode_b")
+
+        try:
+            plan = await brain_orchestrator.orchestrate(
+                mode=inferred_mode,
+                topic=body.get("topic"),
+                niche=body.get("niche", "general"),
+                video_url=video_url,
+                transcript_slice=body.get("transcript_slice"),
+                candidate_windows=body.get("candidate_windows"),
+                candidate_transcripts=body.get("candidate_transcripts"),
+                custom_instructions=body.get("custom_instructions"),
+                skip_preflight=bool(body.get("skip_preflight", False)),
+            )
+            return {
+                "success": True,
+                "plan_id": plan.plan_id,
+                "status": plan.status,
+                "plan": plan.model_dump(),
+            }
+        except PreflightCredentialError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=exc.to_dict(),
+            ) from exc
+        except Exception as exc:
+            logger.exception("SuperBrain orchestration route error")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/api/brain/status/{plan_id}")
+    async def get_brain_status(plan_id: str) -> dict[str, Any]:
+        """Fetch current plan status and compiled ViralMasterPlan for plan_id."""
+        plan = brain_orchestrator.get_plan(plan_id)
+        if not plan:
+            raise HTTPException(status_code=404, detail=f"Plan '{plan_id}' not found")
+        return {
+            "success": True,
+            "plan_id": plan_id,
+            "status": plan.status,
+            "plan": plan.model_dump(),
+        }
+
+    @app.post("/api/brain/critic/evaluate")
+    async def brain_critic_evaluate(request: Request) -> dict[str, Any]:
+        """Directly invoke HookCriticAgent for sub-40ms hook triage or Mode A cut review."""
+        body = await request.json()
+        eval_mode = body.get("mode", "mode_b")
+
+        if eval_mode == "mode_a":
+            review = await brain_orchestrator.hook_critic.evaluate_mode_a(
+                transcript_slice=body.get("transcript_slice", ""),
+                start_sec=float(body.get("start_sec", 0.0)),
+                end_sec=float(body.get("end_sec", 45.0)),
+                candidate_index=int(body.get("candidate_index", 0)),
+                candidate_count=int(body.get("candidate_count", 1)),
+            )
+        else:
+            review = await brain_orchestrator.hook_critic.evaluate_mode_b(
+                hook_text=body.get("hook_text", ""),
+                attempt=int(body.get("attempt", 1)),
+            )
+
+        return {
+            "success": True,
+            "review": review.model_dump(),
+        }
+
     return app
 
 
