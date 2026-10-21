@@ -18,9 +18,97 @@ from typing import Any
 
 import httpx
 
+from autoshorts.core.credential_guardian import CredentialHealthReport, classify_api_error
+from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.research_agent.models import TrendingSourceVideo, ViralScoreBreakdown
 
 logger = logging.getLogger("autoshorts.research_agent.trending")
+
+QUOTA_COST_SEARCH_LIST: int = 100
+QUOTA_COST_VIDEOS_LIST: int = 1
+
+NICHE_TO_YOUTUBE_CATEGORY: dict[str, str] = {
+    "ai_tech": "28",  # Science & Technology
+    "science": "28",  # Science & Technology
+    "gaming": "20",  # Gaming
+    "business": "27",  # Education
+    "finance": "27",  # Education
+    "health": "27",  # Education
+    "self_improvement": "27",  # Education
+    "podcasts": "24",  # Entertainment
+    "music": "10",  # Music
+}
+
+
+class TrendingQueryResult(list):
+    """List of TrendingSourceVideo models carrying structured API and quota diagnostics."""
+
+    def __init__(
+        self,
+        items: list[TrendingSourceVideo] | None = None,
+        api_configured: bool = True,
+        message: str | None = None,
+        status: str = "ok",
+        error_code: str | None = None,
+        health_report: CredentialHealthReport | None = None,
+    ) -> None:
+        super().__init__(items or [])
+        self.api_configured = api_configured
+        self.message = message
+        self.status = status
+        self.error_code = error_code
+        self.health_report = health_report
+
+    def __getitem__(self, item: Any) -> Any:
+        if isinstance(item, str):
+            if item in ("videos", "items"):
+                return list(self)
+            if hasattr(self, item):
+                return getattr(self, item)
+            raise KeyError(item)
+        return super().__getitem__(item)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in ("videos", "items"):
+            return list(self)
+        if hasattr(self, key):
+            val = getattr(self, key)
+            return val if val is not None else default
+        return default
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.status == "ok",
+            "api_configured": self.api_configured,
+            "message": self.message,
+            "status": self.status,
+            "error_code": self.error_code,
+            "videos": [v.model_dump() if hasattr(v, "model_dump") else v for v in self],
+            "count": len(self),
+            "health_report": self.health_report.model_dump() if self.health_report else None,
+        }
+
+
+def _build_result(
+    items: list[TrendingSourceVideo],
+    api_configured: bool = True,
+    message: str | None = None,
+    status: str = "ok",
+    error_code: str | None = None,
+    health_report: CredentialHealthReport | None = None,
+    return_structured: bool = False,
+) -> list[TrendingSourceVideo] | TrendingQueryResult | dict[str, Any]:
+    res = TrendingQueryResult(
+        items=items,
+        api_configured=api_configured,
+        message=message,
+        status=status,
+        error_code=error_code,
+        health_report=health_report,
+    )
+    if return_structured:
+        return res.to_dict()
+    return res
 
 
 def parse_iso8601_duration(duration_str: str) -> float:
@@ -445,31 +533,240 @@ def _build_curated_seed_results(niche: str) -> list[TrendingSourceVideo]:
     return results
 
 
-def _fetch_live_youtube_api(
-    query: str,
-    api_key: str,
+def _parse_video_items(
+    items: list[dict[str, Any]],
+    now_dt: datetime,
+    norm_niche: str,
+) -> list[TrendingSourceVideo]:
+    """Parse raw items from YouTube Data API videos.list into TrendingSourceVideo models."""
+    results: list[TrendingSourceVideo] = []
+    for v_item in items:
+        vid = v_item.get("id")
+        if not vid or not isinstance(vid, str):
+            continue
+        snippet = v_item.get("snippet", {})
+        stats = v_item.get("statistics", {})
+        content_details = v_item.get("contentDetails", {})
+
+        title = snippet.get("title", "Untitled")
+        channel = snippet.get("channelTitle", "YouTube Creator")
+        channel_id = snippet.get("channelId", "")
+        ch_url = (
+            f"https://www.youtube.com/channel/{channel_id}"
+            if channel_id
+            else "https://youtube.com"
+        )
+
+        views = int(stats.get("viewCount", 0))
+        likes = int(stats.get("likeCount", 0))
+        dur = parse_iso8601_duration(content_details.get("duration", ""))
+
+        pub_str = snippet.get("publishedAt", "")
+        hours_since = 48.0
+        if pub_str:
+            try:
+                pub_dt = datetime.fromisoformat(pub_str)
+                hours_since = max(0.5, (now_dt - pub_dt).total_seconds() / 3600.0)
+            except Exception:
+                hours_since = 48.0
+
+        vph = round(views / max(0.5, hours_since), 1)
+        v_score, breakdown = compute_viral_score(
+            views=views, likes=likes, duration_sec=dur, hours_since_upload=hours_since
+        )
+
+        thumb = (
+            snippet.get("thumbnails", {}).get("high", {}).get("url")
+            or snippet.get("thumbnails", {}).get("medium", {}).get("url")
+            or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+        )
+
+        results.append(
+            TrendingSourceVideo(
+                video_id=vid,
+                url=f"https://www.youtube.com/watch?v={vid}",
+                title=title,
+                channel=channel,
+                channel_url=ch_url,
+                duration_seconds=dur,
+                duration_formatted=format_duration(dur),
+                view_count=views,
+                like_count=likes,
+                hours_since_upload=round(hours_since, 1),
+                views_per_hour=vph,
+                thumbnail_url=thumb,
+                viral_score=v_score,
+                score_breakdown=breakdown,
+                suggested_focus_prompt=f"Clip peak high-impact insight from {channel}.",
+                recommended_studio_profile="hormozi"
+                if "ai" in norm_niche
+                else "podcast_70_30",
+                niche_category=norm_niche,
+            )
+        )
+    return results
+
+
+def fetch_via_official_youtube_api(
+    query: str = "",
+    api_key: str = "",
     limit: int = 9,
     norm_niche: str = "ai_tech",
-) -> list[TrendingSourceVideo]:
-    """Fetch 100% real live view counts, like counts, and metadata from official YouTube Data API v3."""
+    quota_tracker: QuotaTracker | Any | None = None,
+    prefer_chart: bool = False,
+    return_structured: bool = False,
+    video_category_id: str | None = None,
+) -> list[TrendingSourceVideo] | TrendingQueryResult | dict[str, Any]:
+    """Fetch live view counts, like counts, and metadata from official YouTube Data API v3.
+
+    Enforces dual-bucket quota checking and expenditure recording via QuotaTracker.
+    Classifies 403 quotaExceeded, 400/403 keyInvalid, and network errors via credential_guardian.
+    Prefers videos.list chart=mostPopular (1 unit) when prefer_chart=True or when search.list (100 units)
+    cannot be afforded by the quota tracker.
+    """
+    if not api_key or not api_key.strip():
+        return _build_result(
+            [],
+            api_configured=False,
+            message="YouTube Data API key is missing.",
+            status="missing_key",
+            return_structured=return_structured,
+        )
+
+    clean_key = api_key.strip()
+    norm_niche_clean = norm_niche.lower().replace("-", "_").replace(" ", "_")
+
+    # Determine whether to use chart=mostPopular (1 unit) or search.list (100 units)
+    use_chart = prefer_chart or not query.strip()
+    if not use_chart and quota_tracker is not None and hasattr(quota_tracker, "can_verify"):
+        if not quota_tracker.can_verify(QUOTA_COST_SEARCH_LIST):
+            if quota_tracker.can_verify(QUOTA_COST_VIDEOS_LIST):
+                logger.info(
+                    "YouTube API general quota cannot afford search.list (100 units); "
+                    "falling back to videos.list chart=mostPopular (1 unit) to reduce quota usage."
+                )
+                use_chart = True
+            else:
+                msg = (
+                    f"YouTube Data API quota cannot afford {QUOTA_COST_SEARCH_LIST} units "
+                    "in general bucket; skipping API call."
+                )
+                logger.warning(msg)
+                return _build_result(
+                    [],
+                    api_configured=True,
+                    message=msg,
+                    status="quota_exhausted",
+                    return_structured=return_structured,
+                )
+
     try:
-        search_url = "https://www.googleapis.com/youtube/v3/search"
-        search_params = {
-            "part": "snippet",
-            "q": query,
-            "type": "video",
-            "videoDuration": "medium",
-            "order": "viewCount",
-            "maxResults": min(max(limit, 5), 25),
-            "key": api_key,
-        }
         with httpx.Client(timeout=10.0) as client:
+            if use_chart:
+                if quota_tracker is not None and hasattr(quota_tracker, "can_verify"):
+                    if not quota_tracker.can_verify(QUOTA_COST_VIDEOS_LIST):
+                        msg = (
+                            f"YouTube Data API quota cannot afford videos.list ({QUOTA_COST_VIDEOS_LIST} unit); "
+                            "skipping API call."
+                        )
+                        logger.warning(msg)
+                        return _build_result(
+                            [],
+                            api_configured=True,
+                            message=msg,
+                            status="quota_exhausted",
+                            return_structured=return_structured,
+                        )
+
+                cat_id = video_category_id or NICHE_TO_YOUTUBE_CATEGORY.get(norm_niche_clean)
+                chart_params: dict[str, Any] = {
+                    "part": "snippet,statistics,contentDetails",
+                    "chart": "mostPopular",
+                    "maxResults": min(max(limit, 5), 25),
+                    "key": clean_key,
+                }
+                if cat_id:
+                    chart_params["videoCategoryId"] = cat_id
+
+                v_resp = client.get(
+                    "https://www.googleapis.com/youtube/v3/videos", params=chart_params
+                )
+                if v_resp.status_code != 200:
+                    err_payload: Any = None
+                    try:
+                        err_payload = v_resp.json()
+                    except Exception:
+                        err_payload = v_resp.text
+                    report = classify_api_error("youtube_api_key", err_payload)
+                    logger.warning(
+                        "YouTube API videos.list error (%d, status=%s): %s",
+                        v_resp.status_code,
+                        report.status,
+                        report.message,
+                    )
+                    return _build_result(
+                        [],
+                        api_configured=True,
+                        message=report.message,
+                        status=report.status,
+                        error_code=report.error_code,
+                        health_report=report,
+                        return_structured=return_structured,
+                    )
+
+                if quota_tracker is not None and hasattr(quota_tracker, "record_general"):
+                    quota_tracker.record_general(QUOTA_COST_VIDEOS_LIST)
+
+                v_data = v_resp.json()
+                results = _parse_video_items(
+                    v_data.get("items", []), datetime.now(UTC), norm_niche_clean
+                )
+                results.sort(key=lambda x: x.viral_score, reverse=True)
+                return _build_result(
+                    results[:limit],
+                    api_configured=True,
+                    status="ok",
+                    return_structured=return_structured,
+                )
+
+            # Search path: search.list (100 units) followed by videos.list (1 unit)
+            search_url = "https://www.googleapis.com/youtube/v3/search"
+            search_params = {
+                "part": "snippet",
+                "q": query,
+                "type": "video",
+                "videoDuration": "medium",
+                "order": "viewCount",
+                "maxResults": min(max(limit, 5), 25),
+                "key": clean_key,
+            }
             s_resp = client.get(search_url, params=search_params)
             if s_resp.status_code != 200:
+                err_payload = None
+                try:
+                    err_payload = s_resp.json()
+                except Exception:
+                    err_payload = s_resp.text
+                report = classify_api_error("youtube_api_key", err_payload)
                 logger.warning(
-                    "YouTube search API returned status %d: %s", s_resp.status_code, s_resp.text
+                    "YouTube API search.list error (%d, status=%s): %s",
+                    s_resp.status_code,
+                    report.status,
+                    report.message,
                 )
-                return []
+                return _build_result(
+                    [],
+                    api_configured=True,
+                    message=report.message,
+                    status=report.status,
+                    error_code=report.error_code,
+                    health_report=report,
+                    return_structured=return_structured,
+                )
+
+            if quota_tracker is not None and hasattr(quota_tracker, "record_general"):
+                quota_tracker.record_general(QUOTA_COST_SEARCH_LIST)
+
             s_data = s_resp.json()
             items = s_data.get("items", [])
             video_ids = [
@@ -478,95 +775,93 @@ def _fetch_live_youtube_api(
                 if isinstance(item.get("id"), dict) and "videoId" in item["id"]
             ]
             if not video_ids:
-                return []
+                return _build_result(
+                    [],
+                    api_configured=True,
+                    status="ok",
+                    return_structured=return_structured,
+                )
+
+            if quota_tracker is not None and hasattr(quota_tracker, "can_verify"):
+                if not quota_tracker.can_verify(QUOTA_COST_VIDEOS_LIST):
+                    msg = (
+                        f"YouTube Data API quota cannot afford videos.list ({QUOTA_COST_VIDEOS_LIST} unit); "
+                        "skipping details fetch."
+                    )
+                    logger.warning(msg)
+                    return _build_result(
+                        [],
+                        api_configured=True,
+                        message=msg,
+                        status="quota_exhausted",
+                        return_structured=return_structured,
+                    )
 
             v_url = "https://www.googleapis.com/youtube/v3/videos"
             v_params = {
                 "part": "snippet,statistics,contentDetails",
                 "id": ",".join(video_ids),
-                "key": api_key,
+                "key": clean_key,
             }
             v_resp = client.get(v_url, params=v_params)
             if v_resp.status_code != 200:
+                err_payload = None
+                try:
+                    err_payload = v_resp.json()
+                except Exception:
+                    err_payload = v_resp.text
+                report = classify_api_error("youtube_api_key", err_payload)
                 logger.warning(
-                    "YouTube videos API returned status %d: %s", v_resp.status_code, v_resp.text
+                    "YouTube API videos.list error (%d, status=%s): %s",
+                    v_resp.status_code,
+                    report.status,
+                    report.message,
                 )
-                return []
+                return _build_result(
+                    [],
+                    api_configured=True,
+                    message=report.message,
+                    status=report.status,
+                    error_code=report.error_code,
+                    health_report=report,
+                    return_structured=return_structured,
+                )
+
+            if quota_tracker is not None and hasattr(quota_tracker, "record_general"):
+                quota_tracker.record_general(QUOTA_COST_VIDEOS_LIST)
+
             v_data = v_resp.json()
-
-            results: list[TrendingSourceVideo] = []
-            now_dt = datetime.now(UTC)
-
-            for v_item in v_data.get("items", []):
-                vid = v_item.get("id")
-                if not vid:
-                    continue
-                snippet = v_item.get("snippet", {})
-                stats = v_item.get("statistics", {})
-                content_details = v_item.get("contentDetails", {})
-
-                title = snippet.get("title", "Untitled")
-                channel = snippet.get("channelTitle", "YouTube Creator")
-                channel_id = snippet.get("channelId", "")
-                ch_url = (
-                    f"https://www.youtube.com/channel/{channel_id}"
-                    if channel_id
-                    else "https://youtube.com"
-                )
-
-                views = int(stats.get("viewCount", 0))
-                likes = int(stats.get("likeCount", 0))
-                dur = parse_iso8601_duration(content_details.get("duration", ""))
-
-                pub_str = snippet.get("publishedAt", "")
-                hours_since = 48.0
-                if pub_str:
-                    try:
-                        pub_dt = datetime.fromisoformat(pub_str)
-                        hours_since = max(0.5, (now_dt - pub_dt).total_seconds() / 3600.0)
-                    except Exception:
-                        hours_since = 48.0
-
-                vph = round(views / max(0.5, hours_since), 1)
-                v_score, breakdown = compute_viral_score(
-                    views=views, likes=likes, duration_sec=dur, hours_since_upload=hours_since
-                )
-
-                thumb = (
-                    snippet.get("thumbnails", {}).get("high", {}).get("url")
-                    or snippet.get("thumbnails", {}).get("medium", {}).get("url")
-                    or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-                )
-
-                results.append(
-                    TrendingSourceVideo(
-                        video_id=vid,
-                        url=f"https://www.youtube.com/watch?v={vid}",
-                        title=title,
-                        channel=channel,
-                        channel_url=ch_url,
-                        duration_seconds=dur,
-                        duration_formatted=format_duration(dur),
-                        view_count=views,
-                        like_count=likes,
-                        hours_since_upload=round(hours_since, 1),
-                        views_per_hour=vph,
-                        thumbnail_url=thumb,
-                        viral_score=v_score,
-                        score_breakdown=breakdown,
-                        suggested_focus_prompt=f"Clip peak high-impact insight from {channel}.",
-                        recommended_studio_profile="hormozi"
-                        if "ai" in norm_niche
-                        else "podcast_70_30",
-                        niche_category=norm_niche,
-                    )
-                )
-
+            results = _parse_video_items(
+                v_data.get("items", []), datetime.now(UTC), norm_niche_clean
+            )
             results.sort(key=lambda x: x.viral_score, reverse=True)
-            return results[:limit]
+            return _build_result(
+                results[:limit],
+                api_configured=True,
+                status="ok",
+                return_structured=return_structured,
+            )
+
     except Exception as e:
-        logger.warning("Live YouTube API fetch failed (%s); continuing waterfall.", e)
-        return []
+        report = classify_api_error("youtube_api_key", e)
+        logger.warning(
+            "Live YouTube API fetch failed (%s, status=%s): %s; continuing waterfall.",
+            type(e).__name__,
+            report.status,
+            report.message,
+        )
+        return _build_result(
+            [],
+            api_configured=True,
+            message=report.message,
+            status=report.status,
+            error_code=report.error_code,
+            health_report=report,
+            return_structured=return_structured,
+        )
+
+
+_fetch_live_youtube_api = fetch_via_official_youtube_api
 
 
 def discover_trending_sources(
@@ -576,7 +871,10 @@ def discover_trending_sources(
     timeout_sec: float = 15.0,
     allow_seed_fallback: bool = True,
     api_key: str | None = None,
-) -> list[TrendingSourceVideo]:
+    quota_tracker: QuotaTracker | Any | None = None,
+    prefer_chart: bool = False,
+    return_structured: bool = False,
+) -> list[TrendingSourceVideo] | TrendingQueryResult | dict[str, Any]:
     """Discover real trending videos and podcasts for YouTube Shorts clipping.
 
     1. Checks if YouTube Data API v3 key is provided/configured, and queries live metrics.
@@ -602,13 +900,22 @@ def discover_trending_sources(
         }
         search_query = niche_queries.get(norm_niche, f"{niche} podcast full episode")
 
+    last_api_result: TrendingQueryResult | None = None
+
     # 1. Query official YouTube Data API v3 if API key is present
     if key and key.strip():
-        live_yt = _fetch_live_youtube_api(
-            query=search_query, api_key=key.strip(), limit=limit, norm_niche=norm_niche
+        live_yt = fetch_via_official_youtube_api(
+            query=search_query,
+            api_key=key.strip(),
+            limit=limit,
+            norm_niche=norm_niche,
+            quota_tracker=quota_tracker,
+            prefer_chart=prefer_chart,
         )
         if live_yt:
             return live_yt
+        if isinstance(live_yt, TrendingQueryResult):
+            last_api_result = live_yt
 
     cmd = [
         "yt-dlp",
@@ -708,6 +1015,24 @@ def discover_trending_sources(
         return discovered[:limit]
 
     if not allow_seed_fallback:
+        if last_api_result is not None:
+            return _build_result(
+                [],
+                api_configured=True,
+                message=last_api_result.message,
+                status=last_api_result.status,
+                error_code=last_api_result.error_code,
+                health_report=last_api_result.health_report,
+                return_structured=return_structured,
+            )
+        if return_structured:
+            return _build_result(
+                [],
+                api_configured=bool(key),
+                message="No live trending sources found and seed fallback is disabled.",
+                status="empty",
+                return_structured=True,
+            )
         return []
 
     # Resilient fallback: return curated seeds
@@ -718,7 +1043,12 @@ def discover_trending_sources(
 
 __all__ = [
     "CURATED_FALLBACK_CATALOG",
+    "NICHE_TO_YOUTUBE_CATEGORY",
+    "QUOTA_COST_SEARCH_LIST",
+    "QUOTA_COST_VIDEOS_LIST",
+    "TrendingQueryResult",
     "compute_viral_score",
     "discover_trending_sources",
+    "fetch_via_official_youtube_api",
     "format_duration",
 ]

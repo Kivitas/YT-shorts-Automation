@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +31,14 @@ from autoshorts.research_agent import (
     synthesize_neural_tts,
 )
 from autoshorts.research_agent.models import TrendingSourceVideo
+from autoshorts.research_agent.song_recommender import (
+    TrendingMusicResult,
+    fetch_live_trending_music,
+)
+from autoshorts.research_agent.trending_sources import (
+    TrendingQueryResult,
+    fetch_via_official_youtube_api,
+)
 
 # =============================================================================
 # 1. Viral Scoring & Duration Tests
@@ -521,3 +529,410 @@ def test_api_analytics_endpoints(test_client: TestClient):
         r_sync = test_client.post("/api/analytics/sync", json={"force": True})
         assert r_sync.status_code == 200
         assert r_sync.json()["success"] is True
+
+
+# =============================================================================
+# 8. YouTube API Quota Tracking, 403 quotaExceeded & keyInvalid Tests
+# =============================================================================
+
+
+def test_trending_sources_quota_recording():
+    """Verify search.list (100) and videos.list (1) calls record quota expenditures via QuotaTracker."""
+    mock_search_resp = MagicMock()
+    mock_search_resp.status_code = 200
+    mock_search_resp.json.return_value = {
+        "items": [
+            {"id": {"videoId": "test_vid_1"}},
+            {"id": {"videoId": "test_vid_2"}},
+        ]
+    }
+
+    mock_videos_resp = MagicMock()
+    mock_videos_resp.status_code = 200
+    mock_videos_resp.json.return_value = {
+        "items": [
+            {
+                "id": "test_vid_1",
+                "snippet": {
+                    "title": "AI Breakthrough",
+                    "channelTitle": "Tech Channel",
+                    "channelId": "ch1",
+                    "publishedAt": "2026-01-01T00:00:00Z",
+                },
+                "statistics": {"viewCount": "250000", "likeCount": "12000"},
+                "contentDetails": {"duration": "PT45M"},
+            },
+            {
+                "id": "test_vid_2",
+                "snippet": {
+                    "title": "Quantum Computing",
+                    "channelTitle": "Science Channel",
+                    "channelId": "ch2",
+                    "publishedAt": "2026-01-02T00:00:00Z",
+                },
+                "statistics": {"viewCount": "180000", "likeCount": "9000"},
+                "contentDetails": {"duration": "PT30M"},
+            },
+        ]
+    }
+
+    mock_quota_tracker = MagicMock()
+    mock_quota_tracker.can_verify.return_value = True
+
+    with patch("httpx.Client.get", side_effect=[mock_search_resp, mock_videos_resp]):
+        results = fetch_via_official_youtube_api(
+            query="ai podcast",
+            api_key="valid_api_key",
+            quota_tracker=mock_quota_tracker,
+        )
+
+    assert len(results) == 2
+    assert results[0].video_id in ("test_vid_1", "test_vid_2")
+    assert mock_quota_tracker.record_general.call_args_list == [call(100), call(1)]
+    assert results.api_configured is True
+    assert results.status == "ok"
+
+
+def test_trending_sources_chart_preference_quota_recording():
+    """Verify prefer_chart=True uses videos.list chart=mostPopular and records only 1 unit."""
+    mock_videos_resp = MagicMock()
+    mock_videos_resp.status_code = 200
+    mock_videos_resp.json.return_value = {
+        "items": [
+            {
+                "id": "chart_vid_1",
+                "snippet": {
+                    "title": "Trending Tech",
+                    "channelTitle": "Viral Tech",
+                    "channelId": "ch_chart",
+                    "publishedAt": "2026-01-01T00:00:00Z",
+                },
+                "statistics": {"viewCount": "500000", "likeCount": "25000"},
+                "contentDetails": {"duration": "PT20M"},
+            }
+        ]
+    }
+
+    mock_quota_tracker = MagicMock()
+    mock_quota_tracker.can_verify.return_value = True
+
+    with patch("httpx.Client.get", return_value=mock_videos_resp) as mock_get:
+        results = fetch_via_official_youtube_api(
+            api_key="valid_api_key",
+            prefer_chart=True,
+            quota_tracker=mock_quota_tracker,
+        )
+
+    assert len(results) == 1
+    assert results[0].video_id == "chart_vid_1"
+    assert mock_get.call_count == 1
+    call_params = mock_get.call_args.kwargs.get("params", {})
+    assert call_params.get("chart") == "mostPopular"
+    assert mock_quota_tracker.record_general.call_args_list == [call(1)]
+
+
+def test_trending_sources_quota_insufficient_skips():
+    """Verify call is skipped without network traffic when quota tracker cannot afford units."""
+    mock_quota_tracker = MagicMock()
+    mock_quota_tracker.can_verify.return_value = False
+
+    with patch("httpx.Client.get") as mock_get:
+        results = fetch_via_official_youtube_api(
+            query="ai podcast",
+            api_key="valid_api_key",
+            quota_tracker=mock_quota_tracker,
+        )
+
+    assert mock_get.call_count == 0
+    assert len(results) == 0
+    assert isinstance(results, TrendingQueryResult)
+    assert results.api_configured is True
+    assert results.status == "quota_exhausted"
+    assert "quota cannot afford" in results.message.lower()
+
+
+def test_trending_sources_search_cannot_afford_falls_back_to_chart():
+    """Verify that when 100 units cannot be afforded but 1 unit can, it falls back to chart=mostPopular."""
+    mock_quota_tracker = MagicMock()
+    mock_quota_tracker.can_verify.side_effect = lambda units: units <= 1
+
+    mock_chart_resp = MagicMock()
+    mock_chart_resp.status_code = 200
+    mock_chart_resp.json.return_value = {
+        "items": [
+            {
+                "id": "fallback_chart_vid",
+                "snippet": {
+                    "title": "Reduced Quota Video",
+                    "channelTitle": "Creator",
+                    "channelId": "ch_fallback",
+                    "publishedAt": "2026-01-01T00:00:00Z",
+                },
+                "statistics": {"viewCount": "300000", "likeCount": "15000"},
+                "contentDetails": {"duration": "PT25M"},
+            }
+        ]
+    }
+
+    with patch("httpx.Client.get", return_value=mock_chart_resp) as mock_get:
+        results = fetch_via_official_youtube_api(
+            query="ai podcast",
+            api_key="valid_api_key",
+            quota_tracker=mock_quota_tracker,
+        )
+
+    assert mock_get.call_count == 1
+    call_params = mock_get.call_args.kwargs.get("params", {})
+    assert call_params.get("chart") == "mostPopular"
+    assert mock_quota_tracker.record_general.call_args_list == [call(1)]
+    assert len(results) == 1
+    assert results[0].video_id == "fallback_chart_vid"
+
+
+def test_trending_sources_quota_exceeded_403():
+    """Verify HTTP 403 quotaExceeded is classified via credential guardian with api_configured=True."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 403
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 403,
+            "message": "The request cannot be completed because you have exceeded your quota.",
+            "errors": [
+                {
+                    "message": "The request cannot be completed because you have exceeded your quota.",
+                    "domain": "youtube.quota",
+                    "reason": "quotaExceeded",
+                }
+            ],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with patch("httpx.Client.get", return_value=mock_err_resp):
+        results = fetch_via_official_youtube_api(
+            query="ai podcast",
+            api_key="valid_api_key",
+        )
+
+    assert len(results) == 0
+    assert isinstance(results, TrendingQueryResult)
+    assert results.api_configured is True
+    assert results.status == "quota_exhausted"
+    assert "quota" in results.message.lower()
+    assert results["api_configured"] is True
+    assert results.get("status") == "quota_exhausted"
+
+
+def test_trending_sources_invalid_key_400():
+    """Verify HTTP 400 keyInvalid is classified via credential guardian with api_configured=True."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 400
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 400,
+            "message": "API key not valid. Please pass a valid API key.",
+            "errors": [
+                {
+                    "message": "API key not valid. Please pass a valid API key.",
+                    "domain": "global",
+                    "reason": "keyInvalid",
+                }
+            ],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with patch("httpx.Client.get", return_value=mock_err_resp):
+        results = fetch_via_official_youtube_api(
+            query="ai podcast",
+            api_key="invalid_dummy_key",
+        )
+
+    assert len(results) == 0
+    assert results.api_configured is True
+    assert results.status == "invalid_key"
+    assert "invalid" in results.message.lower() or "rejected" in results.message.lower()
+    assert results["api_configured"] is True
+
+
+def test_music_quota_recording():
+    """Verify fetch_live_trending_music records 1 general quota unit via QuotaTracker."""
+    mock_music_resp = MagicMock()
+    mock_music_resp.status_code = 200
+    mock_music_resp.json.return_value = {
+        "items": [
+            {
+                "id": "music_track_1",
+                "snippet": {
+                    "title": "Viral Music Hit",
+                    "channelTitle": "Pop Artist",
+                },
+            }
+        ]
+    }
+
+    mock_quota_tracker = MagicMock()
+    mock_quota_tracker.can_verify.return_value = True
+
+    with patch("httpx.Client.get", return_value=mock_music_resp):
+        results = fetch_live_trending_music(
+            api_key="valid_api_key",
+            quota_tracker=mock_quota_tracker,
+        )
+
+    assert len(results) == 1
+    assert results[0].sound_id == "yt_music_music_track_1"
+    assert results[0].title == "Viral Music Hit"
+    assert mock_quota_tracker.record_general.call_args_list == [call(1)]
+    assert results.api_configured is True
+    assert results.status == "ok"
+
+
+def test_music_quota_insufficient_skips():
+    """Verify trending music fetch skips network request when quota tracker cannot afford 1 unit."""
+    mock_quota_tracker = MagicMock()
+    mock_quota_tracker.can_verify.return_value = False
+
+    with patch("httpx.Client.get") as mock_get:
+        results = fetch_live_trending_music(
+            api_key="valid_api_key",
+            quota_tracker=mock_quota_tracker,
+        )
+
+    assert mock_get.call_count == 0
+    assert len(results) == 0
+    assert isinstance(results, TrendingMusicResult)
+    assert results.api_configured is True
+    assert results.status == "quota_exhausted"
+    assert "quota cannot afford" in results.message.lower()
+
+
+def test_music_quota_exceeded_403():
+    """Verify trending music handles HTTP 403 quotaExceeded and classifies correctly."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 403
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 403,
+            "message": "The request cannot be completed because you have exceeded your quota.",
+            "errors": [{"reason": "quotaExceeded"}],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with patch("httpx.Client.get", return_value=mock_err_resp):
+        results = fetch_live_trending_music(api_key="valid_api_key")
+
+    assert len(results) == 0
+    assert isinstance(results, TrendingMusicResult)
+    assert results.api_configured is True
+    assert results.status == "quota_exhausted"
+    assert "quota" in results.message.lower()
+    assert results["api_configured"] is True
+
+
+def test_music_invalid_key_400():
+    """Verify trending music handles HTTP 400 keyInvalid and classifies correctly."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 400
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 400,
+            "message": "API key not valid. Please pass a valid API key.",
+            "errors": [{"reason": "keyInvalid"}],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with patch("httpx.Client.get", return_value=mock_err_resp):
+        results = fetch_live_trending_music(api_key="bad_api_key")
+
+    assert len(results) == 0
+    assert results.api_configured is True
+    assert results.status == "invalid_key"
+    assert results["api_configured"] is True
+
+
+def test_discover_trending_sources_zero_phantom_on_api_error():
+    """Verify zero phantom data returned when allow_seed_fallback=False and API error occurs."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 403
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 403,
+            "message": "The request cannot be completed because you have exceeded your quota.",
+            "errors": [{"reason": "quotaExceeded"}],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with (
+        patch("httpx.Client.get", return_value=mock_err_resp),
+        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="yt-dlp", timeout=1.0)),
+    ):
+        results = discover_trending_sources(
+            niche="ai_tech",
+            api_key="test_api_key",
+            allow_seed_fallback=False,
+        )
+
+    assert len(results) == 0
+    assert results == []
+    assert results.api_configured is True
+    assert results.status == "quota_exhausted"
+
+
+def test_get_trending_shorts_audio_zero_phantom_on_api_error():
+    """Verify zero phantom audio returned when allow_seed_fallback=False and API key is invalid."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 400
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 400,
+            "message": "API key not valid. Please pass a valid API key.",
+            "errors": [{"reason": "keyInvalid"}],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with patch("httpx.Client.get", return_value=mock_err_resp):
+        results = get_trending_shorts_audio(
+            genre="all",
+            api_key="bad_api_key",
+            allow_seed_fallback=False,
+        )
+
+    assert len(results) == 0
+    assert results == []
+    assert isinstance(results, TrendingMusicResult)
+    assert results.api_configured is True
+    assert results.status == "invalid_key"
+
+
+def test_structured_return_mode():
+    """Verify return_structured=True produces a structured dict with full metadata."""
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 403
+    mock_err_resp.json.return_value = {
+        "error": {
+            "code": 403,
+            "message": "The request cannot be completed because you have exceeded your quota.",
+            "errors": [{"reason": "quotaExceeded"}],
+        }
+    }
+    mock_err_resp.text = json.dumps(mock_err_resp.json.return_value)
+
+    with patch("httpx.Client.get", return_value=mock_err_resp):
+        res_dict = fetch_via_official_youtube_api(
+            query="test",
+            api_key="test_api_key",
+            return_structured=True,
+        )
+
+    assert isinstance(res_dict, dict)
+    assert res_dict["success"] is False
+    assert res_dict["api_configured"] is True
+    assert res_dict["status"] == "quota_exhausted"
+    assert "quota" in res_dict["message"].lower()
+    assert res_dict["videos"] == []
+    assert res_dict["count"] == 0

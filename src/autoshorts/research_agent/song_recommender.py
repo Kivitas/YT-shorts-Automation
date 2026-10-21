@@ -18,10 +18,87 @@ from typing import Any
 
 import httpx
 
+from autoshorts.core.credential_guardian import CredentialHealthReport, classify_api_error
 from autoshorts.core.paths import get_assets_dir
+from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.research_agent.models import TrendingShortsAudio, ViralBGMTrack
 
 logger = logging.getLogger("autoshorts.research_agent.music")
+
+QUOTA_COST_VIDEOS_LIST: int = 1
+
+
+class TrendingMusicResult(list):
+    """List of TrendingShortsAudio models carrying structured API and quota diagnostics."""
+
+    def __init__(
+        self,
+        items: list[TrendingShortsAudio] | None = None,
+        api_configured: bool = True,
+        message: str | None = None,
+        status: str = "ok",
+        error_code: str | None = None,
+        health_report: CredentialHealthReport | None = None,
+    ) -> None:
+        super().__init__(items or [])
+        self.api_configured = api_configured
+        self.message = message
+        self.status = status
+        self.error_code = error_code
+        self.health_report = health_report
+
+    def __getitem__(self, item: Any) -> Any:
+        if isinstance(item, str):
+            if item in ("sounds", "tracks", "items", "trending_shorts_audio"):
+                return list(self)
+            if hasattr(self, item):
+                return getattr(self, item)
+            raise KeyError(item)
+        return super().__getitem__(item)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in ("sounds", "tracks", "items", "trending_shorts_audio"):
+            return list(self)
+        if hasattr(self, key):
+            val = getattr(self, key)
+            return val if val is not None else default
+        return default
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.status == "ok",
+            "api_configured": self.api_configured,
+            "message": self.message,
+            "status": self.status,
+            "error_code": self.error_code,
+            "trending_shorts_audio": [
+                s.model_dump() if hasattr(s, "model_dump") else s for s in self
+            ],
+            "count": len(self),
+            "health_report": self.health_report.model_dump() if self.health_report else None,
+        }
+
+
+def _build_music_result(
+    items: list[TrendingShortsAudio],
+    api_configured: bool = True,
+    message: str | None = None,
+    status: str = "ok",
+    error_code: str | None = None,
+    health_report: CredentialHealthReport | None = None,
+    return_structured: bool = False,
+) -> list[TrendingShortsAudio] | TrendingMusicResult | dict[str, Any]:
+    res = TrendingMusicResult(
+        items=items,
+        api_configured=api_configured,
+        message=message,
+        status=status,
+        error_code=error_code,
+        health_report=health_report,
+    )
+    if return_structured:
+        return res.to_dict()
+    return res
 
 CURATED_VIRAL_BGM: list[dict[str, Any]] = [
     {
@@ -363,24 +440,82 @@ def download_viral_bgm(
     }
 
 
-def fetch_live_trending_music(api_key: str, limit: int = 10) -> list[TrendingShortsAudio]:
-    """Fetch live trending commercial music videos from YouTube Data API v3."""
+def fetch_live_trending_music(
+    api_key: str,
+    limit: int = 10,
+    quota_tracker: QuotaTracker | Any | None = None,
+    return_structured: bool = False,
+) -> list[TrendingShortsAudio] | TrendingMusicResult | dict[str, Any]:
+    """Fetch live trending commercial music videos from YouTube Data API v3.
+
+    Enforces general quota checking and records 1 unit expenditure via QuotaTracker.
+    Classifies 403 quotaExceeded, 400/403 keyInvalid, and network errors via credential_guardian.
+    """
+    if not api_key or not api_key.strip():
+        return _build_music_result(
+            [],
+            api_configured=False,
+            message="YouTube Data API key is missing.",
+            status="missing_key",
+            return_structured=return_structured,
+        )
+
+    clean_key = api_key.strip()
+
+    # Pre-call quota affordability check
+    if quota_tracker is not None and hasattr(quota_tracker, "can_verify"):
+        if not quota_tracker.can_verify(QUOTA_COST_VIDEOS_LIST):
+            msg = (
+                f"YouTube Data API quota cannot afford videos.list ({QUOTA_COST_VIDEOS_LIST} unit); "
+                "skipping trending music fetch."
+            )
+            logger.warning(msg)
+            return _build_music_result(
+                [],
+                api_configured=True,
+                message=msg,
+                status="quota_exhausted",
+                return_structured=return_structured,
+            )
+
     url = "https://www.googleapis.com/youtube/v3/videos"
     params = {
         "part": "snippet,statistics",
         "chart": "mostPopular",
         "videoCategoryId": "10",  # Music category
         "maxResults": min(max(limit, 5), 25),
-        "key": api_key,
+        "key": clean_key,
     }
     try:
         with httpx.Client(timeout=10.0) as client:
             resp = client.get(url, params=params)
             if resp.status_code != 200:
+                err_payload: Any = None
+                try:
+                    err_payload = resp.json()
+                except Exception:
+                    err_payload = resp.text
+                report = classify_api_error("youtube_api_key", err_payload)
                 logger.warning(
-                    "YouTube trending music API returned %d: %s", resp.status_code, resp.text
+                    "YouTube trending music API error (%d, status=%s): %s",
+                    resp.status_code,
+                    report.status,
+                    report.message,
                 )
-                return []
+                return _build_music_result(
+                    [],
+                    api_configured=True,
+                    message=report.message,
+                    status=report.status,
+                    error_code=report.error_code,
+                    health_report=report,
+                    return_structured=return_structured,
+                )
+
+            # Record 1 general quota unit on successful fetch
+            if quota_tracker is not None and hasattr(quota_tracker, "record_general"):
+                quota_tracker.record_general(QUOTA_COST_VIDEOS_LIST)
+
             data = resp.json()
             items = data.get("items", [])
             results: list[TrendingShortsAudio] = []
@@ -402,25 +537,70 @@ def fetch_live_trending_music(api_key: str, limit: int = 10) -> list[TrendingSho
                         usage_tip=f"Trending commercial release #{rank}. Recommended for viral sync cuts.",
                     )
                 )
-            return results
+            return _build_music_result(
+                results,
+                api_configured=True,
+                status="ok",
+                return_structured=return_structured,
+            )
     except Exception as e:
-        logger.warning("Failed to fetch live trending music: %s", e)
-        return []
+        report = classify_api_error("youtube_api_key", e)
+        logger.warning(
+            "Failed to fetch live trending music (%s, status=%s): %s",
+            type(e).__name__,
+            report.status,
+            report.message,
+        )
+        return _build_music_result(
+            [],
+            api_configured=True,
+            message=report.message,
+            status=report.status,
+            error_code=report.error_code,
+            health_report=report,
+            return_structured=return_structured,
+        )
 
 
 def get_trending_shorts_audio(
     genre: str = "all",
     api_key: str | None = None,
     allow_seed_fallback: bool = True,
-) -> list[TrendingShortsAudio]:
+    quota_tracker: QuotaTracker | Any | None = None,
+    return_structured: bool = False,
+) -> list[TrendingShortsAudio] | TrendingMusicResult | dict[str, Any]:
     """Return top trending commercial YouTube Shorts sounds and edit tips."""
     key = api_key or os.getenv("YOUTUBE_API_KEY")
+    last_music_result: TrendingMusicResult | None = None
     if key and key.strip():
-        live_music = fetch_live_trending_music(api_key=key.strip())
+        live_music = fetch_live_trending_music(
+            api_key=key.strip(),
+            quota_tracker=quota_tracker,
+        )
         if live_music:
             return live_music
+        if isinstance(live_music, TrendingMusicResult):
+            last_music_result = live_music
 
     if not allow_seed_fallback:
+        if last_music_result is not None:
+            return _build_music_result(
+                [],
+                api_configured=True,
+                message=last_music_result.message,
+                status=last_music_result.status,
+                error_code=last_music_result.error_code,
+                health_report=last_music_result.health_report,
+                return_structured=return_structured,
+            )
+        if return_structured:
+            return _build_music_result(
+                [],
+                api_configured=bool(key),
+                message="No live trending audio found and seed fallback is disabled.",
+                status="empty",
+                return_structured=True,
+            )
         return []
 
     results = [TrendingShortsAudio(**item) for item in TRENDING_SHORTS_SOUNDS]
@@ -436,7 +616,9 @@ def get_trending_shorts_audio(
 
 __all__ = [
     "CURATED_VIRAL_BGM",
+    "QUOTA_COST_VIDEOS_LIST",
     "TRENDING_SHORTS_SOUNDS",
+    "TrendingMusicResult",
     "download_viral_bgm",
     "fetch_live_trending_music",
     "get_trending_shorts_audio",

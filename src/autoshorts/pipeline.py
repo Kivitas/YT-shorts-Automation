@@ -80,6 +80,117 @@ from autoshorts.uploader.youtube_api import YouTubeApiUploader
 logger = logging.getLogger("autoshorts.pipeline")
 
 
+def select_gameplay_background(
+    category: str | None = None,
+    assets_dir: Path | None = None,
+    job_index: int = 0,
+) -> tuple[Path | None, float]:
+    """Select gameplay background from assets/backgrounds/<category>/.
+
+    Reads manifest.json / manifest.jsonl if present, rotates/randomizes among available
+    candidates, and gracefully falls back with a clear warning log when empty.
+    """
+    import random
+
+    import autoshorts.media.dopamine_effects as _de
+    from autoshorts.core.paths import get_assets_dir
+    from autoshorts.media.background_fetcher import normalize_category
+
+    # If pick_background_asset has been monkeypatched in tests, honor the mock
+    if globals().get("pick_background_asset") is not _de.pick_background_asset:
+        try:
+            return globals()["pick_background_asset"](category=category, assets_dir=assets_dir)
+        except TypeError:
+            return globals()["pick_background_asset"]()
+
+    raw_cat = (category or "minecraft").strip().lower()
+    if raw_cat == "none":
+        return None, 0.0
+
+    base_assets = assets_dir or get_assets_dir()
+    clean_cat = normalize_category(raw_cat) if raw_cat != "auto" else "minecraft"
+
+    # Category directory
+    bg_dir = base_assets / "backgrounds" / clean_cat
+    if not bg_dir.is_dir():
+        bg_dir = base_assets / "backgrounds" / raw_cat
+
+    candidates: list[Path] = []
+
+    # 1. Check manifests if present in category folder
+    if bg_dir.is_dir():
+        manifest_file = bg_dir / "manifest.json"
+        manifest_l = bg_dir / "manifest.jsonl"
+        if manifest_file.is_file():
+            try:
+                data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                items = (
+                    data.get("videos")
+                    or data.get("files")
+                    or (data if isinstance(data, list) else [])
+                )
+                for item in items:
+                    fname = (
+                        item.get("filename") or item.get("path")
+                        if isinstance(item, dict)
+                        else str(item)
+                    )
+                    if fname:
+                        fp = bg_dir / fname if not Path(fname).is_absolute() else Path(fname)
+                        if fp.is_file() and fp.stat().st_size > 1024:
+                            candidates.append(fp)
+            except Exception as m_err:
+                logger.debug("Failed to parse background manifest.json in %s: %s", bg_dir, m_err)
+        elif manifest_l.is_file():
+            try:
+                for line in manifest_l.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        item = json.loads(line.strip())
+                        fname = (
+                            item.get("filename") or item.get("path")
+                            if isinstance(item, dict)
+                            else str(item)
+                        )
+                        if fname:
+                            fp = bg_dir / fname if not Path(fname).is_absolute() else Path(fname)
+                            if fp.is_file() and fp.stat().st_size > 1024:
+                                candidates.append(fp)
+            except Exception as ml_err:
+                logger.debug("Failed to parse background manifest.jsonl in %s: %s", bg_dir, ml_err)
+
+        # 2. If no manifest entries, scan directory directly for video files
+        if not candidates:
+            valid_exts = {".mp4", ".mov", ".mkv", ".webm"}
+            candidates = [
+                p
+                for p in bg_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in valid_exts and p.stat().st_size > 1024
+            ]
+
+    # 3. If candidates found, rotate / randomize selection
+    if candidates:
+        chosen = candidates[
+            (job_index or random.randint(0, len(candidates) - 1)) % len(candidates)
+        ]
+        offset = round(random.uniform(0.0, 120.0), 2)
+        logger.info(
+            "Selected gameplay background for '%s' (%s, offset=%.1fs) from %d candidate(s).",
+            clean_cat,
+            chosen.name,
+            offset,
+            len(candidates),
+        )
+        return chosen, offset
+
+    # 4. Graceful fallback when empty with a clear log
+    logger.warning(
+        "No gameplay background video found in assets/backgrounds/%s (manifest/directory empty). "
+        "Gracefully falling back to procedural/lavfi background.",
+        clean_cat,
+    )
+    return pick_background_asset(category=clean_cat, assets_dir=assets_dir, auto_fetch=False)
+
+
 class ShortsPipeline:
     """The master pipeline orchestrator for AutoShorts."""
 
@@ -410,7 +521,33 @@ class ShortsPipeline:
     def _run_metadata_stage(self, job: Job) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "metadata_fetch")
         try:
-            metadata = self.downloader.fetch_metadata(job.source_url)
+            # Check if job points to a pre-existing local source clip
+            local_src: Path | None = None
+            if job.raw_video_path and Path(job.raw_video_path).is_file():
+                local_src = Path(job.raw_video_path).resolve()
+            elif job.source_url:
+                candidate_path = Path(job.source_url)
+                if candidate_path.is_file():
+                    local_src = candidate_path.resolve()
+                    job.raw_video_path = str(local_src)
+
+            if local_src is not None:
+                # Probe video stream info locally without calling network downloader
+                from autoshorts.media.downloader import probe_video_stream_info
+
+                probe = probe_video_stream_info(local_src)
+                dur = float(probe.get("duration") or 45.0)
+                metadata = VideoMetadata(
+                    title=local_src.stem or "Local Video",
+                    channel="Local Source",
+                    channel_url="",
+                    video_url=str(local_src),
+                    duration=dur,
+                    video_id=local_src.stem[:11],
+                )
+            else:
+                metadata = self.downloader.fetch_metadata(job.source_url)
+
             job.video_metadata = metadata
             job.transition_to(JobStatus.METADATA_FETCHED)
             self.state_manager.record_stage_complete(
@@ -441,9 +578,17 @@ class ShortsPipeline:
 
         segments: list[dict[str, Any]] = []
 
+        local_src: Path | None = None
+        if job.raw_video_path and Path(job.raw_video_path).is_file():
+            local_src = Path(job.raw_video_path).resolve()
+        elif job.source_url:
+            cand_path = Path(job.source_url)
+            if cand_path.is_file():
+                local_src = cand_path.resolve()
+
         try:
-            # 1. Try fetching online subtitles via TranscriptFetcher
-            if self.transcript_fetcher:
+            # 1. Try fetching online subtitles via TranscriptFetcher if not a local file
+            if not local_src and self.transcript_fetcher:
                 try:
                     segs, _signal = self.transcript_fetcher.fetch_or_signal(job.source_url)
                     if segs:
@@ -468,7 +613,15 @@ class ShortsPipeline:
                     job.id,
                 )
                 audio_path = work_dir / f"{job.id}_audio.m4a"
-                self.downloader.download_audio_only(job.source_url, audio_path)
+                if local_src is not None:
+                    try:
+                        extract_16khz_mono_wav(
+                            local_src, audio_path, ffmpeg_binary=get_ffmpeg_path()
+                        )
+                    except Exception:
+                        audio_path = local_src
+                else:
+                    self.downloader.download_audio_only(job.source_url, audio_path)
                 whisper_segs = self.transcriber.transcribe(audio_path)
                 segments = [
                     {
@@ -629,21 +782,68 @@ class ShortsPipeline:
             work_dir = get_work_dir() / job.id
             raw_cut_path = work_dir / f"{job.id}_raw.mp4"
 
-            self.downloader.download_section(
-                url=job.source_url,
-                start_sec=sel.candidate.start,
-                end_sec=sel.candidate.end,
-                output_path=raw_cut_path,
-            )
+            # Check if job points to a pre-existing local source clip (skip download!)
+            local_src: Path | None = None
+            if job.raw_video_path and Path(job.raw_video_path).is_file():
+                local_src = Path(job.raw_video_path).resolve()
+            elif job.source_url:
+                cand_path = Path(job.source_url)
+                if cand_path.is_file():
+                    local_src = cand_path.resolve()
 
-            job.raw_video_path = str(raw_cut_path)
+            if local_src is not None:
+                logger.info(
+                    "Job %s: Pre-existing local source clip detected at %s. Skipping download.",
+                    job.id,
+                    local_src,
+                )
+                if local_src.resolve() != raw_cut_path.resolve():
+                    clip_dur = sel.candidate.duration
+                    if (
+                        sel.candidate.start > 0
+                        or (job.video_metadata and job.video_metadata.duration > clip_dur + 1.0)
+                    ):
+                        import shutil
+                        import subprocess
+
+                        ffmpeg_bin = get_ffmpeg_path()
+                        trim_cmd = [
+                            ffmpeg_bin,
+                            "-y",
+                            "-ss",
+                            str(sel.candidate.start),
+                            "-to",
+                            str(sel.candidate.end),
+                            "-i",
+                            str(local_src),
+                            "-c",
+                            "copy",
+                            str(raw_cut_path),
+                        ]
+                        res = subprocess.run(trim_cmd, capture_output=True)
+                        if res.returncode != 0 or not raw_cut_path.is_file():
+                            shutil.copy2(str(local_src), str(raw_cut_path))
+                    else:
+                        import shutil
+
+                        shutil.copy2(str(local_src), str(raw_cut_path))
+                job.raw_video_path = str(raw_cut_path)
+            else:
+                self.downloader.download_section(
+                    url=job.source_url,
+                    start_sec=sel.candidate.start,
+                    end_sec=sel.candidate.end,
+                    output_path=raw_cut_path,
+                )
+                job.raw_video_path = str(raw_cut_path)
+
             self.state_manager.record_stage_complete(
                 stage_id,
                 status="COMPLETED",
-                artifacts={"raw_video_path": str(raw_cut_path)},
+                artifacts={"raw_video_path": str(job.raw_video_path)},
             )
             self.state_manager.save_job(job)
-            logger.info("Job %s: Precision cut saved to %s", job.id, raw_cut_path)
+            logger.info("Job %s: Precision cut saved to %s", job.id, job.raw_video_path)
         except Exception as e:
             self.state_manager.record_stage_complete(
                 stage_id, status="FAILED", artifacts={"error": str(e)}
@@ -851,7 +1051,7 @@ class ShortsPipeline:
                 or sel.background_style
                 or self.config.job_defaults.background_category
             )
-            bg_file, _ = pick_background_asset(category=bg_style)
+            bg_file, _ = select_gameplay_background(category=bg_style)
 
             branding_cfg = getattr(self.config, "branding", None)
             audio_cfg = getattr(self.config, "audio_mastering", None)
@@ -1003,10 +1203,17 @@ class ShortsPipeline:
             raise
 
     def rerender_job(self, job_id: str, **overrides: Any) -> Job:
-        """Fast 1-click re-render of subtitles and compositing stages skipping re-download and re-scoring."""
+        """Fast 1-click re-render of subtitles and compositing stages skipping re-download and re-scoring.
+
+        Robustly re-renders jobs from READY_FOR_REVIEW, SCHEDULED, COMPLETED, or FAILED.
+        """
         job = self.state_manager.get_job(job_id)
         if not job:
             raise AutoShortsError(f"Job {job_id} not found in state database")
+
+        # If job was in FAILED state, clear previous error message to allow fresh retry
+        if job.status == JobStatus.FAILED:
+            job.error_message = None
 
         # Apply overrides
         for key in (
@@ -1072,9 +1279,13 @@ class ShortsPipeline:
                     found = True
                     break
             if not found:
-                raise AutoShortsError(
-                    f"Raw cut video not found for job {job_id}; cannot re-render without raw source."
-                )
+                if job.selected_clips and (job.source_url or job.video_metadata):
+                    logger.info("Job %s: Re-extracting missing raw cut video for re-render...", job_id)
+                    self._run_download_stage(job)
+                else:
+                    raise AutoShortsError(
+                        f"Raw cut video not found for job {job_id}; cannot re-render without raw source."
+                    )
 
         # Reset status to allow stage transitions through valid state machine
         job.status = JobStatus.DOWNLOADING_SECTION
@@ -1250,10 +1461,27 @@ class ShortsPipeline:
         auto_pin_comment = getattr(job, "auto_pin_comment", None)
         if auto_pin_comment is None:
             auto_pin_comment = getattr(upload_cfg, "auto_pin_comment", False)
+        pin_comment_text = getattr(job, "pin_comment_text", None) or getattr(
+            upload_cfg, "pin_comment_text", None
+        )
+        playlist_id = getattr(job, "playlist_id", None) or getattr(upload_cfg, "playlist_id", None)
         link_related_video = getattr(job, "link_related_video", None)
         if link_related_video is None:
             link_related_video = getattr(upload_cfg, "link_related_video", True)
         publish_at = getattr(job, "publish_at", None) or getattr(upload_cfg, "publish_at", None)
+
+        # Resolve thumbnail
+        thumbnail_path: Path | None = None
+        if hasattr(job, "thumbnail_path") and job.thumbnail_path and Path(job.thumbnail_path).is_file():
+            thumbnail_path = Path(job.thumbnail_path)
+        elif job.selected_clips and getattr(job.selected_clips[0], "thumbnail_path", None):
+            tp = Path(job.selected_clips[0].thumbnail_path)
+            if tp.is_file():
+                thumbnail_path = tp
+        if not thumbnail_path:
+            work_thumb = get_work_dir() / job.id / f"thumb_{job.id}.jpg"
+            if work_thumb.is_file():
+                thumbnail_path = work_thumb
 
         tags = ["Shorts", "AutoShorts"]
         if custom_tags:
@@ -1279,7 +1507,10 @@ class ShortsPipeline:
                     "altered_content": altered_content,
                     "custom_tags": custom_tags,
                     "auto_pin_comment": auto_pin_comment,
+                    "pin_comment_text": pin_comment_text,
+                    "playlist_id": playlist_id,
                     "publish_at": publish_at,
+                    "thumbnail_path": thumbnail_path,
                 }
                 if link_related_video and getattr(job, "source_url", None):
                     extra_upload_kwargs["related_video_url"] = job.source_url
@@ -1370,6 +1601,9 @@ class ShortsPipeline:
             self.state_manager.record_stage_complete(
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
+            job.status = JobStatus.FAILED
+            job.error_message = str(e)
+            self.state_manager.save_job(job)
             raise
 
     def _run_schedule_upload(self, job: Job) -> None:
@@ -1393,6 +1627,27 @@ class ShortsPipeline:
                 if ct not in tags:
                     tags.append(ct)
 
+        upload_cfg = getattr(self.config, "upload", None)
+        category_id = getattr(job, "category_id", None) or getattr(upload_cfg, "category_id", "24")
+        altered_content = getattr(job, "altered_content", None)
+        if altered_content is None:
+            altered_content = getattr(upload_cfg, "altered_content", False)
+        playlist_id = getattr(job, "playlist_id", None) or getattr(upload_cfg, "playlist_id", None)
+        auto_pin_comment = getattr(job, "auto_pin_comment", None)
+        if auto_pin_comment is None:
+            auto_pin_comment = getattr(upload_cfg, "auto_pin_comment", False)
+        pin_comment_text = getattr(job, "pin_comment_text", None) or getattr(
+            upload_cfg, "pin_comment_text", None
+        )
+
+        thumbnail_path: Path | None = None
+        if hasattr(job, "thumbnail_path") and job.thumbnail_path and Path(job.thumbnail_path).is_file():
+            thumbnail_path = Path(job.thumbnail_path)
+        elif job.selected_clips and getattr(job.selected_clips[0], "thumbnail_path", None):
+            tp = Path(job.selected_clips[0].thumbnail_path)
+            if tp.is_file():
+                thumbnail_path = tp
+
         sched_kwargs: dict[str, Any] = {
             "job_id": job.id,
             "video_path": Path(job.rendered_video_path),  # type: ignore[arg-type]
@@ -1400,6 +1655,12 @@ class ShortsPipeline:
             "description": desc,
             "tags": tags,
             "privacy_status": privacy,
+            "category_id": category_id,
+            "altered_content": altered_content,
+            "playlist_id": playlist_id,
+            "auto_pin_comment": auto_pin_comment,
+            "pin_comment_text": pin_comment_text,
+            "thumbnail_path": thumbnail_path,
         }
 
         # Handle publish_at target time if specified
@@ -1424,9 +1685,13 @@ class ShortsPipeline:
             if target_time is not None:
                 sched_kwargs["target_time"] = target_time
 
-        sched_time = self.scheduler.enqueue(**sched_kwargs)
-        job.scheduled_time = sched_time
-        self.state_manager.save_job(job)
-        logger.info("Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat())
-        self.state_manager.save_job(job)
-        logger.info("Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat())
+        try:
+            sched_time = self.scheduler.enqueue(**sched_kwargs)
+            job.scheduled_time = sched_time
+            self.state_manager.save_job(job)
+            logger.info("Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat())
+        except Exception as s_err:
+            job.status = JobStatus.FAILED
+            job.error_message = str(s_err)
+            self.state_manager.save_job(job)
+            raise

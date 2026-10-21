@@ -10,7 +10,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AnalyticsSnapshot(BaseModel):
@@ -50,6 +50,44 @@ class VideoAnalyticsRecord(BaseModel):
     velocity_views_per_hour: float = 0.0
     history_json: str = "[]"
     history: list[AnalyticsSnapshot] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def compute_velocity_if_zero(self) -> VideoAnalyticsRecord:
+        """Derive velocity (views/hour) strictly from real fetched history or published_at."""
+        if self.velocity_views_per_hour > 0.0 or self.views <= 0:
+            return self
+
+        # 1. Delta from history snapshots if at least 2 entries exist
+        if self.history and len(self.history) >= 2:
+            last = self.history[-1]
+            prev = self.history[-2]
+            try:
+                t1 = datetime.fromisoformat(prev.timestamp)
+                t2 = datetime.fromisoformat(last.timestamp)
+                hours = (t2 - t1).total_seconds() / 3600.0
+                if hours >= 0.02 and last.views >= prev.views:
+                    self.velocity_views_per_hour = round((last.views - prev.views) / hours, 2)
+                    return self
+            except Exception:
+                pass
+
+        # 2. Elapsed time since published_at
+        if self.published_at:
+            try:
+                raw_pub = str(self.published_at)
+                if len(raw_pub) == 8 and raw_pub.isdigit():
+                    pub_dt = datetime.strptime(raw_pub, "%Y%m%d").replace(tzinfo=UTC)
+                else:
+                    clean = raw_pub.replace("Z", "+00:00")
+                    pub_dt = datetime.fromisoformat(clean)
+                fetch_dt = datetime.fromisoformat(str(self.fetched_at))
+                elapsed = (fetch_dt - pub_dt).total_seconds() / 3600.0
+                if elapsed >= 0.05:
+                    self.velocity_views_per_hour = round(self.views / elapsed, 2)
+            except Exception:
+                pass
+
+        return self
 
     @property
     def engagement_rate(self) -> float:

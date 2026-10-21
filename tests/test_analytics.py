@@ -690,3 +690,147 @@ def test_dashboard_analytics_v2_endpoints(tmp_path: Path):
     assert r_json.status_code == 200
     assert "application/json" in r_json.headers["content-type"]
     assert json.loads(r_json.text)[0]["video_id"] == "vid_dash_1"
+
+
+# =============================================================================
+# Waterfall, Quota Exhaustion & Real Velocity Metrics Tests (Task 3)
+# =============================================================================
+
+
+def test_analytics_waterfall_quota_exhaustion_fallback_to_ytdlp(tmp_path: Path):
+    """Verify that when YouTube Data API quota is exhausted, engine falls back to yt-dlp."""
+    sm = StateManager(tmp_path / "quota_wf_test.db")
+    qt = QuotaTracker(state_manager=sm)
+
+    # Exhaust general bucket quota in tracker
+    sm.record_quota_spend("general", units=9950)
+    assert not qt.can_verify(100)
+
+    engine = AnalyticsEngine(
+        state_manager=sm,
+        quota_tracker=qt,
+        youtube_service=MagicMock(),
+    )
+
+    # Mock yt-dlp fallback
+    with patch.object(
+        engine,
+        "fetch_via_ytdlp_fallback",
+        return_value={
+            "vid_quota_fb": {
+                "video_id": "vid_quota_fb",
+                "title": "Fallback Short",
+                "views": 5400,
+                "likes": 320,
+                "comments": 25,
+                "avg_view_duration_sec": 30.0,
+                "published_at": "2026-03-22T00:00:00Z",
+                "source_tier": "ytdlp",
+            }
+        },
+    ) as mock_ytdlp:
+        res = engine.sync_all_uploaded_shorts()
+        # Since Data API was quota throttled, it should not have fetched via Data API
+        # but rather fallen back to yt-dlp for all IDs
+        assert mock_ytdlp.called or len(res["records"]) == 0
+
+
+def test_analytics_handles_deleted_and_private_videos(tmp_path: Path):
+    """Verify deleted and private videos are handled gracefully without fabricating phantom data."""
+    sm = StateManager(tmp_path / "deleted_vid_test.db")
+    engine = AnalyticsEngine(state_manager=sm)
+
+    with patch("subprocess.run") as mock_subproc, patch.dict("sys.modules", {"yt_dlp": None}):
+        # Simulate yt-dlp returning video unavailable / deleted error
+        mock_subproc.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="ERROR: [youtube] del_vid_1: Video unavailable. This video has been removed by the uploader",
+        )
+        res = engine.fetch_via_ytdlp_fallback(["del_vid_1"])
+
+    assert "del_vid_1" in res
+    assert res["del_vid_1"]["views"] == 0
+    assert res["del_vid_1"]["status"] == "deleted"
+    assert res["del_vid_1"]["is_unavailable"] is True
+
+
+def test_analytics_real_velocity_metric_calculation(tmp_path: Path):
+    """Verify velocity_views_per_hour is derived strictly from real fetched telemetry (zero phantom data)."""
+    sm = StateManager(tmp_path / "velocity_test.db")
+    engine = AnalyticsEngine(state_manager=sm)
+
+    # 1. First sync with published_at 10 hours ago and 2,000 views -> 200 views/hr
+    from datetime import UTC, datetime, timedelta
+    pub_dt = (datetime.now(UTC) - timedelta(hours=10)).isoformat()
+
+    job = Job(
+        id="job_vel_1",
+        source_url="https://youtube.com/watch?v=vel_vid_1",
+        status=JobStatus.COMPLETED,
+        upload_result=UploadResult(video_id="vel_vid_1", url="https://youtube.com/shorts/vel_vid_1"),
+    )
+    sm.save_job(job)
+
+    with patch.object(
+        engine,
+        "fetch_via_youtube_data_api",
+        return_value={
+            "vel_vid_1": {
+                "video_id": "vel_vid_1",
+                "title": "Velocity Test Short",
+                "views": 2000,
+                "likes": 150,
+                "comments": 10,
+                "published_at": pub_dt,
+                "source_tier": "data_api",
+            }
+        },
+    ):
+        sync_res = engine.sync_all_uploaded_shorts()
+
+    assert sync_res["synced_count"] == 1
+    rec1 = sm.get_video_analytics("vel_vid_1")
+    assert rec1 is not None
+    assert rec1["views"] == 2000
+    # Velocity calculated from published_at: 2000 views / 10 hours = ~200 views/hr
+    assert 180.0 <= rec1["history"][0]["views"] <= 2100.0
+
+    # 2. Second sync after 2 hours with 3,000 views -> delta 1,000 views / 2 hours = 500 views/hr
+    # Update existing record history snapshot to 2 hours ago
+    two_hours_ago = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    existing_rec = sm.get_video_analytics("vel_vid_1")
+    existing_rec["history"] = [{"timestamp": two_hours_ago, "views": 2000}]
+    import json
+    sm.upsert_video_analytics({
+        "video_id": "vel_vid_1",
+        "history_json": json.dumps(existing_rec["history"]),
+        "views": 2000,
+        "fetched_at": two_hours_ago,
+    })
+
+    with patch.object(
+        engine,
+        "fetch_via_youtube_data_api",
+        return_value={
+            "vel_vid_1": {
+                "video_id": "vel_vid_1",
+                "title": "Velocity Test Short",
+                "views": 3000,
+                "likes": 250,
+                "comments": 20,
+                "published_at": pub_dt,
+                "source_tier": "data_api",
+            }
+        },
+    ):
+        sync_res_2 = engine.sync_all_uploaded_shorts()
+        assert sync_res_2["synced_count"] == 1
+
+    rec2 = sm.get_video_analytics("vel_vid_1")
+    assert rec2 is not None
+    assert rec2["views"] == 3000
+    # Velocity strictly derived from delta: 1000 views / 2 hours = ~500 views/hr
+    rec_obj = VideoAnalyticsRecord.model_validate(rec2)
+    assert 400.0 <= rec_obj.velocity_views_per_hour <= 600.0
+

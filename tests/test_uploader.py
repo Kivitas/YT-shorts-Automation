@@ -780,3 +780,194 @@ def test_youtube_api_upload_thumbnail_success_and_non_fatal_failure(
     )
     assert res.video_id == "vid_with_thumb"
     assert mock_service.thumbnails().set.call_args[1]["videoId"] == "vid_with_thumb"
+
+
+# =============================================================================
+# YouTube Data API v3 Audit & Compliance Tests (Task 1)
+# =============================================================================
+
+
+def test_youtube_api_scopes():
+    """Verify all required OAuth scopes are registered."""
+    from autoshorts.uploader.youtube_api import SCOPES
+
+    assert "https://www.googleapis.com/auth/youtube.upload" in SCOPES
+    assert "https://www.googleapis.com/auth/youtube.readonly" in SCOPES
+    assert "https://www.googleapis.com/auth/youtube" in SCOPES
+    assert "https://www.googleapis.com/auth/youtube.force-ssl" in SCOPES
+    assert "https://www.googleapis.com/auth/yt-analytics.readonly" in SCOPES
+
+
+def test_youtube_api_quota_cost_accounting(state_mgr: StateManager, tmp_path: Path):
+    """Verify quota accounting for thumbnails.set (50), videos.list batching (1/batch), and search.list (100)."""
+    from autoshorts.uploader.youtube_api import QUOTA_COSTS
+
+    assert QUOTA_COSTS["videos.insert"] == 1600
+    assert QUOTA_COSTS["videos.list"] == 1
+    assert QUOTA_COSTS["search.list"] == 100
+    assert QUOTA_COSTS["thumbnails.set"] == 50
+    assert QUOTA_COSTS["playlistItems.insert"] == 50
+    assert QUOTA_COSTS["commentThreads.insert"] == 50
+
+    tracker = QuotaTracker(state_mgr)
+    mock_service = MagicMock()
+
+    # 1. Test upload_thumbnail records 50 units
+    thumb_file = tmp_path / "quota_thumb.jpg"
+    thumb_file.write_bytes(b"\xff\xd8\xff\xe0JPEG")
+    uploader = YouTubeApiUploader(quota_tracker=tracker, youtube_service=mock_service)
+    assert uploader.upload_thumbnail("vid_q1", thumb_file) is True
+    assert tracker.get_general_spend() == 50
+
+    # 2. Test batch_get_videos batches by 50 and records 1 unit per 50 IDs
+    ids = [f"vid_{i:03d}" for i in range(65)]
+    mock_list_req = MagicMock()
+    mock_list_req.execute.return_value = {
+        "items": [
+            {
+                "id": vid,
+                "snippet": {"title": f"T_{vid}", "categoryId": "24", "tags": ["tag"]},
+                "statistics": {"viewCount": "100", "likeCount": "10", "commentCount": "2"},
+                "contentDetails": {"duration": "PT30S"},
+            }
+            for vid in ids[:50]
+        ]
+    }
+    mock_service.videos().list.return_value = mock_list_req
+    batch_res = uploader.batch_get_videos(ids)
+    assert len(batch_res) == 50
+    assert mock_service.videos().list.call_count == 2  # 65 IDs -> 2 batches
+    # 50 previous + 2 units for videos.list = 52
+    assert tracker.get_general_spend() == 52
+
+    # 3. Test search records 100 units
+    mock_search_req = MagicMock()
+    mock_search_req.execute.return_value = {"items": [{"id": {"videoId": "found_1"}}]}
+    mock_service.search().list.return_value = mock_search_req
+    items = uploader.search("stoicism podcast", max_results=5)
+    assert len(items) == 1
+    # 52 previous + 100 units = 152
+    assert tracker.get_general_spend() == 152
+
+
+def test_youtube_api_snippet_and_status_bounds(dummy_video: Path):
+    """Verify title <= 100 chars, description <= 5000 chars, tags <= 500 chars, categoryId, defaultLanguage, publishAt -> private, containsSyntheticMedia."""
+    mock_service = MagicMock()
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.return_value = (
+        None,
+        {"id": "bounds_vid_1", "status": {"privacyStatus": "private"}},
+    )
+    mock_service.videos().insert.return_value = mock_insert_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+
+    long_title = "A" * 120 + " #Shorts"
+    long_desc = "D" * 6000
+    long_tags = ["tag_" + "x" * 50 for _ in range(20)]  # > 1000 chars
+
+    res = uploader.upload(
+        path=dummy_video,
+        title=long_title,
+        description=long_desc,
+        tags=long_tags,
+        category_id="27",
+        default_language="en",
+        altered_content=True,
+        publish_at="2026-12-01T10:00:00Z",
+    )
+    assert res.video_id == "bounds_vid_1"
+
+    call_kwargs = mock_service.videos().insert.call_args[1]
+    snippet = call_kwargs["body"]["snippet"]
+    status = call_kwargs["body"]["status"]
+
+    # Title <= 100 chars and contains #Shorts
+    assert len(snippet["title"]) <= 100
+    assert "#shorts" in snippet["title"].lower()
+
+    # Description <= 5000 chars
+    assert len(snippet["description"]) <= 5000
+
+    # Tags <= 500 chars total length
+    total_tag_len = sum(len(t) for t in snippet["tags"]) + max(0, len(snippet["tags"]) - 1)
+    assert total_tag_len <= 500
+
+    # Snippet category and language
+    assert snippet["categoryId"] == "27"
+    assert snippet["defaultLanguage"] == "en"
+
+    # Status: publishAt requires privacyStatus == private
+    assert status["privacyStatus"] == "private"
+    assert status["publishAt"] == "2026-12-01T10:00:00Z"
+    assert status["containsSyntheticMedia"] is True
+    assert status["selfDeclaredMadeForKids"] is False
+
+
+def test_youtube_api_resumable_permanent_client_error(dummy_video: Path):
+    """Verify non-retryable 4xx client errors (e.g. 400 Bad Request) fail immediately without retrying."""
+    import httplib2
+    from googleapiclient.errors import HttpError
+
+    mock_service = MagicMock()
+    mock_insert_req = MagicMock()
+
+    resp = httplib2.Response({"status": 400, "reason": "Bad Request"})
+    http_err = HttpError(resp, b'{"error": {"message": "Invalid video snippet"}}')
+    mock_insert_req.next_chunk.side_effect = http_err
+    mock_service.videos().insert.return_value = mock_insert_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service, max_retries=5)
+
+    with patch("time.sleep") as mock_sleep, pytest.raises(UploadFailedError) as exc_info:
+        uploader.upload(path=dummy_video, title="Bad Request Test")
+
+    # Must NOT retry on permanent 400 client error
+    assert mock_sleep.call_count == 0
+    assert "HTTP client error" in str(exc_info.value)
+
+
+def test_youtube_api_invalid_grant_handling(dummy_video: Path):
+    """Verify invalid_grant / revoked OAuth tokens raise CredentialsError immediately."""
+    from autoshorts.uploader.youtube_api import CredentialsError
+
+    mock_service = MagicMock()
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.side_effect = Exception(
+        '{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}'
+    )
+    mock_service.videos().insert.return_value = mock_insert_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service, max_retries=3)
+
+    with pytest.raises(CredentialsError) as exc_info:
+        uploader.upload(path=dummy_video, title="Invalid Grant Test")
+
+    assert "invalid_grant" in str(exc_info.value).lower() or "revoked" in str(exc_info.value).lower()
+
+
+def test_youtube_api_token_refresh_persisted(tmp_path: Path):
+    """Verify that expired OAuth credentials are refreshed and persisted to token_path."""
+    token_file = tmp_path / "token.json"
+    token_file.write_text('{"token": "old_token", "refresh_token": "valid_refresh"}', encoding="utf-8")
+
+    mock_creds = MagicMock()
+    mock_creds.expired = True
+    mock_creds.refresh_token = "valid_refresh"
+    mock_creds.valid = True
+    mock_creds.to_json.return_value = '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
+
+    with patch("autoshorts.uploader.youtube_api._get_google_libraries") as mock_libs:
+        mock_req_cls = MagicMock()
+        mock_creds_cls = MagicMock()
+        mock_creds_cls.from_authorized_user_file.return_value = mock_creds
+        mock_build = MagicMock()
+        mock_libs.return_value = (mock_req_cls, mock_creds_cls, MagicMock(), mock_build, MagicMock(), MagicMock())
+
+        uploader = YouTubeApiUploader(token_path=token_file)
+        uploader.get_service()
+
+        mock_creds.refresh.assert_called_once()
+        assert token_file.read_text(encoding="utf-8") == '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
+
+

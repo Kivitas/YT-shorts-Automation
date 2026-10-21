@@ -151,6 +151,7 @@ class SpreadScheduler:
         tags: list[str] | None = None,
         privacy_status: str = "unlisted",
         target_time: datetime | None = None,
+        **kwargs: Any,
     ) -> datetime:
         """Enqueue a rendered Short for upload.
 
@@ -423,6 +424,26 @@ class SpreadScheduler:
             fell_back_to_studio = True
             effective_privacy = default_privacy
 
+        # Collect job metadata for complete forwarding
+        job_obj = self.state_manager.get_job(job_id)
+        category_id = getattr(job_obj, "category_id", None) or getattr(upload_cfg, "category_id", "24")
+        altered_content = getattr(job_obj, "altered_content", None)
+        if altered_content is None:
+            altered_content = getattr(upload_cfg, "altered_content", False)
+        publish_at = getattr(job_obj, "publish_at", None) or getattr(upload_cfg, "publish_at", None)
+        playlist_id = getattr(job_obj, "playlist_id", None) or getattr(upload_cfg, "playlist_id", None)
+        auto_pin_comment = getattr(job_obj, "auto_pin_comment", None)
+        if auto_pin_comment is None:
+            auto_pin_comment = getattr(upload_cfg, "auto_pin_comment", False)
+        pin_comment_text = getattr(job_obj, "pin_comment_text", None) or getattr(upload_cfg, "pin_comment_text", None)
+        thumbnail_path = None
+        if hasattr(job_obj, "thumbnail_path") and job_obj.thumbnail_path and Path(job_obj.thumbnail_path).is_file():
+            thumbnail_path = Path(job_obj.thumbnail_path)
+        elif job_obj and job_obj.selected_clips and getattr(job_obj.selected_clips[0], "thumbnail_path", None):
+            tp = Path(job_obj.selected_clips[0].thumbnail_path)
+            if tp.is_file():
+                thumbnail_path = tp
+
         try:
             try:
                 kwargs: dict[str, Any] = {
@@ -434,6 +455,28 @@ class SpreadScheduler:
                 }
                 if isinstance(uploader_to_use, PlaywrightStudioUploader):
                     kwargs["privacy_status"] = effective_privacy
+
+                extra_sched_kwargs = {
+                    "category_id": category_id,
+                    "altered_content": altered_content,
+                    "publish_at": publish_at,
+                    "playlist_id": playlist_id,
+                    "auto_pin_comment": auto_pin_comment,
+                    "pin_comment_text": pin_comment_text,
+                    "thumbnail_path": thumbnail_path,
+                }
+                try:
+                    import inspect
+                    sig = inspect.signature(uploader_to_use.upload)
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    )
+                    for k, v in extra_sched_kwargs.items():
+                        if v is not None and (has_varkw or k in sig.parameters):
+                            kwargs[k] = v
+                except Exception:
+                    kwargs.update({k: v for k, v in extra_sched_kwargs.items() if v is not None})
+
                 result = uploader_to_use.upload(**kwargs)
             except Exception as up_err:
                 is_quota_err = isinstance(up_err, QuotaExhaustedError) or (

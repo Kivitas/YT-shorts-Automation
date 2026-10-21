@@ -178,6 +178,13 @@ class AnalyticsEngine:
 
         for i in range(0, len(unique_ids), 50):
             batch = unique_ids[i : i + 50]
+            # Check general quota availability before calling Data API
+            if self.quota_tracker is not None and not self.quota_tracker.can_verify(1):
+                logger.warning(
+                    "YouTube Data API general quota exhausted. Skipping Data API batch %s; falling back to yt-dlp.",
+                    batch[:3],
+                )
+                break
             try:
                 req = service.videos().list(
                     part="snippet,statistics,contentDetails",
@@ -211,6 +218,13 @@ class AnalyticsEngine:
                         "source_tier": "data_api",
                     }
             except Exception as e:
+                err_str = str(e).lower()
+                if "quota" in err_str or "quotaexceeded" in err_str or "403" in err_str:
+                    logger.warning(
+                        "YouTube Data API quota exceeded during batch fetch (%s). Falling back to yt-dlp.",
+                        e,
+                    )
+                    break
                 logger.warning(f"YouTube Data API batch fetch failed for {batch[:3]}...: {e}")
 
         return results
@@ -281,6 +295,8 @@ class AnalyticsEngine:
         for vid in dict.fromkeys(video_ids):
             url = f"https://www.youtube.com/watch?v={vid}"
             data: dict[str, Any] | None = None
+            is_unavail = False
+            unavail_reason = ""
 
             # First attempt Python in-process yt_dlp
             try:
@@ -294,19 +310,35 @@ class AnalyticsEngine:
                 }
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     data = ydl.extract_info(url, download=False)
-            except Exception:
-                # Subprocess fallback
-                try:
-                    proc = subprocess.run(
-                        ["yt-dlp", "--dump-json", "--skip-download", url],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    if proc.returncode == 0 and proc.stdout.strip():
-                        data = json.loads(proc.stdout)
-                except Exception as sub_err:
-                    logger.debug(f"yt-dlp subprocess fallback failed for {vid}: {sub_err}")
+            except Exception as y_err:
+                msg = str(y_err).lower()
+                if "private video" in msg:
+                    is_unavail = True
+                    unavail_reason = "private"
+                elif "video unavailable" in msg or "removed by the uploader" in msg or "deleted" in msg:
+                    is_unavail = True
+                    unavail_reason = "deleted"
+                else:
+                    # Subprocess fallback
+                    try:
+                        proc = subprocess.run(
+                            ["yt-dlp", "--dump-json", "--skip-download", url],
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+                        if proc.returncode == 0 and proc.stdout.strip():
+                            data = json.loads(proc.stdout)
+                        else:
+                            s_err = (proc.stderr or "").lower()
+                            if "private video" in s_err:
+                                is_unavail = True
+                                unavail_reason = "private"
+                            elif "video unavailable" in s_err or "removed" in s_err or "deleted" in s_err:
+                                is_unavail = True
+                                unavail_reason = "deleted"
+                    except Exception as sub_err:
+                        logger.debug(f"yt-dlp subprocess fallback failed for {vid}: {sub_err}")
 
             if data and isinstance(data, dict):
                 results[vid] = {
@@ -318,6 +350,20 @@ class AnalyticsEngine:
                     "avg_view_duration_sec": float(data.get("duration") or 0.0),
                     "published_at": data.get("upload_date"),
                     "source_tier": "ytdlp",
+                }
+            elif is_unavail:
+                logger.info("Video %s detected as %s via yt-dlp.", vid, unavail_reason)
+                results[vid] = {
+                    "video_id": vid,
+                    "title": "",
+                    "views": 0,
+                    "likes": 0,
+                    "comments": 0,
+                    "avg_view_duration_sec": 0.0,
+                    "published_at": None,
+                    "source_tier": "ytdlp",
+                    "status": unavail_reason,
+                    "is_unavailable": True,
                 }
 
         return results
@@ -505,6 +551,47 @@ class AnalyticsEngine:
                 or "ytdlp"
             )
 
+            # Calculate real velocity (views per hour) strictly derived from real data
+            velocity = 0.0
+            now_dt = datetime.now(UTC)
+
+            # 1. Historical delta from snapshot history if available
+            history_snapshots = existing.get("history") or []
+            if not history_snapshots and existing.get("history_json"):
+                try:
+                    loaded_h = json.loads(existing["history_json"])
+                    if isinstance(loaded_h, list):
+                        history_snapshots = loaded_h
+                except Exception:
+                    pass
+
+            if history_snapshots and len(history_snapshots) >= 1:
+                last_snap = history_snapshots[-1]
+                prev_views = int(last_snap.get("views") or 0)
+                try:
+                    prev_dt = datetime.fromisoformat(last_snap.get("timestamp", ""))
+                    delta_hours = (now_dt - prev_dt).total_seconds() / 3600.0
+                    if delta_hours >= 0.02 and views >= prev_views:
+                        velocity = round((views - prev_views) / delta_hours, 2)
+                except Exception:
+                    pass
+
+            # 2. Fall back to publish time elapsed hours if velocity still 0.0
+            if velocity <= 0.0 and views > 0:
+                pub_raw = base.get("published_at") or existing.get("published_at")
+                if pub_raw:
+                    try:
+                        if len(str(pub_raw)) == 8 and str(pub_raw).isdigit():
+                            pub_dt = datetime.strptime(str(pub_raw), "%Y%m%d").replace(tzinfo=UTC)
+                        else:
+                            clean_pub = str(pub_raw).replace("Z", "+00:00")
+                            pub_dt = datetime.fromisoformat(clean_pub)
+                        elapsed_hours = (now_dt - pub_dt).total_seconds() / 3600.0
+                        if elapsed_hours >= 0.05:
+                            velocity = round(views / elapsed_hours, 2)
+                    except Exception:
+                        pass
+
             record = VideoAnalyticsRecord(
                 video_id=vid,
                 job_id=meta.get("job_id") or existing.get("job_id") or "",
@@ -523,6 +610,7 @@ class AnalyticsEngine:
                 source_tier=source_tier,
                 published_at=base.get("published_at") or existing.get("published_at"),
                 fetched_at=datetime.now(UTC).isoformat(),
+                velocity_views_per_hour=velocity,
             )
 
             self.state_manager.upsert_video_analytics(record)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -1016,3 +1017,305 @@ def test_pipeline_auto_trim_silence_smart_crop_and_candidates_endpoints(
     )
     assert r_trim.status_code == 200
     assert r_trim.json()["jump_cuts_added"] == 2
+
+
+# =============================================================================
+# E2E Integration & Enhancement Tests (Task 2 & 4)
+# =============================================================================
+
+
+def test_pipeline_e2e_local_source_with_real_ffmpeg(
+    test_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """End-to-End integration test: local video source -> skip download -> real FFmpeg -> LocalExportUploader."""
+    import subprocess
+
+    import imageio_ffmpeg
+
+    from autoshorts.media.compositor import FFmpegCompositor
+    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+    state_mgr = test_env["state_mgr"]
+    work_dir = test_env["work_dir"]
+    output_dir = test_env["output_dir"]
+    export_dir = output_dir / "export"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: work_dir)
+    monkeypatch.setattr("autoshorts.pipeline.get_output_dir", lambda: output_dir)
+    monkeypatch.setattr("autoshorts.core.paths.get_output_dir", lambda: output_dir)
+    monkeypatch.setattr("autoshorts.core.paths.get_work_dir", lambda: work_dir)
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    assert ffmpeg_exe and Path(ffmpeg_exe).is_file()
+
+    # 1. Create a real 2-second 1280x720 MP4 source video file locally
+    local_source = tmp_path / "my_local_interview.mp4"
+    gen_cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=1280x720:rate=25",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=800:sample_rate=44100",
+        "-t",
+        "2.0",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        str(local_source),
+    ]
+    subprocess.run(gen_cmd, check=True, capture_output=True)
+    assert local_source.is_file() and local_source.stat().st_size > 0
+
+    # 2. Set up background assets with manifest.json
+    assets_dir = tmp_path / "assets"
+    bg_dir = assets_dir / "backgrounds" / "minecraft"
+    bg_dir.mkdir(parents=True, exist_ok=True)
+    bg_clip = bg_dir / "parkour_01.mp4"
+    bg_cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=size=1080x1920:rate=25",
+        "-t",
+        "2.0",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-an",
+        str(bg_clip),
+    ]
+    subprocess.run(bg_cmd, check=True, capture_output=True)
+
+    manifest_json = bg_dir / "manifest.json"
+    manifest_json.write_text(
+        json.dumps({"videos": [{"filename": "parkour_01.mp4", "duration": 2.0}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("autoshorts.core.paths.get_assets_dir", lambda: assets_dir)
+
+    # 3. Mock fast Whisper transcription & SemIf decider
+    mock_transcriber = MagicMock()
+    mock_transcriber.transcribe.return_value = [
+        {"start": 0.0, "end": 2.0, "text": "Local clip integration test speech"}
+    ]
+    mock_transcriber.align_words.return_value = [
+        {"word": "Local", "start": 0.0, "end": 0.5, "probability": 1.0},
+        {"word": "speech", "start": 0.5, "end": 2.0, "probability": 1.0},
+    ]
+
+    mock_decider = MagicMock()
+    cand = ClipCandidate(start=0.0, end=2.0, text="Local clip integration test speech", score=0.95)
+    mock_decider.score_candidates.return_value = [cand]
+    mock_decider.select_clips.return_value = [
+        ClipSelection(
+            candidate=cand,
+            clip_index=0,
+            target_duration=15.0,
+            background_style="minecraft",
+            hook_text="LOCAL HOOK",
+            title="Local Clip Short",
+        )
+    ]
+
+    mock_downloader = MagicMock()
+
+    compositor = FFmpegCompositor()
+    uploader = LocalExportUploader(export_dir=export_dir)
+
+    pipeline = ShortsPipeline(
+        state_manager=state_mgr,
+        downloader=mock_downloader,
+        transcriber=mock_transcriber,
+        decider=mock_decider,
+        compositor=compositor,
+        uploader=uploader,
+    )
+
+    # Create job with local file path as source_url
+    job = Job(
+        id="job_local_src_e2e",
+        source_url=str(local_source),
+        status=JobStatus.QUEUED,
+        layout_mode="split_50_50",
+        style_preset="neon",
+    )
+    state_mgr.save_job(job)
+
+    # Process job end-to-end
+    completed_job = pipeline.process_job(job.id, immediate_upload=True)
+
+    # Downloader network fetch must NOT have been called (skipped download!)
+    assert mock_downloader.fetch_metadata.call_count == 0
+    assert mock_downloader.download_section.call_count == 0
+
+    assert completed_job.status in (JobStatus.COMPLETED, JobStatus.CLEANED)
+    assert completed_job.upload_result is not None
+    assert completed_job.upload_result.status == "exported"
+
+    # Exported master video must exist
+    exported_files = list(export_dir.glob("*.mp4"))
+    assert len(exported_files) >= 1
+    assert any(f.stat().st_size > 0 for f in exported_files)
+
+
+def test_pipeline_rerender_job_robust_from_multiple_states(
+    test_env: dict[str, Any], tmp_path: Path
+):
+    """Verify rerender_job succeeds robustly from READY_FOR_REVIEW, SCHEDULED, COMPLETED, and FAILED states."""
+    state_mgr = test_env["state_mgr"]
+    work_dir = test_env["work_dir"]
+    output_dir = test_env["output_dir"]
+
+    job_id = "job_robust_rerender"
+    job_work = work_dir / job_id
+    job_work.mkdir(parents=True, exist_ok=True)
+    raw_video = job_work / f"{job_id}_raw.mp4"
+    raw_video.write_bytes(b"\x00\x00\x00 fake raw video")
+
+    cand = ClipCandidate(start=0.0, end=10.0, text="Candidate transcript", score=0.9)
+    sel = ClipSelection(candidate=cand, clip_index=0, hook_text="Hook", title="Title")
+
+    mock_compositor = MagicMock()
+    mock_compositor.compose.return_value = output_dir / f"{job_id}_master.mp4"
+
+    pipeline = ShortsPipeline(state_manager=state_mgr, compositor=mock_compositor)
+
+    # 1. Re-render from FAILED state (with prior error message)
+    job_failed = Job(
+        id=job_id,
+        source_url="https://youtube.com/watch?v=robust",
+        status=JobStatus.FAILED,
+        raw_video_path=str(raw_video),
+        selected_clips=[sel],
+        error_message="Previous transient failure",
+    )
+    state_mgr.save_job(job_failed)
+
+    r1 = pipeline.rerender_job(job_id, hook_text="New Hook After Failed")
+    assert r1.status == JobStatus.READY_FOR_REVIEW
+    assert r1.error_message is None
+
+    # 2. Re-render from SCHEDULED state
+    r1.status = JobStatus.SCHEDULED
+    state_mgr.save_job(r1)
+    r2 = pipeline.rerender_job(job_id, layout_mode="full_blur_bg")
+    assert r2.status == JobStatus.READY_FOR_REVIEW
+    assert r2.layout_mode == "full_blur_bg"
+
+    # 3. Re-render from COMPLETED state
+    r2.status = JobStatus.COMPLETED
+    state_mgr.save_job(r2)
+    r3 = pipeline.rerender_job(job_id, style_preset="hormozi")
+    assert r3.status == JobStatus.READY_FOR_REVIEW
+    assert r3.style_preset == "hormozi"
+
+
+def test_pipeline_metadata_forwarding_in_handoff(test_env: dict[str, Any], tmp_path: Path):
+    """Verify handoff forwards category, altered_content, tags, publish_at, thumbnail, playlist, pinned comment."""
+    from autoshorts.pipeline import ShortsPipeline
+
+    state_mgr = test_env["state_mgr"]
+    output_dir = test_env["output_dir"]
+    master_file = output_dir / "meta_forward_master.mp4"
+    master_file.write_bytes(b"\x00\x00\x00 master")
+    thumb_file = output_dir / "meta_forward_thumb.jpg"
+    thumb_file.write_bytes(b"\xff\xd8\xff\xe0JPEG")
+
+    mock_uploader = MagicMock()
+    mock_uploader.upload.return_value = UploadResult(
+        video_id="vid_meta_fwd",
+        url="https://youtube.com/shorts/vid_meta_fwd",
+        status="uploaded",
+        verified=True,
+    )
+    mock_uploader.verify.return_value = True
+
+    cand = ClipCandidate(start=0.0, end=15.0, text="Forwarding metadata text", score=0.9)
+    sel = ClipSelection(
+        candidate=cand,
+        clip_index=0,
+        hook_text="Hook",
+        title="Title",
+        thumbnail_path=str(thumb_file),
+    )
+
+    job = Job(
+        id="job_meta_forwarding",
+        source_url="https://youtube.com/watch?v=metafwd",
+        status=JobStatus.READY_FOR_REVIEW,
+        rendered_video_path=str(master_file),
+        selected_clips=[sel],
+        category_id="28",
+        altered_content=True,
+        custom_tags=["customTag1", "customTag2"],
+        publish_at="2026-11-20T14:00:00Z",
+        auto_pin_comment=True,
+    )
+    # Add playlist_id and pin_comment_text dynamically
+    job.__dict__["playlist_id"] = "PL_test_123"
+    job.__dict__["pin_comment_text"] = "Check this out!"
+    state_mgr.save_job(job)
+
+    pipeline = ShortsPipeline(state_manager=state_mgr, uploader=mock_uploader)
+
+    res = pipeline._run_immediate_upload(job)
+    assert res.video_id == "vid_meta_fwd"
+
+    # Verify upload was called with forwarded metadata
+    call_kwargs = mock_uploader.upload.call_args[1]
+    assert call_kwargs["category_id"] == "28"
+    assert call_kwargs["altered_content"] is True
+    assert "customTag1" in call_kwargs["tags"]
+    assert call_kwargs["publish_at"] == "2026-11-20T14:00:00Z"
+    assert call_kwargs["thumbnail_path"] == thumb_file
+    assert call_kwargs["playlist_id"] == "PL_test_123"
+    assert call_kwargs["auto_pin_comment"] is True
+    assert call_kwargs["pin_comment_text"] == "Check this out!"
+
+
+def test_pipeline_gameplay_background_selection_manifest_and_fallback(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """Verify select_gameplay_background reads manifest if present, rotates/randomizes, and gracefully falls back with a clear log when empty."""
+    import logging
+
+    from autoshorts.pipeline import select_gameplay_background
+
+    assets_dir = tmp_path / "assets"
+    bg_mc = assets_dir / "backgrounds" / "minecraft"
+    bg_mc.mkdir(parents=True, exist_ok=True)
+
+    # 1. Create a dummy video > 1024 bytes and a manifest
+    vid1 = bg_mc / "mc_clip_01.mp4"
+    vid1.write_bytes(b"\x00" * 2048)
+    manifest = bg_mc / "manifest.json"
+    manifest.write_text(json.dumps({"files": ["mc_clip_01.mp4"]}), encoding="utf-8")
+
+    chosen, offset = select_gameplay_background(category="minecraft", assets_dir=assets_dir)
+    assert chosen is not None
+    assert chosen.name == "mc_clip_01.mp4"
+    assert 0.0 <= offset <= 120.0
+
+    # 2. Test empty category fallback with clear warning log
+    bg_empty = assets_dir / "backgrounds" / "subway"
+    bg_empty.mkdir(parents=True, exist_ok=True)
+
+    with caplog.at_level(logging.WARNING):
+        chosen_fb, offset_fb = select_gameplay_background(category="subway", assets_dir=assets_dir)
+        # Should gracefully fall back to procedural/lavfi (None, 0.0) when empty
+        assert chosen_fb is None
+        assert offset_fb == 0.0
+        assert any("No gameplay background video found" in record.message for record in caplog.records)
+        assert any("Gracefully falling back" in record.message for record in caplog.records)
+
+

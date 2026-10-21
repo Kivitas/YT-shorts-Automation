@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -15,9 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from autoshorts.core.config import Settings, UploadConfig
+from autoshorts.core.credential_guardian import classify_api_error
 from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
 from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import get_data_dir
+from autoshorts.core.resilience import classify_network_or_outage_error
 from autoshorts.quota.quota_tracker import QuotaTracker
 
 logger = logging.getLogger(__name__)
@@ -25,7 +28,20 @@ logger = logging.getLogger(__name__)
 SCOPES: list[str] = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
 ]
+
+QUOTA_COSTS: dict[str, int] = {
+    "videos.insert": 1600,
+    "videos.list": 1,
+    "search.list": 100,
+    "thumbnails.set": 50,
+    "playlistItems.insert": 50,
+    "commentThreads.insert": 50,
+}
+DAILY_QUOTA_CAP: int = 10000
 
 
 class CredentialsError(AutoShortsError):
@@ -178,8 +194,11 @@ class YouTubeApiUploader:
                     f.write(creds.to_json())
                 logger.info("Successfully refreshed and saved OAuth token.")
             except Exception as e:
-                logger.error(f"Failed to refresh OAuth token: {e}")
+                report = classify_api_error("youtube_oauth", e)
+                logger.error(f"Failed to refresh OAuth token: {report.message} ({e})")
                 creds = None
+                if report.status in ("revoked", "expired"):
+                    raise CredentialsError(report.message) from e
 
         if not creds or not creds.valid:
             if not self.client_secret_path.is_file():
@@ -264,6 +283,7 @@ class YouTubeApiUploader:
     def upload_thumbnail(self, video_id: str, thumbnail_path: Path) -> bool:
         """Upload a custom JPEG thumbnail for a video via thumbnails.set.
 
+        Consumes 50 units from general quota bucket.
         Wrapped in non-fatal try/except so unverified channels without custom thumbnail
         permission simply log a warning and never fail the video upload.
         """
@@ -281,11 +301,91 @@ class YouTubeApiUploader:
                 media_body=MediaFileUpload(str(thumb_file), mimetype="image/jpeg"),
             )
             req.execute()
+            if self.quota_tracker:
+                self.quota_tracker.record_general(QUOTA_COSTS["thumbnails.set"])
             logger.info("Custom thumbnail uploaded for video %s (%s).", video_id, thumb_file)
             return True
         except Exception as e:
             logger.warning("Failed to upload custom thumbnail for video %s: %s", video_id, e)
             return False
+
+    def batch_get_videos(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch statistics, snippet, and contentDetails for up to 50 videos per call via videos.list.
+
+        Consumes 1 general quota unit per batch of up to 50 video IDs.
+        """
+        results: dict[str, dict[str, Any]] = {}
+        if not video_ids:
+            return results
+
+        service = self.get_service()
+        unique_ids = list(dict.fromkeys(video_ids))
+
+        for i in range(0, len(unique_ids), 50):
+            batch = unique_ids[i : i + 50]
+            try:
+                req = service.videos().list(
+                    part="snippet,statistics,contentDetails",
+                    id=",".join(batch),
+                )
+                resp = req.execute()
+                if self.quota_tracker:
+                    self.quota_tracker.record_general(QUOTA_COSTS["videos.list"])
+
+                for item in resp.get("items", []):
+                    vid = item.get("id")
+                    if not vid:
+                        continue
+                    snippet = item.get("snippet", {})
+                    stats = item.get("statistics", {})
+                    details = item.get("contentDetails", {})
+                    results[vid] = {
+                        "id": vid,
+                        "title": snippet.get("title", ""),
+                        "description": snippet.get("description", ""),
+                        "categoryId": snippet.get("categoryId", ""),
+                        "tags": snippet.get("tags", []),
+                        "viewCount": int(stats.get("viewCount", 0)),
+                        "likeCount": int(stats.get("likeCount", 0)),
+                        "commentCount": int(stats.get("commentCount", 0)),
+                        "duration": details.get("duration", ""),
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to batch fetch videos {batch[:3]}...: {e}")
+
+        return results
+
+    def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        order: str = "relevance",
+        type_: str = "video",
+        video_duration: str | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """Search videos via search.list, consuming 100 units from general quota."""
+        if not query:
+            return []
+        service = self.get_service()
+        params: dict[str, Any] = {
+            "part": "snippet",
+            "q": query,
+            "maxResults": min(max(1, max_results), 50),
+            "order": order,
+            "type": type_,
+        }
+        if video_duration:
+            params["videoDuration"] = video_duration
+        params.update(kwargs)
+
+        req = service.search().list(**params)
+        resp = req.execute()
+        if self.quota_tracker:
+            self.quota_tracker.record_general(QUOTA_COSTS["search.list"])
+
+        items = resp.get("items", [])
+        return items if isinstance(items, list) else []
 
     def upload(
         self,
@@ -321,12 +421,17 @@ class YouTubeApiUploader:
             )
 
         # Ensure title contains #Shorts and does not exceed 100 characters
-        final_title = title
+        final_title = title.strip()
         if "#shorts" not in final_title.lower():
             if len(final_title) + len(" #Shorts") <= 100:
                 final_title = f"{final_title} #Shorts"
             else:
-                final_title = f"{final_title[:91]}... #Shorts"
+                final_title = f"{final_title[:91].rstrip()}... #Shorts"
+        else:
+            if len(final_title) > 100:
+                # Remove trailing #Shorts, truncate body, and re-append #Shorts
+                clean_no_tag = re.sub(r"(?i)\s*#shorts\b", "", final_title).strip()
+                final_title = f"{clean_no_tag[:91].rstrip()} #Shorts"
 
         service = self.get_service()
         _, _, _, _, HttpError, MediaFileUpload = _get_google_libraries()
@@ -342,11 +447,25 @@ class YouTubeApiUploader:
                 tags, custom_tags=custom_tags or kwargs.get("custom_tags")
             )
         else:
-            effective_tags = list(tags) if tags is not None else []
+            # Sanitize tags and enforce YouTube API's 500-character combined length cap
+            raw_tags = list(tags) if tags is not None else []
+            effective_tags = []
+            curr_len = 0
+            for t in raw_tags:
+                cleaned = str(t).replace("<", "").replace(">", "").strip()
+                if not cleaned:
+                    continue
+                cost = len(cleaned) + (1 if effective_tags else 0)
+                if curr_len + cost <= 500:
+                    effective_tags.append(cleaned)
+                    curr_len += cost
+
+        # Enforce YouTube API's 5000-character description cap
+        final_description = (description or "")[:5000]
 
         snippet: dict[str, Any] = {
             "title": final_title,
-            "description": description,
+            "description": final_description,
             "tags": effective_tags,
             "categoryId": str(effective_category),
         }
@@ -372,6 +491,7 @@ class YouTubeApiUploader:
             status["containsSyntheticMedia"] = bool(eff_altered)
 
         # Native Server-Side Scheduling (publish_at ISO-8601 UTC string)
+        # YouTube Data API v3 requires privacyStatus to be 'private' when publishAt is set
         if publish_at:
             status["privacyStatus"] = "private"
             status["publishAt"] = str(publish_at)
@@ -408,31 +528,50 @@ class YouTubeApiUploader:
                     pct = int(status_res.progress() * 100)
                     logger.debug(f"Resumable upload progress: {pct}%")
                 retry_count = 0  # Reset retry counter on successful chunk
-            except (HttpError, OSError, ConnectionError) as ex:
-                err_str = str(ex).lower()
-                is_quota = False
-                if HttpError is not None and isinstance(ex, HttpError):
-                    if hasattr(ex, "resp") and getattr(ex.resp, "status", None) == 403:
-                        is_quota = True
-                if (
-                    "quotaexceeded" in err_str
-                    or "quota exceeded" in err_str
-                    or "daily limit exceeded" in err_str
+            except (HttpError, OSError, ConnectionError, TimeoutError, Exception) as ex:
+                # Classify credentials & quota errors via credential_guardian
+                health_report = classify_api_error("youtube_oauth", ex)
+                if health_report.status in ("revoked", "expired") or health_report.error_code in (
+                    "invalid_grant",
+                    "unauthorized_client",
                 ):
-                    is_quota = True
+                    logger.error(
+                        "OAuth token revoked or expired during upload: %s", health_report.message
+                    )
+                    raise CredentialsError(health_report.message) from ex
 
-                if is_quota:
-                    logger.warning("YouTube API quota exceeded detected: %s", ex)
-                    raise QuotaExhaustedError(f"YouTube API quota exceeded: {ex}") from ex
+                if health_report.status == "quota_exhausted" or health_report.error_code in (
+                    "quotaExceeded",
+                    "dailyLimitExceeded",
+                ):
+                    logger.warning("YouTube API quota exceeded: %s", health_report.message)
+                    raise QuotaExhaustedError(health_report.message) from ex
+
+                # Check if client error (4xx) that is permanent and non-retryable
+                is_permanent_4xx = False
+                if HttpError is not None and isinstance(ex, HttpError):
+                    status_code = (
+                        getattr(ex.resp, "status", None) if hasattr(ex, "resp") else None
+                    )
+                    if status_code and 400 <= status_code < 500 and status_code not in (408, 429):
+                        is_permanent_4xx = True
+
+                if is_permanent_4xx:
+                    logger.error(f"Permanent HTTP client error during upload: {ex}")
+                    raise UploadFailedError(
+                        f"Upload failed permanently with HTTP client error: {ex}"
+                    ) from ex
 
                 retry_count += 1
                 if retry_count > self.max_retries:
                     logger.error(f"Upload failed after {self.max_retries} chunk retries: {ex}")
                     raise UploadFailedError(f"Upload failed permanently: {ex}") from ex
 
+                outage_info = classify_network_or_outage_error(ex)
                 backoff_sec = min(60.0, (2**retry_count) + random.uniform(0.1, 1.0))
                 logger.warning(
-                    f"Upload chunk error ({ex}); retrying in {backoff_sec:.1f}s (attempt {retry_count}/{self.max_retries})..."
+                    f"Upload chunk error ({ex}); retrying in {backoff_sec:.1f}s "
+                    f"(attempt {retry_count}/{self.max_retries}, outage: {outage_info.get('outage_type', 'none')})..."
                 )
                 time.sleep(backoff_sec)
 
@@ -441,6 +580,16 @@ class YouTubeApiUploader:
             raise UploadFailedError(f"YouTube response missing video ID: {response}")
 
         returned_privacy = response.get("status", {}).get("privacyStatus", status["privacyStatus"])
+
+        # Persist credentials if refreshed during operation
+        try:
+            if hasattr(service, "_http") and hasattr(service._http, "credentials"):
+                srv_creds = service._http.credentials
+                if srv_creds and srv_creds.valid and self.token_path.is_file():
+                    with open(self.token_path, "w", encoding="utf-8") as f:
+                        f.write(srv_creds.to_json())
+        except Exception as cred_err:
+            logger.debug("Non-fatal error persisting refreshed credentials: %s", cred_err)
 
         # Post-upload actions
         if thumbnail_path is not None:
