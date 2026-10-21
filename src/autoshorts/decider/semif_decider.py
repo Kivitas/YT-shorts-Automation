@@ -19,6 +19,12 @@ from autoshorts.decision.semif_engine import (
     compute_softmax,
     evaluate_heuristic,
 )
+from autoshorts.decision.window_slicer import (
+    classify_semantic_hook,
+    cluster_heatmap_spikes,
+    compute_hook_curiosity_score,
+    compute_narrative_completeness_score,
+)
 
 __all__ = [
     "HOOK_KEYWORDS",
@@ -30,6 +36,10 @@ __all__ = [
     "SemIfDecider",
     "_fuse_candidate_score",
     "build_semif_prompt",
+    "classify_semantic_hook",
+    "cluster_heatmap_spikes",
+    "compute_hook_curiosity_score",
+    "compute_narrative_completeness_score",
     "compute_softmax",
     "evaluate_heuristic",
 ]

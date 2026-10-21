@@ -10,9 +10,9 @@ Whether you want to clip long-form podcasts, webinars, and interviews into high-
 
 Follow this checklist for your first run:
 
-- [ ] **System Prereqs**: Windows 10/11, Python 3.11+ (or `uv`), FFmpeg installed or available via `.venv`.
-- [ ] **Run Pre-Flight Check**: Execute `start.bat --check` in PowerShell / Command Prompt. Confirm all runtime folders and core dependencies show `[OK]`.
-- [ ] **Launch Dashboard**: Run `start.bat` (or double-click it in File Explorer). The studio opens at `http://127.0.0.1:8000`.
+- [ ] **System Prereqs**: Windows 10/11 or macOS 12+ Monterey (Apple Silicon M1-M4 & Intel), Python 3.11+ (or `uv`), FFmpeg (`brew install ffmpeg` on macOS or bundled via `.venv`).
+- [ ] **Run Pre-Flight Check**: Execute `start.bat --check` in Windows PowerShell or `./start.sh --check` in macOS Terminal. Confirm all runtime folders and core dependencies show `[OK]`.
+- [ ] **Launch Dashboard**: Run `start.bat` (Windows) or `chmod +x start.sh && ./start.sh` (macOS). The studio opens at `http://127.0.0.1:8000` (tested with Safari, Chrome, Edge, and Arc).
 - [ ] **Configure AI Keys**: Click **⚙️ Settings** in the top navigation. Enter your `GEMINI_API_KEY` (recommended for video understanding) or configure OpenRouter / Local GGUF.
 - [ ] **Connect YouTube**: In **⚙️ Settings** &rarr; **YouTube API & Upload**, upload `client_secret.json` and click **"Authorize YouTube Account (OAuth 2.0)"** (or click **"Sign In with Edge"** for zero-quota Playwright uploads).
 - [ ] **Add Gameplay Backgrounds**: Verify `assets/backgrounds/minecraft/` or `assets/backgrounds/subway/` contains at least one `.mp4` video.
@@ -70,20 +70,23 @@ flowchart TD
 ## 🛠️ Complete Environment & System Setup
 
 ### Prerequisites
-- **Operating System**: Windows 10 or Windows 11 (64-bit).
+- **Operating System**: Windows 10/11 (64-bit) OR macOS 12+ Monterey (Apple Silicon M1-M4 & Intel).
 - **Python**: Python 3.11 or 3.12, or the fast [`uv`](https://astral.sh/uv) package manager (recommended).
 - **FFmpeg**: Required for all video compositing and audio normalization.
-  - Can be installed on your Windows system PATH (`ffmpeg.exe`), OR
-  - Will be automatically provided by the bundled `imageio-ffmpeg` package inside `.venv`.
-- **Browser**: Microsoft Edge (pre-installed on Windows) for zero-quota YouTube Studio uploads.
+  - Windows: System PATH (`ffmpeg.exe`) or bundled `imageio-ffmpeg` inside `.venv`.
+  - macOS: `brew install ffmpeg` (auto-detected at `/opt/homebrew/bin/ffmpeg` or `/usr/local/bin/ffmpeg`).
+- **Browser**: Apple Safari 15+, Google Chrome, Arc, or Microsoft Edge.
 
 ---
 
-### The `start.bat` Launcher & Flags
+### Dual-Platform Launchers (`start.bat` & `start.sh`)
 
-AutoShorts includes a self-healing Windows launcher script (`start.bat`) that verifies your virtual environment, bootstraps dependencies, checks FFmpeg availability, and launches the dashboard.
+AutoShorts includes self-healing one-click launchers with identical command-line flags across both platforms:
 
-#### Running `start.bat`
+- **Windows**: `start.bat`
+- **macOS & Linux**: `start.sh`
+
+#### Running on Windows (`start.bat`)
 ```powershell
 # Default launch: starts dashboard on http://127.0.0.1:8000
 .\start.bat
@@ -105,6 +108,27 @@ AutoShorts includes a self-healing Windows launcher script (`start.bat`) that ve
 
 # Display help information
 .\start.bat --help
+```
+
+#### Running on macOS (`start.sh`)
+```bash
+# Make executable (one-time setup)
+chmod +x start.sh
+
+# Default launch: starts dashboard on http://127.0.0.1:8000 and opens browser
+./start.sh
+
+# Launch on a custom port
+./start.sh --port 8080
+
+# Run pre-flight environment diagnostics
+./start.sh --check
+
+# Run automated unit test suite
+./start.sh --test
+
+# Display help information
+./start.sh --help
 ```
 
 > [!NOTE]

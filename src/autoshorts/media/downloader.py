@@ -75,7 +75,7 @@ def format_section_arg(start_sec: float, end_sec: float) -> str:
 
 
 def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
-    """Cleanly terminate process and all child processes, especially on Windows."""
+    """Cleanly terminate process and all child processes across Windows, macOS, and Linux."""
     if proc is None:
         return
     pid = proc.pid if isinstance(proc, subprocess.Popen) else proc
@@ -92,6 +92,15 @@ def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
             logger.debug("taskkill failed for PID %s: %s", pid, exc)
     else:
         try:
+            # On macOS and Linux, terminate child processes spawned by yt-dlp/ffmpeg
+            try:
+                subprocess.run(
+                    ["pkill", "-P", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            except Exception:
+                pass
             if isinstance(proc, subprocess.Popen):
                 proc.kill()
             else:

@@ -26,11 +26,13 @@ Before submitting contributions, please review our strict architecture principle
    - All console and file logging automatically masks sensitive credentials via `logging_setup.py`.
    - Validate API and OAuth tokens through `core/credential_guardian.py` to circuit-break calls before quota waste or unhandled auth exceptions.
 6. **Offline Resilience & Zero-Phantom-Data Guarantee**:
-   - Long-running pipeline operations must leverage `core/resilience.py` and `scheduler/power_management.py` (`SetThreadExecutionState`) to prevent OS sleep.
+   - Long-running pipeline operations must leverage `core/resilience.py` and `scheduler/power_management.py` (`SetThreadExecutionState` on Windows, `IOKit` / `caffeinate` on macOS) to prevent OS sleep.
+   - Cross-platform parity: Windows and macOS Monterey 12+ (Apple Silicon & Intel) run seamlessly from the exact same codebase with zero platform forks.
    - SQLite state transitions in `core/state_manager.py` are atomic to prevent phantom tasks, orphaned jobs, or duplicated render batches during unexpected power loss or network drops.
-7. **Automated Testing**:
+7. **Automated Testing & Cross-Platform / Safari Validation**:
    - All PRs must include network-independent unit tests under `tests/` leveraging `pytest` and `pytest-mock`.
-   - The test suite must maintain 100% passing status across all unit and integration tests.
+   - The test suite must maintain 100% passing status across all unit and integration tests on both Windows and macOS (`pytest -q` and `pytest tests/test_macos_compatibility.py`).
+   - Web UI changes must maintain strict Apple Safari 15+ compatibility (dual `-webkit-backdrop-filter` and `backdrop-filter`, `-webkit-appearance: none`, video `playsinline`/`muted`, and strict ISO-8601 date parsing).
 
 ---
 

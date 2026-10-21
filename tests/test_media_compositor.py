@@ -28,6 +28,17 @@ from autoshorts.media.encoder_probe import (
     probe_encoder,
 )
 
+
+@pytest.fixture(autouse=True)
+def clean_encoder_probe_cache():
+    """Ensure mock encoder probe results never leak across tests."""
+    from autoshorts.media.compositor import clear_hardware_encoder_cache
+
+    clear_hardware_encoder_cache()
+    yield
+    clear_hardware_encoder_cache()
+
+
 # -----------------------------------------------------------------------------
 # 1. Protocol Runtime Check Compliance
 # -----------------------------------------------------------------------------
@@ -787,3 +798,173 @@ def test_compositor_extract_thumbnail_and_short_clip_fallback(tmp_path: Path):
         res_short = comp.extract_thumbnail(video_file, thumb_short, timestamp_sec=1.2)
     assert res_short == thumb_short
     assert "-ss 0.1" in " ".join(captured_cmds[-1])
+
+
+# -----------------------------------------------------------------------------
+# 10. Intelligent Zoom Optical Center, Split Styling, Momentum & Frame Scoring
+# -----------------------------------------------------------------------------
+
+
+def test_calculate_optical_center_and_zoom_punch_crop():
+    """Verify zoom punch-in centers crop on active speaker face based on crop_focus."""
+    from autoshorts.core.models import ZoomPunchIn
+    from autoshorts.media.dopamine_effects import (
+        build_zoom_punch_filter,
+        calculate_optical_center,
+    )
+
+    x_left, y_left = calculate_optical_center("left")
+    assert "0.22" in x_left
+    assert "0.40" in y_left
+
+    x_right, y_right = calculate_optical_center("right")
+    assert "0.78" in x_right
+    assert "0.40" in y_right
+
+    x_center, y_center = calculate_optical_center("center")
+    assert x_center == "(iw-ow)/2"
+    assert y_center == "(ih-oh)/2"
+
+    punches = [ZoomPunchIn(timestamp=3.0, scale=1.15, duration=0.8, emphasis_word="SPEAKER")]
+    crop_left, _ = build_zoom_punch_filter(punches, crop_focus="left")
+    assert "x='(iw-ow)*0.22'" in crop_left
+    assert "y='(ih-oh)*0.40'" in crop_left
+
+    crop_right, _ = build_zoom_punch_filter(punches, crop_focus="right")
+    assert "x='(iw-ow)*0.78'" in crop_right
+
+
+def test_build_split_separator_filter_glow_and_shadow():
+    """Verify split-screen boundary separator styles (glow, shadow, line)."""
+    from autoshorts.media.dopamine_effects import build_split_separator_filter
+
+    # 1. Glow style (cyan halo + white core)
+    glow_str, glow_out = build_split_separator_filter(
+        input_label="stacked", output_label="with_glow", seam_y=960, width=1080, style="glow"
+    )
+    assert "color=c=0x00E5FF@0.40" in glow_str
+    assert "color=c=white@0.90" in glow_str
+    assert "with_glow" == glow_out
+
+    # 2. Shadow style
+    shadow_str, shadow_out = build_split_separator_filter(
+        input_label="stacked", output_label="with_shadow", seam_y=960, width=1080, style="shadow"
+    )
+    assert "color=c=black@0.45" in shadow_str
+    assert "with_shadow" == shadow_out
+
+    # 3. None (pass through)
+    none_str, _ = build_split_separator_filter(
+        input_label="stacked", output_label="stacked_none", style="none"
+    )
+    assert "[stacked]copy[stacked_none]" == none_str
+
+
+def test_build_visual_momentum_filter():
+    """Verify micro-transition whip-pan expressions at jump cuts."""
+    from autoshorts.core.models import JumpCut
+    from autoshorts.media.dopamine_effects import build_visual_momentum_filter
+
+    cuts = [JumpCut(cut_start=4.0, cut_end=4.8, reason="breath")]
+    momentum_str, out_label = build_visual_momentum_filter(
+        cuts, input_label="v_in", output_label="v_momentum"
+    )
+    assert "crop=w='iw*0.96':h='ih*0.96'" in momentum_str
+    assert "sin(3.14159*(t-" in momentum_str
+    assert out_label == "v_momentum"
+
+
+def test_detect_hardware_encoder_priority_and_fallback():
+    """Verify detect_hardware_encoder probes NVENC, VideoToolbox, QSV, and falls back to libx264."""
+    from autoshorts.media.compositor import clear_hardware_encoder_cache, detect_hardware_encoder
+
+    clear_hardware_encoder_cache()
+    # When all hardware encoders fail, falls back to libx264
+    with (
+        patch("subprocess.run") as mock_run,
+        patch("autoshorts.media.compositor.get_ffmpeg_path", return_value="ffmpeg"),
+    ):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1  # Hardware fails
+        mock_run.return_value = mock_proc
+
+        enc = detect_hardware_encoder(preferred="auto", force_refresh=True)
+        assert enc.codec == "libx264"
+        assert enc.is_hardware_accelerated is False
+
+    clear_hardware_encoder_cache()
+    # When NVENC succeeds, selects h264_nvenc
+    with (
+        patch("subprocess.run") as mock_run_nvenc,
+        patch("autoshorts.media.compositor.get_ffmpeg_path", return_value="ffmpeg"),
+    ):
+        mock_proc_ok = MagicMock()
+        mock_proc_ok.returncode = 0
+        mock_run_nvenc.return_value = mock_proc_ok
+
+        enc_nv = detect_hardware_encoder(preferred="h264_nvenc", force_refresh=True)
+        assert enc_nv.codec == "h264_nvenc"
+        assert enc_nv.is_hardware_accelerated is True
+
+    clear_hardware_encoder_cache()
+
+
+def test_score_frame_visual_quality_metrics():
+    """Verify score_frame_visual_quality calculates sharpness, facial contrast, and hook banner density."""
+    from autoshorts.media.compositor import score_frame_visual_quality
+
+    # Synthetic 180x320 PPM with edge patterns
+    w, h = 180, 320
+    header = f"P6\n{w} {h}\n255\n".encode()
+    # High-contrast edge and gradient pattern
+    pixels = bytearray()
+    for y in range(h):
+        for x in range(w):
+            val = (x * 17 + y * 23) % 256
+            pixels.extend([val, val, val])
+
+    metrics = score_frame_visual_quality(header + bytes(pixels))
+    assert 0.0 <= metrics["score"] <= 1.0
+    assert metrics["sharpness"] > 0.40
+    assert metrics["facial_contrast"] > 0.40
+
+
+def test_extract_thumbnail_auto_best_frame(tmp_path: Path):
+    """Verify extract_thumbnail scans candidate frames in first 2.5s when auto_best_frame=True."""
+    video_file = tmp_path / "rendered.mp4"
+    video_file.write_bytes(b"mock video")
+    thumb_file = tmp_path / "thumb_auto.jpg"
+
+    comp = FFmpegCompositor()
+
+    w, h = 180, 320
+    ppm_data = f"P6\n{w} {h}\n255\n".encode() + bytes([(i % 256) for i in range(w * h * 3)])
+
+    captured_cmds: list[list[str]] = []
+
+    def mock_subprocess(cmd, *args, **kwargs):
+        captured_cmds.append(list(cmd))
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        # If PPM pipe extraction
+        if "image2pipe" in cmd:
+            mock_proc.stdout = ppm_data
+        else:
+            # JPEG file extraction
+            Path(cmd[-1]).write_bytes(b"\xff\xd8\xff\xe0JPEG")
+        return mock_proc
+
+    with (
+        patch("subprocess.run", side_effect=mock_subprocess),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
+    ):
+        res = comp.extract_thumbnail(video_file, thumb_file, auto_best_frame=True, search_window_sec=2.5)
+
+    assert res == thumb_file
+    assert thumb_file.is_file()
+    # Verified that multiple probe commands were executed before final extraction
+    assert len(captured_cmds) >= 3
+    final_cmd = " ".join(captured_cmds[-1])
+    assert "-frames:v 1" in final_cmd
+    assert "-q:v 2" in final_cmd
+

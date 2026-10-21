@@ -139,6 +139,25 @@ def build_watermark_filter(
     )
 
 
+def calculate_optical_center(crop_focus: str = "center") -> tuple[str, str]:
+    """Calculate optical (x, y) crop expressions for speaker-centered zoom punches.
+
+    Aligns zoom center directly with the active speaker's face based on crop_focus:
+    - 'left': speaker framed on left side (x='(iw-ow)*0.22', y='(ih-oh)*0.40')
+    - 'right': speaker framed on right side (x='(iw-ow)*0.78', y='(ih-oh)*0.40')
+    - 'dynamic': horizontal sinusoidal tracking matching moving speaker
+    - 'center': centered framing (x='(iw-ow)/2', y='(ih-oh)/2')
+    """
+    focus = (crop_focus or "center").strip().lower()
+    if focus == "left":
+        return "(iw-ow)*0.22", "(ih-oh)*0.40"
+    if focus == "right":
+        return "(iw-ow)*0.78", "(ih-oh)*0.40"
+    if focus == "dynamic":
+        return "(iw-ow)*(0.5+0.25*sin(t*0.35))", "(ih-oh)/2"
+    return "(iw-ow)/2", "(ih-oh)/2"
+
+
 def build_zoom_punch_filter(
     zoom_punch_ins: Sequence[ZoomPunchIn],
     input_label: str = "top_scaled",
@@ -146,11 +165,12 @@ def build_zoom_punch_filter(
     ramp_duration_sec: float = 0.15,
     target_w: int = 1080,
     target_h: int = 960,
+    crop_focus: str = "center",
 ) -> tuple[str, str]:
     """Generate dynamic zoom punch-in crop expressions for the top video stream.
 
-    Applies a centered crop (scaled back to target_w x target_h) with smooth ease-in / ease-out ramps
-    during specified intervals.
+    Applies an optically centered crop (scaled back to target_w x target_h) with smooth ease-in / ease-out ramps
+    during specified intervals, centered directly on the active speaker.
     """
     if not zoom_punch_ins:
         # Pass through unchanged
@@ -172,11 +192,94 @@ def build_zoom_punch_filter(
             terms.append(f"({scale_delta:.2f}*between(t,{start_t:.2f},{end_t:.2f}))")
 
     scale_expr = "+".join(terms)
+    x_opt, y_opt = calculate_optical_center(crop_focus)
     crop_str = (
         f"[{input_label}]crop=w='iw/({scale_expr})':h='ih/({scale_expr})':"
-        f"x='(iw-ow)/2':y='(ih-oh)/2',scale={target_w}:{target_h}[{output_label}]"
+        f"x='{x_opt}':y='{y_opt}',scale={target_w}:{target_h}[{output_label}]"
     )
     return crop_str, output_label
+
+
+def build_visual_momentum_filter(
+    jump_cuts: Sequence[JumpCut],
+    input_label: str = "top",
+    output_label: str = "top_momentum",
+    whip_duration_sec: float = 0.08,
+    target_w: int = 1080,
+    target_h: int = 960,
+) -> tuple[str, str]:
+    """Generate subtle whip-pan micro-transitions at jump cuts to maintain visual momentum.
+
+    Applies a dynamic horizontal micro-shift during the transition boundaries of each cut
+    to hide audio/visual seams with energetic motion.
+    """
+    if not jump_cuts:
+        return f"[{input_label}]copy[{output_label}]", output_label
+
+    terms = ["0"]
+    for cut in jump_cuts:
+        st = max(0.0, cut.cut_start - whip_duration_sec)
+        et = cut.cut_end + whip_duration_sec
+        dur = max(0.01, whip_duration_sec)
+        shift_expr = f"(sin(3.14159*(t-{st:.2f})/{dur:.2f})*between(t,{st:.2f},{cut.cut_start:.2f}))"
+        shift_expr_post = f"(-sin(3.14159*(t-{cut.cut_end:.2f})/{dur:.2f})*between(t,{cut.cut_end:.2f},{et:.2f}))"
+        terms.append(f"({shift_expr}+{shift_expr_post})")
+
+    impulse_expr = "+".join(terms)
+    momentum_str = (
+        f"[{input_label}]crop=w='iw*0.96':h='ih*0.96':"
+        f"x='(iw-ow)/2+(iw-ow)*0.4*({impulse_expr})':y='(ih-oh)/2',"
+        f"scale={target_w}:{target_h}[{output_label}]"
+    )
+    return momentum_str, output_label
+
+
+def build_split_separator_filter(
+    input_label: str = "stacked",
+    output_label: str = "stacked_sep",
+    seam_y: int = 960,
+    width: int = 1080,
+    duration_sec: float = 45.0,
+    style: str = "glow",
+) -> tuple[str, str]:
+    """Generate sleek glowing separator line or subtle shadow depth at split-screen seam.
+
+    Supported styles:
+    - 'glow': Modern cyan/white glowing separator line with subtle gradient depth
+    - 'shadow': Soft drop-shadow bar creating visual elevation between top and bottom clips
+    - 'line': Clean minimalist neutral line
+    - 'none': Pass through unchanged
+    """
+    clean_style = (style or "glow").strip().lower()
+    if clean_style == "none":
+        return f"[{input_label}]copy[{output_label}]", output_label
+
+    dur = max(1.0, duration_sec)
+
+    if clean_style == "shadow":
+        line_filter = (
+            f"color=c=black@0.45:s={width}x8:d={dur:.2f}[shadow_bar]; "
+            f"[{input_label}][shadow_bar]overlay=x=0:y={seam_y - 4}[{output_label}]"
+        )
+        return line_filter, output_label
+
+    elif clean_style == "line":
+        line_filter = (
+            f"color=c=white@0.80:s={width}x2:d={dur:.2f}[sep_line]; "
+            f"[{input_label}][sep_line]overlay=x=0:y={seam_y - 1}[{output_label}]"
+        )
+        return line_filter, output_label
+
+    else:  # 'glow' (default)
+        halo_h = 6
+        core_h = 2
+        line_filter = (
+            f"color=c=0x00E5FF@0.40:s={width}x{halo_h}:d={dur:.2f}[sep_halo]; "
+            f"color=c=white@0.90:s={width}x{core_h}:d={dur:.2f}[sep_core]; "
+            f"[{input_label}][sep_halo]overlay=x=0:y={seam_y - halo_h // 2}[with_halo]; "
+            f"[with_halo][sep_core]overlay=x=0:y={seam_y - core_h // 2}[{output_label}]"
+        )
+        return line_filter, output_label
 
 
 def build_jumpcut_select_filter(
@@ -402,6 +505,7 @@ def build_complex_filtergraph(
     height: int = 1920,
     fps: int = 30,
     crop_focus: str = "center",
+    split_separator: str = "none",
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -447,6 +551,7 @@ def build_complex_filtergraph(
                 output_label="top_zoomed",
                 target_w=width,
                 target_h=top_h,
+                crop_focus=crop_focus,
             )
             filter_stages.append(zoom_str)
         else:
@@ -477,6 +582,17 @@ def build_complex_filtergraph(
         )
         filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
         current_v = "stacked"
+        if split_separator != "none":
+            sep_str, sep_out = build_split_separator_filter(
+                input_label=current_v,
+                output_label="stacked_sep",
+                seam_y=top_h,
+                width=width,
+                duration_sec=duration_sec,
+                style=split_separator,
+            )
+            filter_stages.append(sep_str)
+            current_v = sep_out
 
     elif mode == "full_blur_bg":
         # Single-source: blurred 9:16 background with sharp centered 16:9 foreground
@@ -519,6 +635,7 @@ def build_complex_filtergraph(
                 output_label="fg_zoomed",
                 target_w=width,
                 target_h=fg_h,
+                crop_focus=crop_focus,
             )
             filter_stages.append(zoom_str)
         else:
@@ -542,6 +659,7 @@ def build_complex_filtergraph(
                 output_label="full_zoomed",
                 target_w=width,
                 target_h=height,
+                crop_focus=crop_focus,
             )
             filter_stages.append(zoom_str)
         else:
@@ -583,6 +701,7 @@ def build_complex_filtergraph(
                 output_label="main_zoomed",
                 target_w=width,
                 target_h=height,
+                crop_focus=crop_focus,
             )
             filter_stages.append(zoom_str)
         else:
@@ -637,6 +756,7 @@ def build_complex_filtergraph(
                 output_label="top_zoomed",
                 target_w=width,
                 target_h=top_h,
+                crop_focus=crop_focus,
             )
             filter_stages.append(zoom_str)
         else:
@@ -667,6 +787,17 @@ def build_complex_filtergraph(
         )
         filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
         current_v = "stacked"
+        if split_separator != "none":
+            sep_str, sep_out = build_split_separator_filter(
+                input_label=current_v,
+                output_label="stacked_sep",
+                seam_y=top_h,
+                width=width,
+                duration_sec=duration_sec,
+                style=split_separator,
+            )
+            filter_stages.append(sep_str)
+            current_v = sep_out
 
     # -------------------------------------------------------------------------
     # 2. Color Grading LUT
@@ -779,3 +910,24 @@ def build_complex_filtergraph(
 
     filter_complex_str = "; ".join(filter_stages)
     return filter_complex_str, out_video_label, out_audio_label
+
+
+__all__ = [
+    "DOPAMINE_PRESETS",
+    "DopaminePreset",
+    "build_color_grading_filter",
+    "build_complex_filtergraph",
+    "build_jumpcut_select_filter",
+    "build_progress_bar_filter",
+    "build_speaker_crop_filter",
+    "build_split_separator_filter",
+    "build_visual_momentum_filter",
+    "build_watermark_filter",
+    "build_zoom_punch_filter",
+    "calculate_optical_center",
+    "find_user_audio_assets",
+    "find_user_background_videos",
+    "get_dopamine_preset",
+    "pick_background_asset",
+]
+

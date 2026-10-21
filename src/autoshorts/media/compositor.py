@@ -38,7 +38,7 @@ from autoshorts.media.dopamine_effects import (
     pick_background_asset,
 )
 from autoshorts.media.downloader import run_command_with_cleanup, terminate_process_tree
-from autoshorts.media.encoder_probe import EncoderInfo, probe_encoder
+from autoshorts.media.encoder_probe import EncoderInfo
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,290 @@ class FasterWhisperTranscriber:
         return words
 
 
+HW_ENCODERS: list[tuple[str, list[str], str]] = [
+    ("h264_nvenc", ["-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", "24"], "NVIDIA NVENC H.264 Hardware Encoder"),
+    ("hevc_videotoolbox", ["-q:v", "65"], "Apple VideoToolbox HEVC Hardware Encoder"),
+    ("h264_videotoolbox", ["-q:v", "65"], "Apple VideoToolbox H.264 Hardware Encoder"),
+    ("h264_qsv", ["-global_quality", "25", "-look_ahead", "0"], "Intel QuickSync Video (h264_qsv)"),
+]
+
+CPU_FALLBACK_ENCODER = (
+    "libx264",
+    ["-preset", "veryfast", "-crf", "22", "-threads", "4"],
+    "libx264 software encoder fallback (CPU)",
+)
+
+_HW_PROBE_CACHE: dict[str, EncoderInfo] = {}
+
+
+def clear_hardware_encoder_cache() -> None:
+    """Clear cached hardware encoder probe results (useful for test isolation)."""
+    _HW_PROBE_CACHE.clear()
+
+
+def detect_hardware_encoder(
+    preferred: str = "auto",
+    ffmpeg_binary: str = "ffmpeg",
+    timeout_sec: float = 3.0,
+    force_refresh: bool = False,
+) -> EncoderInfo:
+    """Detect and verify fast FFmpeg video encoders with hardware acceleration.
+
+    Priority:
+    1. h264_nvenc (NVIDIA GPUs)
+    2. hevc_videotoolbox / h264_videotoolbox (Apple Silicon / macOS)
+    3. h264_qsv (Intel QuickSync)
+    4. libx264 (CPU fallback)
+    """
+    resolved_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+    cache_key = f"{preferred}:{resolved_bin}"
+    if not force_refresh and cache_key in _HW_PROBE_CACHE:
+        return _HW_PROBE_CACHE[cache_key]
+
+    target_pref = (preferred or "auto").strip().lower()
+
+    if target_pref == "libx264":
+        info = EncoderInfo(
+            codec=CPU_FALLBACK_ENCODER[0],
+            extra_args=CPU_FALLBACK_ENCODER[1],
+            is_hardware_accelerated=False,
+            verified=True,
+            description=CPU_FALLBACK_ENCODER[2],
+        )
+        _HW_PROBE_CACHE[cache_key] = info
+        return info
+
+    def _test_encoder(codec: str, extra: list[str]) -> bool:
+        cmd = [
+            resolved_bin,
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=256x256:d=0.1",
+            "-c:v",
+            codec,
+            *extra,
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            res = subprocess.run(cmd, capture_output=True, timeout=timeout_sec, check=False)
+            return res.returncode == 0
+        except Exception:
+            return False
+
+    # Specific preference check
+    if target_pref in {"h264_nvenc", "hevc_videotoolbox", "h264_videotoolbox", "h264_qsv"}:
+        for c, args, desc in HW_ENCODERS:
+            if c == target_pref:
+                if _test_encoder(c, args):
+                    info = EncoderInfo(
+                        codec=c,
+                        extra_args=args,
+                        is_hardware_accelerated=True,
+                        verified=True,
+                        description=desc,
+                    )
+                    _HW_PROBE_CACHE[cache_key] = info
+                    return info
+                break
+
+    # Auto priority check
+    for c, args, desc in HW_ENCODERS:
+        if _test_encoder(c, args):
+            logger.info("Hardware acceleration detected and verified: %s (%s)", c, desc)
+            info = EncoderInfo(
+                codec=c,
+                extra_args=args,
+                is_hardware_accelerated=True,
+                verified=True,
+                description=desc,
+            )
+            _HW_PROBE_CACHE[cache_key] = info
+            return info
+
+    # Fallback to libx264
+    info = EncoderInfo(
+        codec=CPU_FALLBACK_ENCODER[0],
+        extra_args=CPU_FALLBACK_ENCODER[1],
+        is_hardware_accelerated=False,
+        verified=True,
+        description=CPU_FALLBACK_ENCODER[2],
+    )
+    _HW_PROBE_CACHE[cache_key] = info
+    return info
+
+
+def score_frame_visual_quality(ppm_bytes: bytes) -> dict[str, float]:
+    """Score frame visual quality from raw 24-bit RGB PPM image bytes.
+
+    Evaluates:
+    1. Visual sharpness: high-frequency spatial edge gradients
+    2. Facial contrast: luminance dynamic range in upper quadrant (speaker face region)
+    3. Hook banner visibility: high-contrast text edge density in subtitle region
+
+    Returns metrics dictionary with blended quality score in [0.0, 1.0].
+    """
+    if not ppm_bytes or not ppm_bytes.startswith(b"P6"):
+        return {
+            "score": 0.5,
+            "sharpness": 0.5,
+            "facial_contrast": 0.5,
+            "hook_banner": 0.5,
+        }
+
+    parts = ppm_bytes.split(b"\n", 3)
+    if len(parts) < 4:
+        return {
+            "score": 0.5,
+            "sharpness": 0.5,
+            "facial_contrast": 0.5,
+            "hook_banner": 0.5,
+        }
+
+    dim_line = parts[1].split()
+    if len(dim_line) < 2:
+        return {
+            "score": 0.5,
+            "sharpness": 0.5,
+            "facial_contrast": 0.5,
+            "hook_banner": 0.5,
+        }
+
+    w, h = int(dim_line[0]), int(dim_line[1])
+    pixel_data = parts[3]
+    stride = w * 3
+    step = 2
+
+    grad_sum = 0
+    grad_cnt = 0
+    face_y_samples: list[int] = []
+    banner_edges = 0
+    banner_samples = 0
+
+    for y in range(0, h - 1, step):
+        row_offset = y * stride
+        next_row_offset = (y + 1) * stride
+        in_face_band = (0.15 * h) <= y <= (0.60 * h)
+        in_banner_band = (0.35 * h) <= y <= (0.75 * h)
+
+        for x in range(0, w - 1, step):
+            idx = row_offset + x * 3
+            if idx + 5 >= len(pixel_data) or next_row_offset + x * 3 + 2 >= len(pixel_data):
+                continue
+            r, g, b = pixel_data[idx], pixel_data[idx + 1], pixel_data[idx + 2]
+            lum = (r * 77 + g * 150 + b * 29) >> 8
+
+            r_right, g_right, b_right = pixel_data[idx + 3], pixel_data[idx + 4], pixel_data[idx + 5]
+            lum_right = (r_right * 77 + g_right * 150 + b_right * 29) >> 8
+
+            r_down = pixel_data[next_row_offset + x * 3]
+            g_down = pixel_data[next_row_offset + x * 3 + 1]
+            b_down = pixel_data[next_row_offset + x * 3 + 2]
+            lum_down = (r_down * 77 + g_down * 150 + b_down * 29) >> 8
+
+            h_diff = abs(lum - lum_right)
+            v_diff = abs(lum - lum_down)
+            grad_sum += h_diff + v_diff
+            grad_cnt += 2
+
+            if in_face_band:
+                face_y_samples.append(lum)
+            if in_banner_band:
+                banner_samples += 1
+                if h_diff > 45:
+                    banner_edges += 1
+
+    avg_grad = grad_sum / max(1, grad_cnt)
+    sharpness = min(1.0, avg_grad / 20.0)
+
+    if face_y_samples:
+        mean_face = sum(face_y_samples) / len(face_y_samples)
+        variance = sum((val - mean_face) ** 2 for val in face_y_samples) / len(face_y_samples)
+        std_face = variance**0.5
+        facial_contrast = min(1.0, std_face / 45.0)
+    else:
+        facial_contrast = 0.5
+
+    banner_density = banner_edges / max(1, banner_samples)
+    hook_banner = min(1.0, banner_density / 0.08)
+
+    total = 0.40 * sharpness + 0.35 * facial_contrast + 0.25 * hook_banner
+    return {
+        "score": round(total, 4),
+        "sharpness": round(sharpness, 4),
+        "facial_contrast": round(facial_contrast, 4),
+        "hook_banner": round(hook_banner, 4),
+    }
+
+
+def find_best_thumbnail_timestamp(
+    video_path: Path | str,
+    ffmpeg_binary: str = "ffmpeg",
+    search_window_sec: float = 2.5,
+    sample_count: int = 5,
+    fallback_ts: float = 1.2,
+) -> float:
+    """Evaluate candidate frames in the first search_window_sec for visual sharpness,
+
+    facial contrast, and hook banner visibility. Returns the optimal timestamp.
+    """
+    src = Path(video_path).resolve()
+    if not src.is_file():
+        return fallback_ts
+
+    clip_dur = probe_media_duration(src, default=0.0)
+    effective_window = min(clip_dur if clip_dur > 0 else search_window_sec, search_window_sec)
+    if effective_window <= 0.3:
+        return 0.1
+
+    step = effective_window / (sample_count + 1)
+    candidates = [round(step * (i + 1), 2) for i in range(sample_count)]
+
+    best_ts = candidates[len(candidates) // 2] if candidates else fallback_ts
+    best_score = -1.0
+
+    target_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+
+    for ts in candidates:
+        cmd = [
+            target_bin,
+            "-y",
+            "-v",
+            "error",
+            "-ss",
+            f"{ts:.2f}",
+            "-i",
+            str(src),
+            "-frames:v",
+            "1",
+            "-s",
+            "180x320",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "image2pipe",
+            "-",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=5.0, check=False)
+            if proc.returncode == 0 and len(proc.stdout) > 100:
+                metrics = score_frame_visual_quality(proc.stdout)
+                score = metrics["score"]
+                if score > best_score:
+                    best_score = score
+                    best_ts = ts
+        except Exception as exc:
+            logger.debug("Failed probing thumbnail candidate at %.2fs: %s", ts, exc)
+            continue
+
+    return best_ts
+
+
 class FFmpegCompositor:
     """High-efficiency deterministic FFmpeg compositor for vertical 9:16 YouTube Shorts.
 
@@ -288,8 +572,8 @@ class FFmpegCompositor:
         self.encoder_preferred = encoder_preferred or self.config.media.preferred_encoder
 
     def _get_encoder(self) -> EncoderInfo:
-        """Resolve and verify the video encoder."""
-        return probe_encoder(
+        """Resolve and verify the fastest available hardware or software video encoder."""
+        return detect_hardware_encoder(
             preferred=self.encoder_preferred,
             ffmpeg_binary=self.ffmpeg_binary,
         )
@@ -647,10 +931,15 @@ class FFmpegCompositor:
         self,
         video_path: Path,
         output_path: Path,
-        timestamp_sec: float = 1.2,
+        timestamp_sec: float | None = 1.2,
+        auto_best_frame: bool = False,
+        search_window_sec: float = 2.5,
     ) -> Path:
-        """Extract a crisp 1080x1920 JPEG frame from the rendered Short at timestamp_sec.
+        """Extract a crisp 1080x1920 JPEG frame from the rendered Short.
 
+        When auto_best_frame=True or timestamp_sec is None, intelligently scores
+        candidate frames in the first search_window_sec (default 2.5s) for visual sharpness,
+        facial contrast, and hook banner visibility rather than relying on a static timestamp.
         Falls back to 0.1s if the clip is very short or initial seek fails.
         """
         src = Path(video_path).resolve()
@@ -661,10 +950,20 @@ class FFmpegCompositor:
             raise FileNotFoundError(f"Video file not found for thumbnail extraction: {src}")
 
         clip_dur = probe_media_duration(src, default=0.0)
-        if 0.0 < clip_dur <= timestamp_sec or timestamp_sec < 0.0:
-            target_ts = 0.1
+
+        if auto_best_frame or timestamp_sec is None:
+            target_ts = find_best_thumbnail_timestamp(
+                video_path=src,
+                ffmpeg_binary=self.ffmpeg_binary,
+                search_window_sec=search_window_sec,
+                fallback_ts=1.2 if timestamp_sec is None else float(timestamp_sec),
+            )
         else:
-            target_ts = float(timestamp_sec)
+            req_ts = float(timestamp_sec)
+            if 0.0 < clip_dur <= req_ts or req_ts < 0.0:
+                target_ts = 0.1
+            else:
+                target_ts = req_ts
 
         def _build_thumb_cmd(ts: float) -> list[str]:
             return [
@@ -703,10 +1002,14 @@ class FFmpegCompositor:
 __all__ = [
     "FFmpegCompositor",
     "FasterWhisperTranscriber",
+    "clear_hardware_encoder_cache",
+    "detect_hardware_encoder",
     "extract_16khz_mono_wav",
+    "find_best_thumbnail_timestamp",
     "get_ffmpeg_path",
     "has_audio_stream",
     "probe_media_duration",
     "run_command_with_cleanup",
+    "score_frame_visual_quality",
     "terminate_process_tree",
 ]

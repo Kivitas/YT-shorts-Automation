@@ -101,12 +101,50 @@ def _normalize_words(words: Sequence[TimedWord | dict[str, Any]]) -> list[TimedW
     return normalized
 
 
-def detect_dead_air_cuts(
+def compute_adaptive_silence_threshold(
     words: Sequence[TimedWord | dict[str, Any]],
     clip_duration: float,
-    min_gap_sec: float = 0.48,
+    base_min_gap: float = 0.48,
+) -> float:
+    """Compute adaptive silence trimming threshold based on speaker cadence.
+
+    Analyzes words per second (WPS) / speech tempo:
+    - Fast energetic speech (>= 2.8 WPS / >= 170 WPM): tight threshold 0.40s - 0.44s
+    - Conversational speech (2.0 - 2.5 WPS / 120 - 150 WPM): standard 0.48s - 0.50s
+    - Deliberate / slow speech (<= 1.5 WPS / <= 90 WPM): relaxed threshold 0.55s - 0.60s
+
+    Returns dynamic threshold in [0.40, 0.60].
+    """
+    sorted_words = _normalize_words(words)
+    if not sorted_words or clip_duration <= 1.0:
+        return base_min_gap
+
+    word_count = len(sorted_words)
+    first_w = sorted_words[0].start
+    last_w = sorted_words[-1].end
+    spoken_span = max(1.0, last_w - first_w)
+
+    wps = word_count / spoken_span
+
+    if wps >= 3.0:
+        threshold = 0.40
+    elif wps <= 1.4:
+        threshold = 0.60
+    else:
+        # Linear interpolation between 1.4 wps (0.60s) and 3.0 wps (0.40s)
+        ratio = (wps - 1.4) / (3.0 - 1.4)
+        threshold = 0.60 - ratio * 0.20
+
+    return round(max(0.40, min(0.60, threshold)), 2)
+
+
+def detect_dead_air_cuts(
+    words: Sequence[TimedWord | dict[str, Any]],
+    clip_duration: float = 60.0,
+    min_gap_sec: float | None = None,
     padding_sec: float = 0.08,
     max_cuts: int = 12,
+    adaptive: bool = True,
 ) -> list[JumpCut]:
     """Scan consecutive word timestamps and generate safe JumpCuts for dead-air silence gaps.
 
@@ -115,7 +153,9 @@ def detect_dead_air_cuts(
     - Inter-word gaps (word[i].end -> word[i+1].start)
     - Trailing silence after word[-1].end (word[-1].end -> clip_duration)
 
-    Whenever a silence gap exceeds min_gap_sec, generates a padded JumpCut
+    When min_gap_sec is None, adaptively calculates the pause threshold based on speaker
+    cadence (0.40s - 0.60s dynamic threshold).
+    Whenever a silence gap exceeds the threshold, generates a padded JumpCut
     (start = gap_start + padding_sec, end = gap_end - padding_sec) while ensuring
     at least 3.0s of active video remains and cuts are valid and non-overlapping.
     """
@@ -131,6 +171,14 @@ def detect_dead_air_cuts(
     sorted_words = _normalize_words(words)
     if not sorted_words:
         return []
+
+    # Determine effective silence threshold
+    if min_gap_sec is not None:
+        effective_gap = float(min_gap_sec)
+    elif adaptive:
+        effective_gap = compute_adaptive_silence_threshold(sorted_words, total_dur)
+    else:
+        effective_gap = 0.48
 
     # Collect raw silence intervals: (gap_start, gap_end, reason)
     raw_gaps: list[tuple[float, float, str]] = []
@@ -162,7 +210,7 @@ def detect_dead_air_cuts(
             break
 
         gap_len = gap_end - gap_start
-        if gap_len <= min_gap_sec:
+        if gap_len <= effective_gap:
             continue
 
         cut_start = max(0.0, gap_start + max(0.0, padding_sec))
@@ -351,6 +399,7 @@ __all__ = [
     "ZoomPunch",
     "ZoomPunchIn",
     "build_edl_prompt",
+    "compute_adaptive_silence_threshold",
     "detect_dead_air_cuts",
     "generate_smart_zoom_punches",
     "probe_clip_duration",

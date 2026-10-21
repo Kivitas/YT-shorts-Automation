@@ -25,7 +25,10 @@ from autoshorts.decision.semif_engine import (
     build_semif_prompt,
     evaluate_heuristic,
 )
-from autoshorts.decision.window_slicer import select_non_overlapping_candidates
+from autoshorts.decision.window_slicer import (
+    compute_narrative_completeness_score,
+    select_non_overlapping_candidates,
+)
 
 logger = logging.getLogger("autoshorts.decision.orchestrator")
 
@@ -34,22 +37,37 @@ def _fuse_candidate_score(
     semif_score: float,
     heatmap_score: float,
     hook_strength: float,
+    narrative_completeness: float = 1.0,
 ) -> float:
-    """Fuse LLM SemIf probability score with heatmap and hook curiosity signals.
+    """Fuse LLM SemIf probability score with heatmap, hook curiosity, and narrative completeness signals.
 
+    Applies a score penalty if narrative_completeness indicates an abrupt cutoff (< 0.85).
     Preserves exact deterministic behavior when heatmap_score == 0.0 and hook_strength == 0.0.
     """
     hm = max(0.0, min(1.0, float(heatmap_score or 0.0)))
     hk = max(0.0, min(1.0, float(hook_strength or 0.0)))
     sf = max(0.0, min(1.0, float(semif_score or 0.0)))
+    nc = max(
+        0.0,
+        min(
+            1.0,
+            float(narrative_completeness if narrative_completeness is not None else 1.0),
+        ),
+    )
 
     if hm > 0.0:
         composite = 0.72 * sf + 0.18 * hm + 0.10 * hk
-        return round(max(0.0, min(1.0, composite)), 4)
-    if hk > 0.0:
+    elif hk > 0.0:
         composite = 0.90 * sf + 0.10 * hk
-        return round(max(0.0, min(1.0, composite)), 4)
-    return round(sf, 4)
+    else:
+        composite = sf
+
+    # Apply penalty for narrative incompleteness / mid-sentence cutoff
+    if nc < 0.85 and (hm > 0.0 or hk > 0.0):
+        penalty = (0.85 - nc) * 0.25
+        composite = max(0.0, composite - penalty)
+
+    return round(max(0.0, min(1.0, composite)), 4)
 
 
 class SemIfDecider(Decider):
@@ -128,7 +146,12 @@ class SemIfDecider(Decider):
                 score = evaluate_heuristic(cand.text, cand.duration)
                 reason = f"Heuristic (no provider): {score:.3f}"
 
-            fused_score = _fuse_candidate_score(score, cand.heatmap_score, cand.hook_strength)
+            nc = compute_narrative_completeness_score(cand.text)
+            fused_score = _fuse_candidate_score(
+                score, cand.heatmap_score, cand.hook_strength, narrative_completeness=nc
+            )
+            if nc < 0.85 and (cand.heatmap_score > 0.0 or cand.hook_strength > 0.0):
+                reason = f"{reason} | narrative cutoff ({nc:.2f})"
             scored.append(
                 ClipCandidate(
                     start=cand.start,
@@ -184,7 +207,10 @@ class SemIfDecider(Decider):
                 s = evaluate_heuristic(cand.text, cand.duration)
                 reason = f"Heuristic fallback: {s:.3f}"
 
-            fused_s = _fuse_candidate_score(s, cand.heatmap_score, cand.hook_strength)
+            nc = compute_narrative_completeness_score(cand.text)
+            fused_s = _fuse_candidate_score(
+                s, cand.heatmap_score, cand.hook_strength, narrative_completeness=nc
+            )
             scored.append(
                 ClipCandidate(
                     start=cand.start,
@@ -201,7 +227,10 @@ class SemIfDecider(Decider):
         # Append remaining candidates evaluated via heuristic
         for cand in candidates[5:]:
             s = evaluate_heuristic(cand.text, cand.duration)
-            fused_s = _fuse_candidate_score(s, cand.heatmap_score, cand.hook_strength)
+            nc = compute_narrative_completeness_score(cand.text)
+            fused_s = _fuse_candidate_score(
+                s, cand.heatmap_score, cand.hook_strength, narrative_completeness=nc
+            )
             scored.append(
                 ClipCandidate(
                     start=cand.start,
@@ -237,7 +266,12 @@ class SemIfDecider(Decider):
                     start=c.start,
                     end=c.end,
                     text=c.text,
-                    score=_fuse_candidate_score(c.score, c.heatmap_score, c.hook_strength),
+                    score=_fuse_candidate_score(
+                        c.score,
+                        c.heatmap_score,
+                        c.hook_strength,
+                        narrative_completeness=compute_narrative_completeness_score(c.text),
+                    ),
                     reason=c.reason,
                     heatmap_score=c.heatmap_score,
                     hook_strength=c.hook_strength,

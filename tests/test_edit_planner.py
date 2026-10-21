@@ -427,3 +427,67 @@ def test_create_edl_auto_trim_silence_merges_cuts_when_llm_returns_zero(tmp_path
     assert len(edl.jump_cuts) == 1
     assert edl.jump_cuts[0].cut_start == pytest.approx(0.68, abs=0.02)
     assert edl.jump_cuts[0].cut_end == pytest.approx(1.92, abs=0.02)
+
+
+def test_compute_adaptive_silence_threshold_fast_vs_slow_cadence():
+    """Verify adaptive threshold adjusts dynamically between 0.40s and 0.60s based on cadence."""
+    from autoshorts.edit_planner.planner import compute_adaptive_silence_threshold
+    from autoshorts.media.ass_styler import TimedWord
+
+    # Fast speaker: 10 words in 2.5 seconds = 4.0 words/sec (> 3.0 WPS)
+    fast_words = [
+        TimedWord(word=f"word{i}", start=i * 0.25, end=i * 0.25 + 0.2)
+        for i in range(10)
+    ]
+    fast_thresh = compute_adaptive_silence_threshold(fast_words, clip_duration=3.0)
+    assert fast_thresh == 0.40
+
+    # Slow deliberate speaker: 3 words in 3.0 seconds = 1.0 word/sec (< 1.4 WPS)
+    slow_words = [
+        TimedWord(word="slow", start=0.0, end=0.8),
+        TimedWord(word="deliberate", start=1.5, end=2.2),
+        TimedWord(word="speech", start=2.5, end=3.0),
+    ]
+    slow_thresh = compute_adaptive_silence_threshold(slow_words, clip_duration=3.5)
+    assert slow_thresh == 0.60
+
+    # Conversational speaker: 8 words in 3.6 seconds = 2.22 words/sec
+    conv_words = [
+        TimedWord(word=f"w{i}", start=i * 0.45, end=i * 0.45 + 0.35)
+        for i in range(8)
+    ]
+    conv_thresh = compute_adaptive_silence_threshold(conv_words, clip_duration=4.0)
+    assert 0.45 <= conv_thresh <= 0.55
+
+
+def test_detect_dead_air_cuts_adaptive_threshold():
+    """Verify detect_dead_air_cuts uses adaptive threshold when min_gap_sec is None."""
+    from autoshorts.edit_planner.planner import detect_dead_air_cuts
+    from autoshorts.media.ass_styler import TimedWord
+
+    # Fast speaker with 0.44s pause:
+    # 10 words fast before pause, then 0.44s pause, then 10 words fast
+    words = []
+    t = 0.0
+    for i in range(10):
+        words.append(TimedWord(word=f"fast{i}", start=round(t, 2), end=round(t + 0.20, 2)))
+        t += 0.22
+
+    last_end = words[-1].end
+    # Gap is exactly 0.44s (> fast speaker 0.40s threshold, < 0.48s default)
+    pause_start = last_end
+    t = last_end + 0.44
+
+    for i in range(10):
+        words.append(TimedWord(word=f"nxt{i}", start=round(t, 2), end=round(t + 0.20, 2)))
+        t += 0.22
+
+    # Adaptive mode detects the 0.44s pause because speaker is fast (threshold 0.40s)
+    adaptive_cuts = detect_dead_air_cuts(words=words, clip_duration=t + 1.0, min_gap_sec=None, adaptive=True)
+    assert len(adaptive_cuts) >= 1
+    assert any(c.cut_start >= pause_start - 0.1 for c in adaptive_cuts)
+
+    # Static 0.48s mode ignores the 0.44s pause
+    static_cuts = detect_dead_air_cuts(words=words, clip_duration=t + 1.0, min_gap_sec=0.48, adaptive=False)
+    assert not any(c.cut_start >= pause_start - 0.1 and c.cut_end <= pause_start + 0.5 for c in static_cuts)
+

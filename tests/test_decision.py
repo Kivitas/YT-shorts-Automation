@@ -395,3 +395,131 @@ def test_decider_heatmap_and_hook_score_fusion_and_title_variants():
     assert len(sel.title_variants) == 3
     assert len(set(sel.title_variants)) == 3
     assert all(v.endswith("#Shorts") for v in sel.title_variants)
+
+
+# -----------------------------------------------------------------------------
+# 8. Advanced Semantic Hook & Narrative Completeness Tests
+# -----------------------------------------------------------------------------
+
+
+def test_classify_semantic_hook_categories():
+    """Verify semantic hook classifier detects curiosity gaps, contrarian statements, emotional stakes, surprising data, and open loops."""
+    from autoshorts.decision.window_slicer import classify_semantic_hook
+
+    # Curiosity gap
+    res_curiosity = classify_semantic_hook("Here's why nobody tells you the real reason it works.")
+    assert res_curiosity["is_hook"] is True
+    assert res_curiosity["primary_category"] == "curiosity_gap"
+    assert res_curiosity["score"] > 0.50
+
+    # Contrarian statement
+    res_contrarian = classify_semantic_hook("Stop doing this exercise because you're doing it wrong!")
+    assert res_contrarian["is_hook"] is True
+    assert res_contrarian["primary_category"] == "contrarian"
+    assert any("contrarian" in sig for sig in res_contrarian["detected_signals"])
+
+    # Emotional stakes
+    res_stakes = classify_semantic_hook("This terrifying nightmare ruined my life forever.")
+    assert res_stakes["is_hook"] is True
+    assert res_stakes["primary_category"] == "emotional_stakes"
+    assert res_stakes["score"] > 0.40
+
+    # Surprising data points
+    res_data = classify_semantic_hook("99% of people quit in the first 24 hours.")
+    assert res_data["is_hook"] is True
+    assert "surprising_data" in res_data["detected_signals"]
+
+    # Narrative open loops
+    res_loop = classify_semantic_hook("Before you scroll, wait until the end to see the catch.")
+    assert res_loop["is_hook"] is True
+    assert res_loop["primary_category"] == "narrative_open_loop"
+
+    # Weak statement
+    res_weak = classify_semantic_hook("Today we will read the standard corporate document.")
+    assert res_weak["is_hook"] is False
+    assert res_weak["score"] < 0.30
+
+
+def test_sentence_and_clause_boundary_snapping_clean():
+    """Verify candidate windows strictly start on sentence or clause boundaries rather than mid-sentence."""
+    transcript = [
+        {"start": 0.0, "end": 4.0, "text": "This is an introductory thought."},
+        {"start": 4.1, "end": 7.0, "text": "and then we continued speaking"},  # Lowercase continuation
+        {"start": 7.1, "end": 12.0, "text": "Wait until you see this shocking result!"},
+        {"start": 12.1, "end": 20.0, "text": "Most people think productivity requires 12 hours a day."},
+        {"start": 20.1, "end": 35.0, "text": "In reality, 4 hours of deep focus produces 10x more output."},
+        {"start": 35.1, "end": 42.0, "text": "This is the single greatest career secret."},
+        {"start": 42.1, "end": 50.0, "text": "Start applying it immediately and see the difference."},
+    ]
+
+    windows = slice_transcript_windows(
+        transcript,
+        window_duration_seconds=40.0,
+        stride_seconds=15.0,
+        min_duration_seconds=25.0,
+        max_duration_seconds=50.0,
+    )
+    assert len(windows) >= 1
+    for w in windows:
+        # Candidate text should end on terminal punctuation
+        assert w.text[-1] in {".", "!", "?"}
+        # Candidate text should not start with an un-capitalized lowercase continuation word
+        first_word = w.text.split()[0]
+        assert first_word[0].isupper()
+
+
+def test_cluster_heatmap_spikes():
+    """Verify YouTube Most Replayed spike clustering identifies peak velocity regions."""
+    from autoshorts.core.models import HeatmapPoint
+    from autoshorts.decision.window_slicer import cluster_heatmap_spikes
+
+    heatmap = [
+        HeatmapPoint(start_time=0.0, end_time=10.0, value=0.10),
+        HeatmapPoint(start_time=10.0, end_time=20.0, value=0.12),
+        HeatmapPoint(start_time=20.0, end_time=25.0, value=0.30),
+        HeatmapPoint(start_time=25.0, end_time=30.0, value=0.88),  # Sharp spike
+        HeatmapPoint(start_time=30.0, end_time=35.0, value=0.92),  # Peak
+        HeatmapPoint(start_time=35.0, end_time=45.0, value=0.20),
+        HeatmapPoint(start_time=45.0, end_time=60.0, value=0.15),
+    ]
+
+    clusters = cluster_heatmap_spikes(heatmap, min_spike_val=0.35)
+    assert len(clusters) >= 1
+    main_cluster = clusters[0]
+    assert 20.0 <= main_cluster["start"] <= 25.0
+    assert 30.0 <= main_cluster["end"] <= 36.0
+    assert main_cluster["peak_value"] >= 0.88
+    assert main_cluster["velocity"] > 0.05
+
+
+def test_narrative_completeness_evaluation_and_penalty():
+    """Verify narrative completeness score flags cutoffs and applies appropriate penalty."""
+    from autoshorts.decision.orchestrator import _fuse_candidate_score
+    from autoshorts.decision.window_slicer import compute_narrative_completeness_score
+
+    # 1. Complete resolution
+    complete_text = "Scientists discovered a simple hack that changes everything. It works every time."
+    score_comp = compute_narrative_completeness_score(complete_text)
+    assert score_comp == 1.0
+
+    # 2. Cutoff with trailing conjunction
+    dangling_conj = "Scientists discovered a simple hack that changes everything, and then"
+    score_conj = compute_narrative_completeness_score(dangling_conj)
+    assert score_conj < 0.65
+
+    # 3. Cutoff with ellipsis
+    trailing_ellipsis = "If you want to know what happened next..."
+    score_ellip = compute_narrative_completeness_score(trailing_ellipsis)
+    assert score_ellip < 0.70
+
+    # 4. Cutoff with dangling preposition
+    dangling_prep = "This is the entire reason why we wanted to go to"
+    score_prep = compute_narrative_completeness_score(dangling_prep)
+    assert score_prep < 0.65
+
+    # 5. Score penalty in _fuse_candidate_score
+    fused_complete = _fuse_candidate_score(0.80, 0.50, 0.60, narrative_completeness=1.0)
+    fused_cutoff = _fuse_candidate_score(0.80, 0.50, 0.60, narrative_completeness=0.50)
+    assert fused_cutoff < fused_complete
+    assert (fused_complete - fused_cutoff) >= 0.05
+

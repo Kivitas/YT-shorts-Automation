@@ -328,6 +328,62 @@ endlocal
 
 ---
 
+## Quick Start (macOS Monterey 12+ & Unix One-Click Launcher)
+
+AutoShorts Studio is 100% cross-platform and natively supports **macOS (macOS 12 Monterey, Ventura, Sonoma, Sequoia)** across both **Apple Silicon (M1/M2/M3/M4)** and **Intel x86_64** hardware from the exact same unified codebase.
+
+### macOS Prerequisites (via Homebrew)
+If you don't have [Homebrew](https://brew.sh) installed, install it first. Then install Python 3.12, uv, and FFmpeg:
+
+```bash
+brew install python@3.12 uv ffmpeg
+```
+
+### Launching on macOS (`start.sh`)
+
+1. **Make Executable**:
+   ```bash
+   chmod +x start.sh
+   ```
+
+2. **One-Click Launch**:
+   ```bash
+   ./start.sh
+   ```
+   - Automatically synchronizes your `.venv` virtual environment with `uv` (or `python3 -m venv`).
+   - Detects Homebrew FFmpeg (`/opt/homebrew/bin/ffmpeg` on Apple Silicon or `/usr/local/bin/ffmpeg` on Intel).
+   - Auto-opens your default browser (Safari, Chrome, Arc, Firefox) to `http://localhost:8000`.
+   - Engages native macOS sleep prevention via `caffeinate -i -s` and IOKit power assertions during active video processing windows.
+
+3. **CLI Diagnostic & Testing Modes**:
+   ```bash
+   # Run comprehensive 7-stage pre-flight diagnostics
+   ./start.sh --check
+
+   # Run automated test suite
+   ./start.sh --test
+
+   # Launch on custom port
+   ./start.sh --port 8765
+
+   # Launch without automatically opening a browser tab
+   ./start.sh --no-browser
+
+   # Download background gameplay footage interactively
+   ./start.sh --collect
+   ```
+
+### Apple Safari & WebKit Compatibility Notes
+AutoShorts Studio is certified for **Apple Safari 15+** on macOS:
+- **Glassmorphism Aesthetic**: All frosted glass panels and modal backdrops feature dual `-webkit-backdrop-filter` and `backdrop-filter: blur(...)` implementations.
+- **Form Styling**: Custom dropdowns (`<select>`) and text inputs use `-webkit-appearance: none;` to ensure sleek dark-mode styling without native glossy OS overrides.
+- **Dynamic Viewports**: Responsive layout rules leverage `100dvh` and `min-height: -webkit-fill-available;` to eliminate Safari viewport jumping.
+- **HTML5 Autoplay Protection**: Modal preview videos include `playsinline`, `webkit-playsinline`, and initial muted state to comply with Safari autoplay gesture restrictions.
+- **Strict ISO-8601 Date Parsing**: Client-side date helpers automatically sanitize space-delimited timestamps (`YYYY-MM-DD HH:MM:SS`) into strict ISO-8601 strings (`YYYY-MM-DDTHH:MM:SS`) to prevent `Invalid Date` rendering in JavaScriptCore.
+- **Server-Sent Events (SSE) Resilience**: Automatic exponential backoff reconnection prevents log stream drops when Safari tabs are backgrounded or the Mac enters display sleep.
+
+---
+
 ## Configuration & Settings Modal (⚙️)
 
 AutoShorts features an interactive **Settings Modal** accessible from the dashboard header (click **⚙️ Settings**):

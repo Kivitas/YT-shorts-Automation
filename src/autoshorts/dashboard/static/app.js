@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
   checkInitialYouTubeAuth();
   refreshSchedulerSlots();
   syncPresetCardHighlight();
+  ensureSafariMediaCompatibility();
 
   // Initialize AutoShorts Studio Systems
   initStudioProfiles();
@@ -56,8 +57,33 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // -----------------------------------------------------------------------------
-// Legacy & Compatibility Helpers
+// Legacy & Compatibility Helpers (Safari / WebKit & Cross-Browser)
 // -----------------------------------------------------------------------------
+
+function parseSafariSafeDate(dateInput) {
+  if (!dateInput) return new Date();
+  if (dateInput instanceof Date) return dateInput;
+  if (typeof dateInput === "number") return new Date(dateInput);
+  if (typeof dateInput === "string") {
+    let s = dateInput.trim();
+    // Safari strict ISO-8601 parsing: replace space between date and time with 'T'
+    if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(s)) {
+      s = s.replace(/\s+/, "T");
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d;
+    return new Date(dateInput);
+  }
+  return new Date(dateInput);
+}
+
+function ensureSafariMediaCompatibility() {
+  document.querySelectorAll("video").forEach((v) => {
+    v.setAttribute("playsinline", "");
+    v.setAttribute("webkit-playsinline", "");
+    v.muted = true;
+  });
+}
 
 function initBackgroundSelectSync() {
   const bgMain = document.getElementById("background-select");
@@ -206,7 +232,7 @@ function renderPacingStatus() {
     statusSub = "Active video being uploaded to YouTube...";
   } else if (pendingSlots.length > 0) {
     const nextSlot = pendingSlots[0];
-    const targetTime = nextSlot.scheduled_time ? new Date(nextSlot.scheduled_time).getTime() : 0;
+    const targetTime = nextSlot.scheduled_time ? parseSafariSafeDate(nextSlot.scheduled_time).getTime() : 0;
     const now = Date.now();
     const diffMs = targetTime - now;
     if (diffMs <= 0) {
@@ -320,7 +346,7 @@ async function refreshSchedulerSlots() {
 
     listEl.innerHTML = slots.map(slot => {
       const timeStr = slot.scheduled_time
-        ? new Date(slot.scheduled_time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })
+        ? parseSafariSafeDate(slot.scheduled_time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })
         : "Pending next available window";
       const title = slot.title || `Job #${slot.job_id || "clip"}`;
       return `
@@ -565,7 +591,7 @@ function renderJobs(jobs) {
         <div class="job-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
         <div class="job-meta">
           <span>${escapeHtml(channel)}</span>
-          <span>Updated: ${new Date(job.updated_at || Date.now()).toLocaleTimeString()}</span>
+          <span>Updated: ${parseSafariSafeDate(job.updated_at || Date.now()).toLocaleTimeString()}</span>
         </div>
         ${stepperHtml}
         ${copyToolbar}
@@ -1450,21 +1476,53 @@ function showToast(msg, type = "info") {
 }
 
 // -----------------------------------------------------------------------------
-// Real-Time Log Streaming (SSE)
+// Real-Time Log Streaming (SSE with Safari / WebKit Backoff Reconnect)
 // -----------------------------------------------------------------------------
+
+let _sseReconnectTimer = null;
+let _sseBackoffAttempt = 0;
+const MAX_SSE_BACKOFF_MS = 10000;
+
+function scheduleSseReconnect() {
+  if (_sseReconnectTimer) return;
+  const delay = Math.min(1000 * Math.pow(1.5, _sseBackoffAttempt), MAX_SSE_BACKOFF_MS);
+  _sseBackoffAttempt++;
+  _sseReconnectTimer = setTimeout(() => {
+    _sseReconnectTimer = null;
+    initLogStream();
+  }, delay);
+}
 
 function initLogStream() {
   const terminal = document.getElementById("log-terminal");
   const dot = document.getElementById("log-status-dot");
   const badge = document.getElementById("log-connection-badge");
 
-  if (_eventSource) {
-    _eventSource.close();
+  if (_sseReconnectTimer) {
+    clearTimeout(_sseReconnectTimer);
+    _sseReconnectTimer = null;
   }
 
-  _eventSource = new EventSource("/api/logs/stream");
+  if (_eventSource) {
+    _eventSource.onopen = null;
+    _eventSource.onerror = null;
+    _eventSource.onmessage = null;
+    try {
+      _eventSource.close();
+    } catch (e) {}
+    _eventSource = null;
+  }
+
+  try {
+    _eventSource = new EventSource("/api/logs/stream");
+  } catch (err) {
+    console.debug("Failed to create EventSource:", err);
+    scheduleSseReconnect();
+    return;
+  }
 
   _eventSource.onopen = () => {
+    _sseBackoffAttempt = 0;
     if (dot) dot.className = "log-dot live";
     if (badge) {
       badge.textContent = "● Live Stream Connected";
@@ -1477,6 +1535,10 @@ function initLogStream() {
     if (badge) {
       badge.textContent = "○ Reconnecting...";
       badge.style.color = "var(--accent-yellow)";
+    }
+    // Safari EventSource can enter CLOSED or error state during sleep or tab backgrounding.
+    if (!_eventSource || _eventSource.readyState === EventSource.CLOSED || _eventSource.readyState === EventSource.CONNECTING) {
+      scheduleSseReconnect();
     }
   };
 
@@ -1578,7 +1640,7 @@ async function inspectJobStages(jobId) {
     } else {
       stages.forEach(st => {
         const dur = st.duration_ms ? `${(st.duration_ms / 1000).toFixed(2)}s` : "-";
-        const completed = st.completed_at ? new Date(st.completed_at).toLocaleTimeString() : "-";
+        const completed = st.completed_at ? parseSafariSafeDate(st.completed_at).toLocaleTimeString() : "-";
         stagesTable += `
           <tr>
             <td><strong>${escapeHtml(st.stage_name)}</strong></td>
@@ -2779,12 +2841,22 @@ function openPreview(jobId, title) {
   const modalTitle = document.getElementById("modal-title");
   const dlBtn = document.getElementById("modal-download");
 
-  modalTitle.textContent = decodeURIComponent(title);
-  video.src = `/api/video/${jobId}/preview`;
-  dlBtn.href = `/api/video/${jobId}/master`;
+  if (modalTitle) modalTitle.textContent = decodeURIComponent(title);
+  if (video) {
+    video.src = `/api/video/${jobId}/preview`;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    video.muted = true; // Required by Safari for autoplay
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((err) => {
+        console.debug("Video autoplay prevented by browser policy:", err);
+      });
+    }
+  }
+  if (dlBtn) dlBtn.href = `/api/video/${jobId}/master`;
 
-  modal.style.display = "flex";
-  video.play().catch(() => {});
+  if (modal) modal.style.display = "flex";
 }
 
 function closePreviewModal(e) {
@@ -3985,9 +4057,9 @@ const _mpCuratedTopics = {
 };
 
 let _mpTopicsCache = [
-  { topic: "The 3-second dopamine trap in short-form video", niche: "psychology", date: "2026-10-20 09:15", status: "✓ Cached in SQLite" },
-  { topic: "Why rich people never store cash in banks", niche: "finance", date: "2026-10-19 16:42", status: "✓ Cached in SQLite" },
-  { topic: "How quantum computers threaten AES-256", niche: "ai_tech", date: "2026-10-18 11:20", status: "✓ Cached in SQLite" }
+  { topic: "The 3-second dopamine trap in short-form video", niche: "psychology", date: "2026-10-20T09:15:00", status: "✓ Cached in SQLite" },
+  { topic: "Why rich people never store cash in banks", niche: "finance", date: "2026-10-19T16:42:00", status: "✓ Cached in SQLite" },
+  { topic: "How quantum computers threaten AES-256", niche: "ai_tech", date: "2026-10-18T11:20:00", status: "✓ Cached in SQLite" }
 ];
 
 function initMoneyPrinter() {

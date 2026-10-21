@@ -603,3 +603,35 @@ start.bat --collect --categories minecraft subway gta --per-category 2
   copy .env.example .env
   ```
   Edit `.env` and set `GEMINI_API_KEY=AIzaSy...`.
+
+---
+
+## Cross-Platform Parity: macOS & Linux Launcher (`start.sh`)
+
+AutoShorts Studio provides 100% flag and operational parity across platforms:
+
+- **Windows**: `start.bat` (CMD & PowerShell)
+- **macOS (Monterey 12+, Apple Silicon & Intel) / Linux**: `start.sh` (POSIX Bash)
+
+### Running `start.sh` on macOS or Linux
+```bash
+# Make executable (one-time setup)
+chmod +x start.sh
+
+# Launch dashboard on http://localhost:8000
+./start.sh
+
+# Run diagnostics
+./start.sh --check
+
+# Run test suite
+./start.sh --test
+
+# Custom port
+./start.sh --port 8765
+
+# Interactive background gameplay collector
+./start.sh --collect
+```
+
+All CLI arguments, diagnostic checks, background collectors, and runtime environment validations function identically between `start.bat` and `start.sh`.
