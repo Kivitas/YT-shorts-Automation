@@ -360,7 +360,7 @@ echo %C_BOLD%[5] Background Footage Inventory (assets/backgrounds):%C_RESET%
 "!PYTHON_EXE!" -c "from pathlib import Path; p=Path('assets/backgrounds'); clips=[f for f in p.glob('**/*.mp4') if f.stat().st_size > 0]; cats=[d.name for d in p.iterdir() if d.is_dir() and not d.name.startswith('.')]; print('  [OK]       ' + str(len(clips)) + ' clip(s) ready across categories: ' + ', '.join(cats) if len(clips) > 0 else '  [NOTICE]   No background clips found. Run start.bat --collect to download footage.')"
 echo.
 echo %C_BOLD%[6] Core Dependencies ^& Model Readiness:%C_RESET%
-"!PYTHON_EXE!" -c "import importlib.util as u, sys; mods=[('autoshorts','AutoShorts Core Framework',True),('fastapi','FastAPI Web Engine',True),('uvicorn','Uvicorn ASGI Server',True),('edge_tts','Edge-TTS Voice Synthesizer',True),('google.genai','Google Gemini AI Client',True),('playwright','Playwright Browser Engine',True),('imageio_ffmpeg','Bundled FFmpeg Media Engine',True),('faster_whisper','Faster-Whisper (Optional Local Audio Fallback)',False)]; bad=[d for m,d,r in mods if r and u.find_spec(m) is None]; [print('  [OK]       ' + d) for m,d,r in mods if u.find_spec(m) is not None]; [print('  [OPTIONAL] ' + d) for m,d,r in mods if not r and u.find_spec(m) is None]; sys.exit(1 if len(bad) > 0 else 0)"
+"!PYTHON_EXE!" -c "import importlib.util as u, sys; from pathlib import Path; b_ok = Path('src/autoshorts/brain').is_dir() and u.find_spec('autoshorts.brain') is not None; r_ok = Path('src/autoshorts/media/rhythm_engine.py').is_file() and Path('src/autoshorts/analytics/forecasting.py').is_file() and Path('src/autoshorts/decider/laya_router.py').is_file() and u.find_spec('autoshorts.media.rhythm_engine') is not None and u.find_spec('autoshorts.analytics.forecasting') is not None and u.find_spec('autoshorts.decider.laya_router') is not None; mods=[('autoshorts','AutoShorts Core Framework',True,u.find_spec('autoshorts') is not None),('brain','Master Brain Orchestrator & Multi-Agent Swarm',True,b_ok),('laya','TimesFM & Laya Rhythmic Decision Engine',True,r_ok),('fastapi','FastAPI Web Engine',True,u.find_spec('fastapi') is not None),('uvicorn','Uvicorn ASGI Server',True,u.find_spec('uvicorn') is not None),('edge_tts','Edge-TTS Voice Synthesizer',True,u.find_spec('edge_tts') is not None),('google.genai','Google Gemini AI Client',True,u.find_spec('google.genai') is not None),('playwright','Playwright Browser Engine',True,u.find_spec('playwright') is not None),('imageio_ffmpeg','Bundled FFmpeg Media Engine',True,u.find_spec('imageio_ffmpeg') is not None),('faster_whisper','Faster-Whisper (Optional Local Audio Fallback)',False,u.find_spec('faster_whisper') is not None)]; bad=[d for k,d,req,ok in mods if req and not ok]; [print('  [OK]       ' + d) for k,d,req,ok in mods if ok]; [print('  [OPTIONAL] ' + d) for k,d,req,ok in mods if not req and not ok]; [print('  [FAIL]     ' + d) for k,d,req,ok in mods if req and not ok]; sys.exit(1 if bad else 0)"
 if %ERRORLEVEL% neq 0 (
     echo.
     echo %C_RED%[FAIL] Core dependencies are missing or broken. Please run 'uv sync' or 'pip install -e .'%C_RESET%
@@ -553,8 +553,68 @@ Runs a 7-stage diagnostic verification:
    - `output/` (Final vertical 9:16 rendered Shorts)
 4. **Environment & Keys**: Confirms presence of `.env` and checks `GEMINI_API_KEY` configuration.
 5. **Footage Inventory**: Scans `assets/backgrounds/` for indexed clips and categorizes them.
-6. **Core AI & Model Readiness**: Validates `autoshorts`, `fastapi`, `uvicorn`, `edge_tts`, `google.genai`, `playwright`, `imageio_ffmpeg`, and optional `faster_whisper`.
+6. **Core AI & Model Readiness**: Validates all runtime modules and architecture components:
+   - `autoshorts` (Core Framework)
+   - `Master Brain Orchestrator & Multi-Agent Swarm` (`src/autoshorts/brain/`)
+   - `TimesFM & Laya Rhythmic Decision Engine` (`src/autoshorts/media/rhythm_engine.py`, `src/autoshorts/analytics/forecasting.py`, `src/autoshorts/decider/laya_router.py`)
+   - `fastapi` & `uvicorn` (Web API Server)
+   - `edge_tts` (Voice Synthesizer)
+   - `google.genai` (Gemini AI Client)
+   - `playwright` (Browser Automation)
+   - `imageio_ffmpeg` (Bundled FFmpeg Media Engine)
+   - `faster_whisper` (Optional Local Fallback)
 7. **Protection Layers**: Verifies offline resilience, atomic SQLite persistence, and Credential Guardian.
+
+#### Diagnostic Output Example (`start.bat --check`)
+```text
+=====================================================================
+         AutoShorts Studio - Comprehensive Pre-Flight Diagnostics
+=====================================================================
+
+[1] Runtime & Package Infrastructure:
+  Python Runtime:      .venv\Scripts\python.exe
+Python 3.12.15
+  Package Manager:     uv [uv]
+  Video Compositor:    Bundled imageio-ffmpeg (.venv)
+
+[2] Target Port Availability Check (Port 8000):
+  [OK]       Port 8000 is available for binding.
+
+[3] Critical Runtime Directories:
+  [OK]       assets 
+  [OK]       assets\backgrounds 
+  [OK]       assets\music 
+  [OK]       data 
+  [OK]       data\logs 
+  [OK]       work 
+  [OK]       inbox 
+  [OK]       output 
+
+[4] Environment & Credentials (.env):
+  [NOTICE]   .env not found; template ready at .env.example (copy to .env to configure GEMINI_API_KEY).
+
+[5] Background Footage Inventory (assets/backgrounds):
+  [OK]       10 clip(s) ready across categories: minecraft, subway
+
+[6] Core Dependencies & Model Readiness:
+  [OK]       AutoShorts Core Framework
+  [OK]       Master Brain Orchestrator & Multi-Agent Swarm
+  [OK]       TimesFM & Laya Rhythmic Decision Engine
+  [OK]       FastAPI Web Engine
+  [OK]       Uvicorn ASGI Server
+  [OK]       Edge-TTS Voice Synthesizer
+  [OK]       Google Gemini AI Client
+  [OK]       Playwright Browser Engine
+  [OK]       Bundled FFmpeg Media Engine
+  [OPTIONAL] Faster-Whisper (Optional Local Audio Fallback)
+
+[7] System Integrity & Protection Layers:
+  [OK]       Offline Resilience: Active (PC Sleep / Network Disconnect Recovery)
+  [OK]       Data Integrity: Zero-Phantom-Data Mode (Atomic SQLite)
+  [OK]       Credential Guardian: Active
+
+[STATUS] Pre-flight verification completed successfully. System ready.
+```
 
 ### 3. Automated Test Suite (`--test` / `-t`)
 ```cmd
@@ -562,7 +622,7 @@ start.bat --test
 ```
 - Automatically triggers `uv run pytest -q` (or `.venv\Scripts\python.exe -m pytest -q`).
 - Synchronizes dependencies on the fly.
-- Executes all 580+ unit and integration test cases.
+- Executes all **657+ unit and integration test cases**.
 - Returns proper exit code (`0` for passed, non-zero for test failure) for CI/CD integration.
 
 ### 4. Background Gameplay Collector (`--collect` / `--collect-gameplay`)
@@ -611,20 +671,26 @@ start.bat --collect --categories minecraft subway gta --per-category 2
 AutoShorts Studio provides 100% flag and operational parity across platforms:
 
 - **Windows**: `start.bat` (CMD & PowerShell)
-- **macOS (Monterey 12+, Apple Silicon & Intel) / Linux**: `start.sh` (POSIX Bash)
+- **macOS (Monterey 12+, Apple Silicon M1-M4 & Intel x86_64) / Linux**: `start.sh` (POSIX Bash)
+
+### macOS Prerequisites (Homebrew)
+On macOS 12+ Monterey, install the required packages using Homebrew:
+```bash
+brew install python@3.12 ffmpeg uv
+```
 
 ### Running `start.sh` on macOS or Linux
 ```bash
 # Make executable (one-time setup)
 chmod +x start.sh
 
-# Launch dashboard on http://localhost:8000
+# Launch dashboard on http://localhost:8000 (Safari 15+ verified)
 ./start.sh
 
-# Run diagnostics
+# Run comprehensive pre-flight diagnostics
 ./start.sh --check
 
-# Run test suite
+# Run automated test suite (657+ tests)
 ./start.sh --test
 
 # Custom port
@@ -634,4 +700,4 @@ chmod +x start.sh
 ./start.sh --collect
 ```
 
-All CLI arguments, diagnostic checks, background collectors, and runtime environment validations function identically between `start.bat` and `start.sh`.
+All CLI arguments (`--check`, `--test`, `--port`, `--collect`, `--no-browser`, `--host`), diagnostic checks, background collectors, and runtime environment validations function identically between `start.bat` and `start.sh`.

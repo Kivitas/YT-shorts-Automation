@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-10-21
+
+### Added
+- **Master Brain Orchestrator & Specialist Swarm (`src/autoshorts/brain/`)**:
+  - **The Boss 3-Stage DAG Orchestrator**: Multi-agent pipeline coordinating Phase 1 (Ingestion & Research via `InfoResearcherAgent`), Phase 2 (Quality Gate via `HookCriticAgent`), and Phase 3 (Bounded parallel swarm via `asyncio.Semaphore(2)` coordinating `MusicScoutAgent`, `ViralSeoAgent`, and `RetentionEditorAgent`).
+  - **Decoupled Operation Modes**:
+    - **Mode A (Video Link Repurposing)**: Analyzes video transcript slices and candidate cuts, adjusts cut boundaries ($\pm 5.0$s) or switches candidate windows based on narrative tension without ever rewriting original human speech.
+    - **Mode B (Generative Faceless AI)**: Autonomous end-to-end generation from topic/niche to full production package with multi-tier iterative hook refinement.
+  - **Calibrated 3-Tier Quality Gate (`HookCriticAgent`)**:
+    - Score $\ge 80$: Instant approval for production.
+    - Score $70\text{--}79$: Fast hook sentence patching applied to inject curiosity gaps and high-velocity tension triggers.
+    - Score $< 70$: Rejection and prompt re-drafting (Attempt 1), with calibrated argmax fallback and quality metadata tracking on subsequent attempts.
+  - **3-Layer Hashtag Pyramid (`ViralSeoAgent`)**: Generates 3 A/B title variants ($<100$ characters), 3-layer hashtag pyramid (Layer 1 broad: `#Shorts`, `#Viral`; Layer 2 category: `#Tech`, `#Finance`; Layer 3 micro-niche topic tag), and search keywords ($\le 500$ characters).
+  - **WPS-to-BPM Musical Matching (`MusicScoutAgent`)**: Automatically measures words per second (WPS) and maps cadence to optimal BGM tempo: $<2.2$ WPS $\to$ 100 BPM ambient, $2.2\text{--}3.0$ WPS $\to$ 120 BPM synthwave, $>3.0$ WPS $\to$ 140 BPM phonk. Dynamically sets rhythmic eighth-note ducking release time ($\text{round}(30000 / \text{BPM})$ ms).
+  - **Retention & Pacing Calibration (`RetentionEditorAgent`)**: Speech-adaptive silence excision ($-28$ dB for rapid speech down to $-35$ dB for dramatic pauses), optical speaker zoom centering (`center`, `left`, `right`), and pattern interrupt limits ($\le 4$ interrupts per 60s Short with $\ge 4.5$s refractory cooldown).
+  - **Zero-Phantom-Data Preflight Checks & Structured 422 Contract**: Strict credential verification prior to synthesis; raises `PreflightCredentialError` mapping directly to structured HTTP 422 responses with error details and missing credential keys.
+- **Google Research TimesFM Time-Series Forecasting (`src/autoshorts/analytics/forecasting.py`)**:
+  - **3-Tier Fallback Architecture**:
+    - *Tier 1*: Google Research TimesFM foundation model (zero-shot time-series forecasting).
+    - *Tier 2*: NumPy/SciPy parametric curve fitting fallback.
+    - *Tier 3*: Pure Python 3.11+ standard library (`math`, `statistics`) with zero external dependency overhead.
+  - **Preemptive Retention Cliff Detection**: 5-point moving average low-pass filter smoothing on audience retention curve $R(t)$, flagging drop cliffs where slope $\nabla R(t) \le -0.035$/s, enforcing $\ge 4.5$s refractory cooldown between cuts and a hard ceiling of $\le 4$ pattern interrupts per 60s Short.
+  - **48-Hour Early View Velocity Trajectory Forecasting**: Projects 48 hourly view data points from early publish telemetry and predicts viral breakout velocity against channel benchmarks.
+- **Laya Rhythm, Meter & Decision Engine (`src/autoshorts/media/rhythm_engine.py` & `src/autoshorts/decider/laya_router.py`)**:
+  - **Pure Python Transient & Beat Grid Extraction**: Spectral/temporal flux onset detection and autocorrelation lag peak finding to detect BPM and musical beats.
+  - **Ambient Confidence Floor ($C \ge 0.35$)**: Automatically bypasses musical beat snapping when background tracks lack percussive transient definitions, falling back cleanly to speech cadence alignment.
+  - **Musical Beat Snapping & Word-Guarded Cut Clamping**:
+    - Visual zoom punches snap to nearest musical beat within $\le 100$ms.
+    - Jump cuts are clamped $\ge 50$ms away from speech boundaries ($t_{\text{cut\_start}} \ge t_{\text{word}}[i].\text{end} + 0.05$s, $t_{\text{cut\_end}} \le t_{\text{word}}[i+1].\text{start} - 0.05$s), guaranteeing spoken words are never truncated.
+  - **Rhythmic Sidechain Ducking**: Exact musical eighth-note release timing ($T_{\text{release}} = 60000 / (\text{BPM} \times 2)$ ms, or $30 / \text{BPM}$ seconds).
+  - **Sub-40ms System 1 Hook Triage (`LayaRouter`)**: Fast heuristic hook scoring bridge (<40ms latency) evaluating power words, curiosity tension, and weak passive opening penalties.
+- **Compositor & Audio Ducking Hardening (`src/autoshorts/media/compositor.py`)**:
+  - Explicit `bgm_path` and `bgm_volume` parameter handling dynamically activating sidechain ducking across all video presets, overriding preset defaults when background music is supplied.
+- **Comprehensive Test Suite & CI Validation**:
+  - Test suite expanded to **657+ passing tests** across all modules with 100% test pass rate.
+
+---
+
+## [1.2.0] - 2026-10-21
+
+### Added
+- **Cross-Platform Launcher & Verification Suite**:
+  - **Windows `start.bat`**: Full parameter parsing supporting `--check` / `-c` (7-stage pre-flight diagnostics), `--test` / `-t` (automated pytest execution), `--port` / `-p` (custom port binding), `--collect` / `--collect-gameplay` (interactive CC0 gameplay asset downloader), `--no-browser`, and `--host`.
+  - **macOS & Linux `start.sh`**: Unified POSIX launcher supporting macOS 12+ Monterey (Apple Silicon M1-M4 & Intel x86_64) and Linux distributions.
+  - **Homebrew One-Line Setup**: `brew install python@3.12 uv ffmpeg` followed by `./start.sh`.
+  - **Native Power Management**: Windows Win32 `SetThreadExecutionState` and macOS `caffeinate` / IOKit assertions preventing machine sleep during long-running render batches.
+- **Certified Safari 15+ WebKit Compatibility**:
+  - Dual `-webkit-backdrop-filter` and `backdrop-filter: blur(...)` for flawless frosted glassmorphism on macOS.
+  - Form control resetting via `-webkit-appearance: none;`.
+  - Mobile/desktop viewport height normalization with `100dvh` and `-webkit-fill-available`.
+  - Strict ISO-8601 date parsing preventing `Invalid Date` rendering in JavaScriptCore.
+  - HTML5 video playback compatibility (`playsinline`, `webkit-playsinline`, initial muted state).
+
+---
+
 ## [1.1.0] - 2026-10-20
 
 ### Added

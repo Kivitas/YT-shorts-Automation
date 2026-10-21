@@ -10,14 +10,15 @@ Whether you want to clip long-form podcasts, webinars, and interviews into high-
 
 Follow this checklist for your first run:
 
-- [ ] **System Prereqs**: Windows 10/11 or macOS 12+ Monterey (Apple Silicon M1-M4 & Intel), Python 3.11+ (or `uv`), FFmpeg (`brew install ffmpeg` on macOS or bundled via `.venv`).
-- [ ] **Run Pre-Flight Check**: Execute `start.bat --check` in Windows PowerShell or `./start.sh --check` in macOS Terminal. Confirm all runtime folders and core dependencies show `[OK]`.
-- [ ] **Launch Dashboard**: Run `start.bat` (Windows) or `chmod +x start.sh && ./start.sh` (macOS). The studio opens at `http://127.0.0.1:8000` (tested with Safari, Chrome, Edge, and Arc).
-- [ ] **Configure AI Keys**: Click **⚙️ Settings** in the top navigation. Enter your `GEMINI_API_KEY` (recommended for video understanding) or configure OpenRouter / Local GGUF.
+- [ ] **System Prereqs**: Windows 10/11, macOS 12+ Monterey (Apple Silicon M1-M4 & Intel), or Linux. Python 3.12 (or `uv`), and FFmpeg (`brew install python@3.12 ffmpeg uv` on macOS; bundled via `.venv` or winget on Windows).
+- [ ] **Run Pre-Flight Check**: Execute `start.bat --check` in Windows PowerShell or `./start.sh --check` in macOS / Linux Terminal. Confirm all runtime folders, AI engines, and core dependencies show `[OK]`.
+- [ ] **Run Automated Tests**: Verify all **657+ unit and integration tests** pass cleanly with `start.bat --test` or `./start.sh --test`.
+- [ ] **Launch Dashboard**: Run `start.bat` (Windows) or `chmod +x start.sh && ./start.sh` (macOS/Linux). The studio opens at `http://127.0.0.1:8000` (tested with Safari 15+, Chrome, Edge, and Arc).
+- [ ] **Configure AI Keys**: Click **⚙️ Settings** in the top navigation. Enter your `GEMINI_API_KEY` (recommended for video understanding and SuperBrain agents) or configure OpenRouter / Local GGUF.
 - [ ] **Connect YouTube**: In **⚙️ Settings** &rarr; **YouTube API & Upload**, upload `client_secret.json` and click **"Authorize YouTube Account (OAuth 2.0)"** (or click **"Sign In with Edge"** for zero-quota Playwright uploads).
-- [ ] **Add Gameplay Backgrounds**: Verify `assets/backgrounds/minecraft/` or `assets/backgrounds/subway/` contains at least one `.mp4` video.
-- [ ] **Submit First Clip**: In **🎬 Shorts Studio & Queue**, paste a YouTube URL, click **"Preview Link"**, select your layout and subtitle preset, and click **"Submit to Pipeline"**.
-- [ ] **Review & Fast Re-Burn**: Inspect the candidate in the preview player. Tweak subtitles or styling with **⚡ Fast Re-Burn** in seconds without re-downloading.
+- [ ] **Add Gameplay Backgrounds**: Verify `assets/backgrounds/minecraft/` or `assets/backgrounds/subway/` contains at least one `.mp4` video (or run `start.bat --collect` / `./start.sh --collect`).
+- [ ] **Submit First Clip**: In **🎬 Shorts Studio & Queue**, paste a YouTube URL, click **"Preview Link"**, select your layout and subtitle preset, and click **"Submit to Pipeline"** (or use the **SuperBrain Orchestrator** for autonomous multi-agent Mode A / Mode B workflows).
+- [ ] **Review & Fast Re-Burn**: Inspect the candidate in the preview player. Tweak subtitles, speaker crop focus, or styling with **⚡ Fast Re-Burn** in seconds without re-downloading.
 - [ ] **Publish or Schedule**: Send to immediate upload or let the **Daily Spread Scheduler** pace uploads automatically across active daytime hours.
 
 ---
@@ -67,14 +68,158 @@ flowchart TD
 
 ---
 
+## 🤖 The Master SuperBrain Orchestrator & Specialist Swarm (`src/autoshorts/brain/`)
+
+AutoShorts v1.3 introduces the **Master Brain Orchestrator**, a coordinated multi-agent DAG engine inspired by high-end Hollywood editing suites and viral growth engineering agencies. The orchestrator coordinates 5 dedicated specialist agents through a 3-stage directed acyclic graph (DAG):
+
+```mermaid
+flowchart TD
+    subgraph Phase1["Phase 1: Ingestion & Autonomous Research"]
+        P1["User Input (Link or Topic)"] --> R["InfoResearcherAgent\n(Niche taxonomy, audience profiling, core value props)"]
+    end
+
+    subgraph Phase2["Phase 2: Calibrated Quality Gate"]
+        R --> C["HookCriticAgent\n(Calibrated 3-tier gate: Approved / Fast Patch / Reject)"]
+    end
+
+    subgraph Phase3["Phase 3: Bounded Specialist Swarm (Semaphore = 2)"]
+        C --> M["MusicScoutAgent\n(Vocal cadence WPS -> BPM match, eighth-note release)"]
+        C --> S["ViralSeoAgent\n(3 A/B titles, 3-layer hashtag pyramid, search tags)"]
+        C --> E["RetentionEditorAgent\n(Adaptive silence excision, speaker zoom centering)"]
+    end
+
+    subgraph Final["Final Execution Plan"]
+        M --> Plan["ViralMasterPlan\n(Production-ready blueprint)"]
+        S --> Plan
+        E --> Plan
+        Plan --> Run["Lazy Pipeline Runner Injection / Dashboard Execution"]
+    end
+```
+
+### The 5 Specialist Agents
+
+1. **`InfoResearcherAgent`**:
+   - Analyzes target niches and topics to extract key insights, audience demographics, and tonal targets.
+   - Operates with offline fallback resilience when external research APIs are throttled or offline.
+2. **`HookCriticAgent` (Calibrated 3-Tier Quality Gate)**:
+   - **Mode B (Generative Faceless AI)**:
+     - **Score $\ge 80$**: Instant approval for production (*"High viral potential with strong curiosity gap"*).
+     - **Score $70\text{--}79$**: Fast Hook Patch applied immediately to elevate borderline hooks to $85+$ score without re-prompting.
+     - **Score $< 70$ (Attempt 1)**: Rejected with specific feedback to regenerate a stronger opening.
+     - **Score $< 70$ (Attempt $\ge 2$)**: Argmax fallback with quality metadata attached.
+   - **Mode A (Video Link Repurposing)**:
+     - Evaluates transcript cut curiosity and narrative completeness.
+     - Adjusts candidate window boundaries ($\pm 5.0$s) or switches candidate windows based on narrative tension.
+     - **Crucial Rule**: **NEVER** rewrites or replaces spoken human words from the source creator.
+3. **`ViralSeoAgent` (3-Layer Hashtag Pyramid)**:
+   - Formulates 3 distinct A/B titles ($<100$ characters).
+   - Constructs a **3-Layer Hashtag Pyramid** (3 to 5 description hashtags):
+     - *Layer 1 (Broad Viral)*: `#Shorts`, `#Viral`
+     - *Layer 2 (Category/Niche)*: `#Tech`, `#Finance`, `#Business`
+     - *Layer 3 (Micro-Niche / Topic)*: `#Python`, `#Stoicism`, `#Quantum`
+   - Builds clean search keyword tags (stripped of `#`, bounded to $\le 500$ characters for official YouTube Data API compliance).
+4. **`MusicScoutAgent` (WPS-to-BPM Musical Matching)**:
+   - Computes vocal cadence in Words Per Second (WPS).
+   - Maps cadence to optimal musical tempo:
+     - **$\text{WPS} < 2.2$**: 100 BPM ambient mood (volume 0.22).
+     - **$2.2 \le \text{WPS} \le 3.0$**: 120 BPM synthwave pulse (volume 0.18).
+     - **$\text{WPS} > 3.0$**: 140 BPM high-octane phonk (volume 0.15).
+   - Calculates exact musical eighth-note sidechain ducking release time:
+     $$\text{ducking\_release\_ms} = \text{round}\left(\frac{30000}{\text{target\_bpm}}\right)$$
+   - Resolves local royalty-free audio tracks from `assets/music/`.
+5. **`RetentionEditorAgent`**:
+   - Determines speech-adaptive silence excision thresholds ($-28$ dB for rapid speech down to $-35$ dB for dramatic pauses).
+   - Sets optical speaker zoom centering (`center`, `left`, `right`) based on visual layout hints.
+   - Enforces pattern interrupt safety ceilings: **$\le 4$ interrupts per 60s Short** with a **$\ge 4.5$s refractory cooldown**.
+
+### Mode A vs. Mode B Orchestration
+- **Mode A (`mode_a`)**: Long-form YouTube video repurposing. Evaluates transcripts, extracts heatmap replay curves, identifies curiosity peaks, and fine-tunes segment boundaries without modifying the speaker's actual voice.
+- **Mode B (`mode_b`)**: Fully generative faceless Shorts. Ingests topic and niche prompts, generates high-retention scripts, synthesizes neural TTS voiceover, syncs karaoke subtitles, and selects complementary gameplay/stock backgrounds.
+
+### Zero-Phantom-Data Preflight Checks & Structured 422 Contract
+Before executing generative synthesis, `MasterBrainOrchestrator.preflight_check()` actively verifies that required LLM provider credentials (`GEMINI_API_KEY`, OpenRouter, or local GGUF models) are configured and valid.
+If credentials are unset or invalid, the orchestrator raises a `PreflightCredentialError`, returning a structured HTTP 422 error response:
+```json
+{
+  "detail": {
+    "error": "preflight_credential_error",
+    "service": "llm",
+    "message": "LLM provider 'gemini' requires GEMINI_API_KEY to be configured in .env",
+    "missing_key_name": "GEMINI_API_KEY",
+    "details": { "provider": "gemini" }
+  }
+}
+```
+This guarantees no synthetic or dummy pipeline runs are ever executed on unauthenticated environments.
+
+---
+
+## 📈 Google Research TimesFM Time-Series Forecasting (`src/autoshorts/analytics/forecasting.py`)
+
+AutoShorts integrates Google Research's **TimesFM (Time Series Foundation Model)** architecture for predictive video analytics and preemptive viewer retention cliff detection.
+
+### 3-Tier Fallback Architecture
+To ensure seamless execution on any machine regardless of installed dependencies, the forecasting engine implements an automatic 3-tier cascade:
+1. **Tier 1 (`timesfm`)**: Google Research TimesFM foundation model (if `timesfm` is installed).
+2. **Tier 2 (`numpy_scipy`)**: Parametric exponential curve fitting and non-linear regression (if `numpy` and `scipy` are installed).
+3. **Tier 3 (`pure_python`)**: Pure Python 3.11+ standard library (`math`, `statistics`) with **zero external dependencies**.
+
+### Preemptive Retention Cliff Detection
+Audience retention curves $R(t)$ from YouTube Analytics API v2 or heatmap curves are audited to prevent viewer drop-off:
+- **5-Point Moving Average Filter**: Applies a low-pass filter across retention data points to eliminate high-frequency telemetry noise.
+- **Derivative Threshold**: Flags an inflection cliff whenever the slope $\nabla R(t) \le -0.035$ (drop of $>3.5\%$ per second).
+- **Refractory Cooldown ($\ge 4.5$s)**: Prevents over-editing by enforcing a minimum 4.5-second cooldown between consecutive pattern interrupts.
+- **Ceiling Guard ($\le 4$ Interrupts)**: Enforces a hard ceiling of at most 4 pattern interrupts per 60-second Short to preserve narrative coherence.
+
+### 48-Hour Early View Velocity Trajectory Forecasting
+Using early view velocity telemetry (hours 1 through 6 post-publish), `forecast_trajectory()` computes a 48-hour hourly projection vector and classifies whether the video is on track for a **viral breakout** relative to channel historical benchmarks.
+
+---
+
+## 🎵 Laya Rhythm, Meter & Decision Engine (`src/autoshorts/media/rhythm_engine.py` & `laya_router.py`)
+
+The **Laya Rhythm Engine** bridges musical beat tracking, vocal cadence, and video editing to ensure every cut and visual emphasis lands in tight synchronization with audio transients.
+
+### Key Capabilities & Invariants
+1. **Pure Python Beat & Transient Grid Extraction**:
+   - Extracts onsets via temporal energy flux and autocorrelation lag peak detection.
+   - Computes musical BPM and generates aligned beat timestamp grids.
+2. **Ambient Confidence Floor ($C \ge 0.35$)**:
+   - If audio lacks distinct percussive beats ($C < 0.35$), beat snapping is automatically bypassed to prevent awkward timing jumps over ambient tracks, falling back to vocal speech cadence.
+3. **Musical Beat Snapping for Visual Zooms**:
+   - Camera punch-in zoom timestamps (`ZoomPunchIn`) snap to the nearest musical beat if within $\le 100$ms.
+4. **Word-Guarded Jump Cut Clamping**:
+   - Jump cuts are clamped $\ge 50$ms away from transcribed speech boundaries:
+     $$t_{\text{cut\_start}} \ge t_{\text{word}}[i].\text{end} + 0.05\text{s}$$
+     $$t_{\text{cut\_end}} \le t_{\text{word}}[i+1].\text{start} - 0.05\text{s}$$
+   - **Zero Word Truncation Guarantee**: Spoken words are **never** truncated under any circumstances.
+5. **Rhythmic Sidechain Ducking Release**:
+   - Background music ducks dynamically when speech is active and releases cleanly on a musical eighth note:
+     $$T_{\text{release}} = \frac{60000}{\text{BPM} \times 2}\text{ ms} = \frac{30}{\text{BPM}}\text{ seconds}$$
+6. **Sub-40ms System 1 Hook Triage (`LayaRouter`)**:
+   - Rapid heuristic scoring bridge evaluating opening sentences in $<40$ms.
+   - Identifies high-urgency power words (`destroy`, `secret`, `exposed`), curiosity gaps, and penalizes weak passive phrases (`in this video`, `welcome back`).
+   - Routes candidates into `approved` ($\ge 80$), `patch_needed` ($70\text{--}79$), or `rejected` ($<70$). Borderline hooks receive an instant fast patch.
+
+---
+
+## 🔊 Hardened Compositor & Audio Ducking (`src/autoshorts/media/compositor.py`)
+
+The FFmpeg compositing engine has been hardened to support explicit audio parameter overrides across all video presets:
+- **Dynamic Sidechain Activation**: Passing explicit `bgm_path` and `bgm_volume` dynamically activates sidechain ducking across all presets (even if the chosen dopamine preset has ducking disabled by default).
+- **Rhythmic Ducking Integration**: Feeds `rhythm_ducking_release` (in milliseconds) directly into FFmpeg's `sidechaincompress` audio filter, ensuring the ducking release matches the exact musical eighth note of the background music.
+
+---
+
 ## 🛠️ Complete Environment & System Setup
 
 ### Prerequisites
-- **Operating System**: Windows 10/11 (64-bit) OR macOS 12+ Monterey (Apple Silicon M1-M4 & Intel).
-- **Python**: Python 3.11 or 3.12, or the fast [`uv`](https://astral.sh/uv) package manager (recommended).
+- **Operating System**: Windows 10/11 (64-bit), macOS 12+ Monterey (Apple Silicon M1-M4 & Intel), or Linux.
+- **Python**: Python 3.12 (or the fast [`uv`](https://astral.sh/uv) package manager).
 - **FFmpeg**: Required for all video compositing and audio normalization.
-  - Windows: System PATH (`ffmpeg.exe`) or bundled `imageio-ffmpeg` inside `.venv`.
+  - Windows: Bundled `imageio-ffmpeg` inside `.venv` or system PATH (`winget install Gyan.FFmpeg`).
   - macOS: `brew install ffmpeg` (auto-detected at `/opt/homebrew/bin/ffmpeg` or `/usr/local/bin/ffmpeg`).
+  - Linux: `sudo apt install ffmpeg` or distro package manager.
 - **Browser**: Apple Safari 15+, Google Chrome, Arc, or Microsoft Edge.
 
 ---
@@ -101,21 +246,27 @@ AutoShorts includes self-healing one-click launchers with identical command-line
 # or short flag:
 .\start.bat -c
 
-# Run automated unit test suite and exit
+# Run automated test suite (657+ tests) and exit
 .\start.bat --test
 # or short flag:
 .\start.bat -t
+
+# Interactive gameplay asset collector
+.\start.bat --collect
 
 # Display help information
 .\start.bat --help
 ```
 
-#### Running on macOS (`start.sh`)
+#### Running on macOS & Linux (`start.sh`)
 ```bash
+# macOS Prerequisites (Homebrew)
+brew install python@3.12 ffmpeg uv
+
 # Make executable (one-time setup)
 chmod +x start.sh
 
-# Default launch: starts dashboard on http://127.0.0.1:8000 and opens browser
+# Default launch: starts dashboard on http://127.0.0.1:8000 (Safari 15+ verified)
 ./start.sh
 
 # Launch on a custom port
@@ -124,8 +275,11 @@ chmod +x start.sh
 # Run pre-flight environment diagnostics
 ./start.sh --check
 
-# Run automated unit test suite
+# Run automated test suite (657+ tests)
 ./start.sh --test
+
+# Interactive gameplay asset collector
+./start.sh --collect
 
 # Display help information
 ./start.sh --help

@@ -1,14 +1,55 @@
-# AutoShorts v1.1 — Studio 2.0 Overhaul
+# AutoShorts v1.3 — SuperBrain Orchestrator & TimesFM Forecasting
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Version: v1.1](https://img.shields.io/badge/Version-v1.1-brightgreen.svg)](pyproject.toml)
-[![Tests: Passing](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)](tests/)
-[![Status: Production Release](https://img.shields.io/badge/Status-v1.1--Production-success.svg)](PLAN.md)
+[![Version: v1.3](https://img.shields.io/badge/Version-v1.3-brightgreen.svg)](pyproject.toml)
+[![Tests: 657+ Passing](https://img.shields.io/badge/Tests-657%2B%20Passing-brightgreen.svg)](tests/)
+[![Status: Production Release](https://img.shields.io/badge/Status-v1.3--Production-success.svg)](PLAN.md)
 
-An on-device, CPU-optimized YouTube clip-to-Shorts and autonomous faceless video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution). Transforms long-form YouTube videos and neural text scripts into high-retention 9:16 vertical Shorts using Semantic Inference (SemIf) orchestration, word-level animated karaoke captions, multi-layout compositing, live viral research, and closed-loop YouTube Shorts analytics.
+An on-device, CPU-optimized YouTube clip-to-Shorts and autonomous faceless video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution) and macOS Monterey 12+ (Apple Silicon & Intel). Transforms long-form YouTube videos and neural text scripts into high-retention 9:16 vertical Shorts using the Master Brain Orchestrator multi-agent swarm, Google Research TimesFM time-series forecasting, Laya rhythm and beat snapping, word-level animated karaoke captions, multi-layout compositing, and closed-loop analytics.
 
 For the exhaustive engineering specification and architecture, see **[PLAN.md](PLAN.md)** and **[INTERFACES.md](INTERFACES.md)**.
+
+---
+
+## What's New in v1.3 (SuperBrain Orchestrator & TimesFM Forecasting)
+
+- 🧠 **Master Brain Orchestrator & Specialist Swarm (`src/autoshorts/brain/`)**:
+  - **The Boss 3-Stage DAG Orchestrator**: High-level multi-agent engine coordinating Phase 1 (Context & Ingestion via `InfoResearcherAgent`), Phase 2 (Calibrated Quality Gate via `HookCriticAgent`), and Phase 3 (Bounded parallel swarm via `asyncio.Semaphore(2)` coordinating `MusicScoutAgent`, `ViralSeoAgent`, and `RetentionEditorAgent`).
+  - **Decoupled Operation Modes**:
+    - **Mode A (Video Link Repurposing)**: Analyzes video transcript slices and candidate cuts, adjusts cut boundaries ($\pm 5.0$s) or switches candidate windows based on narrative tension without ever modifying the original speaker's spoken words.
+    - **Mode B (Generative Faceless AI)**: Autonomous end-to-end generation from topic/niche prompt to full production package with multi-tier iterative hook refinement.
+  - **Calibrated 3-Tier Quality Gate (`HookCriticAgent`)**:
+    - Score $\ge 80$: Instant approval for production (*"High viral potential with strong curiosity gap and tension"*).
+    - Score $70\text{--}79$: Fast hook sentence patching applied to inject curiosity gaps and high-velocity tension triggers.
+    - Score $< 70$: Rejection and prompt re-drafting (Attempt 1), with calibrated argmax fallback and quality metadata tracking on subsequent attempts.
+  - **3-Layer Hashtag Pyramid (`ViralSeoAgent`)**: Generates 3 A/B title variants ($<100$ characters), a 3-layer hashtag pyramid (Layer 1 broad: `#Shorts`, `#Viral`; Layer 2 category: `#Tech`, `#Finance`; Layer 3 micro-niche topic tag), and clean search keywords ($\le 500$ characters for official YouTube Data API compliance).
+  - **WPS-to-BPM Musical Matching (`MusicScoutAgent`)**: Automatically measures words per second (WPS) and maps cadence to optimal BGM tempo: $<2.2$ WPS $\to$ 100 BPM ambient, $2.2\text{--}3.0$ WPS $\to$ 120 BPM synthwave pulse, $>3.0$ WPS $\to$ 140 BPM phonk. Dynamically sets rhythmic eighth-note ducking release time ($\text{round}(30000 / \text{BPM})$ ms).
+  - **Retention & Pacing Calibration (`RetentionEditorAgent`)**: Speech-adaptive silence excision ($-28$ dB for rapid speech down to $-35$ dB for dramatic pauses), optical speaker zoom centering (`center`, `left`, `right`), and pattern interrupt limits ($\le 4$ interrupts per 60s Short with $\ge 4.5$s refractory cooldown).
+  - **Zero-Phantom-Data Preflight Checks & Structured 422 Contract**: Strict credential verification prior to synthesis; raises `PreflightCredentialError` mapping directly to structured HTTP 422 responses with error details and missing credential keys.
+- 📈 **Google Research TimesFM Time-Series Forecasting (`src/autoshorts/analytics/forecasting.py`)**:
+  - **3-Tier Fallback Architecture**:
+    - *Tier 1*: Google Research TimesFM foundation model (zero-shot time-series forecasting).
+    - *Tier 2*: NumPy/SciPy parametric curve fitting fallback.
+    - *Tier 3*: Pure Python 3.11+ standard library (`math`, `statistics`) with zero external dependency overhead.
+  - **Preemptive Retention Cliff Detection**: 5-point moving average low-pass filter smoothing on audience retention curve $R(t)$, flagging drop cliffs where slope $\nabla R(t) \le -0.035$/s, enforcing $\ge 4.5$s refractory cooldown between cuts and a hard ceiling of $\le 4$ pattern interrupts per 60s Short.
+  - **48-Hour Early View Velocity Trajectory Forecasting**: Projects 48 hourly view data points from early publish telemetry and predicts viral breakout velocity against channel benchmarks.
+- 🎵 **Laya Rhythm, Meter & Decision Engine (`src/autoshorts/media/rhythm_engine.py` & `src/autoshorts/decider/laya_router.py`)**:
+  - **Pure Python Transient & Beat Grid Extraction**: Spectral/temporal flux onset detection and autocorrelation lag peak finding to detect BPM and musical beats.
+  - **Ambient Confidence Floor ($C \ge 0.35$)**: Automatically bypasses musical beat snapping when background tracks lack percussive transient definitions, falling back cleanly to speech cadence alignment.
+  - **Musical Beat Snapping & Word-Guarded Cut Clamping**:
+    - Visual zoom punches snap to nearest musical beat within $\le 100$ms.
+    - Jump cuts are clamped $\ge 50$ms away from speech boundaries ($t_{\text{cut\_start}} \ge t_{\text{word}}[i].\text{end} + 0.05$s, $t_{\text{cut\_end}} \le t_{\text{word}}[i+1].\text{start} - 0.05$s), guaranteeing spoken words are never truncated.
+  - **Rhythmic Sidechain Ducking**: Exact musical eighth-note release timing ($T_{\text{release}} = 60000 / (\text{BPM} \times 2)$ ms, or $30 / \text{BPM}$ seconds).
+  - **Sub-40ms System 1 Hook Triage (`LayaRouter`)**: Fast heuristic hook scoring bridge (<40ms latency) evaluating power words, curiosity tension, and weak passive opening penalties.
+- 🔊 **Compositor & Audio Ducking Hardening (`src/autoshorts/media/compositor.py`)**:
+  - Explicit `bgm_path` and `bgm_volume` parameter handling dynamically activating sidechain ducking across all video presets, overriding preset defaults when background music is supplied.
+- 🚀 **Cross-Platform Launchers & Verification Suite**:
+  - **Windows `start.bat`**: Full parameter parsing supporting `--check` / `-c` (7-stage pre-flight diagnostics), `--test` / `-t` (automated pytest execution), `--port` / `-p` (custom port binding), `--collect` / `--collect-gameplay` (interactive CC0 gameplay asset downloader), `--no-browser`, and `--host`.
+  - **macOS & Linux `start.sh`**: Unified POSIX launcher supporting macOS 12+ Monterey (Apple Silicon M1-M4 & Intel x86_64) and Linux distributions.
+  - **Homebrew One-Line Setup**: `brew install python@3.12 ffmpeg uv` followed by `chmod +x start.sh && ./start.sh` (Safari 15+ verified).
+- 🧪 **Comprehensive Test Suite & CI Validation**:
+  - Test suite expanded to **657+ passing tests** across all modules with 100% test pass rate.
 
 ---
 
@@ -38,30 +79,44 @@ For the exhaustive engineering specification and architecture, see **[PLAN.md](P
 
 ---
 
-## Studio 2.0 Architecture & Pipeline
+## Architecture & Pipeline (v1.3 SuperBrain & TimesFM)
 
 ```mermaid
 flowchart TD
-    subgraph Discovery["1. Smart Video Identification, Downloading & Clipping"]
-        A["YouTube URL / Batch Links"] --> B["Resilient Multi-Client Downloader (yt-dlp + Heatmap + Chapters + SponsorBlock)"]
-        B --> C["SponsorBlock Ad/Intro Filter + YouTube 'Most Replayed' Heatmap Fusion"]
-        C --> D["Multi-Signal Viral Scorer (SemIf Logprobs + Heatmap Peak + Hook Curiosity + Chapter Alignment)"]
+    subgraph Brain["0. Master Brain Orchestrator & Specialist Swarm (v1.3)"]
+        In["Input: Video Link (Mode A) or Prompt (Mode B)"] --> Pre["Zero-Phantom Preflight Check"]
+        Pre --> AG1["Phase 1: InfoResearcherAgent"]
+        AG1 --> AG2["Phase 2: HookCriticAgent (3-Tier Gate / Fast Patch)"]
+        AG2 --> Swarm["Phase 3: Bounded Swarm (Semaphore = 2)"]
+        Swarm --> AG3["MusicScoutAgent (WPS -> BPM)"]
+        Swarm --> AG4["ViralSeoAgent (Hashtag Pyramid)"]
+        Swarm --> AG5["RetentionEditorAgent (Pacing)"]
+        AG3 & AG4 & AG5 --> VPlan["ViralMasterPlan"]
     end
 
-    subgraph Editing["2. Precision Video Editing & Audio/Visual Compositor"]
-        D --> E["Dead-Air Auto-Trimmer (Word-Gap Silence Detection -> Frame-Accurate JumpCuts)"]
-        E --> F["Smart Speaker Reframing (Center / Left / Right / Dynamic Pan) + Kinetic Callouts"]
-        F --> G["Multi-Cue SFX & Broadcast Mastering (-14 LUFS + Voice Presence EQ + Sidechain Ducking)"]
+    subgraph Slicing["1. Video Ingestion, Slicing & Heatmap"]
+        VPlan --> B["Resilient Downloader (yt-dlp + Heatmap + SponsorBlock)"]
+        B --> C["SponsorBlock Filter + Heatmap Fusion"]
+        C --> D["Multi-Signal Viral Scorer (SemIf + Heatmap + Hook Curiosity)"]
     end
 
-    subgraph Publishing["3. Smart YouTube Publishing & Optimal-Hour Scheduler"]
-        G --> H["Auto-Thumbnail Frame Extractor + 3-Way A/B Viral Title Variants"]
-        H --> I["YouTube Data API v3 + Playwright Edge Studio Fallback"]
+    subgraph Production["2. Laya Rhythm & Audio/Visual Compositor"]
+        D --> Rhy["Laya Rhythm Engine (Beat Snapping + Word Guards >= 50ms)"]
+        Rhy --> E["Dead-Air Auto-Trimmer (JumpCuts + ZoomPunches)"]
+        E --> F["Smart Speaker Reframing + 7 Caption Presets"]
+        F --> G["Master Compositor (Dynamic Ducking + Rhythmic Release)"]
     end
 
-    subgraph Analytics["4. Analytics 2.0 & Closed-Loop Auto-Tuning"]
-        I --> J["Viral Outlier Multiplier + Velocity Curves + Best-Hour Heatmap"]
-        J --> K["1-Click Closed-Loop Auto-Tune + CSV/JSON Telemetry Export"]
+    subgraph Publishing["3. Smart Publishing & Optimal Scheduler"]
+        G --> H["Auto-Thumbnail Extractor + 3-Way A/B Titles"]
+        H --> I["YouTube Data API v3 + Playwright Studio Fallback"]
+    end
+
+    subgraph Analytics["4. TimesFM Forecasting & Closed-Loop Auto-Tune"]
+        I --> TF["TimesFM 3-Tier Fallback (48h Trajectory & Breakout)"]
+        TF --> RC["Preemptive Retention Cliff Detection (5-pt Filter)"]
+        RC --> J["Viral Outlier Multipliers + Best-Hour Heatmap"]
+        J --> K["1-Click Closed-Loop Auto-Tune + Telemetry Export"]
     end
 ```
 
@@ -413,6 +468,13 @@ AutoShorts features an interactive **Settings Modal** accessible from the dashbo
 ## REST API Reference
 
 The FastAPI server exposes clean REST endpoints covering all pipeline capabilities:
+
+### Master Brain Orchestrator (`/api/brain`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/brain/orchestrate` | Execute multi-agent DAG orchestration for Mode A (video link repurposing) or Mode B (generative faceless AI). |
+| `GET` | `/api/brain/status/{plan_id}` | Retrieve real-time master plan status, agent reviews, audio blueprints, and SEO metadata. |
+| `POST` | `/api/brain/critic/evaluate` | Directly invoke HookCriticAgent for sub-40ms hook triage or Mode A transcript cut evaluation. |
 
 ### Jobs & Pipeline (`/api/jobs`)
 | Method | Endpoint | Description |
