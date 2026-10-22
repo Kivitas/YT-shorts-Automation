@@ -40,8 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Sub-40ms System 1 Hook Triage (`LayaRouter`)**: Fast heuristic hook scoring bridge (<40ms latency) evaluating power words, curiosity tension, and weak passive opening penalties.
 - **Compositor & Audio Ducking Hardening (`src/autoshorts/media/compositor.py`)**:
   - Explicit `bgm_path` and `bgm_volume` parameter handling dynamically activating sidechain ducking across all video presets, overriding preset defaults when background music is supplied.
+  - **High Dopamine Split Divider Line**: For `split_50_50` and `split_70_30` layouts, customizable `split_separator` (`glow`, `line`, `shadow`, or `none`) inserts a sleek cyan/white glowing separator line or subtle depth shadow between speaker and gameplay views.
+  - **Resilient Media Stream Handling**: Automated `ffprobe` stream validation (`has_audio_stream`, `has_video_stream`) dynamically probes inputs and synthesizes fallback silent audio or video, preventing FFmpeg filtergraph failures when media clips lack standard streams.
+- **Parallel Multi-Video Processing Engine (`src/autoshorts/core/parallel_runner.py`)**:
+  - **Concurrent Queue Processor**: Bounded thread pool executor handling parallel ingestion, slicing, transcription, and compositing with default `AUTOSHORTS_CONCURRENCY=3` workers.
+  - **Queue REST API**: `POST /api/jobs/process-queue` automatically dispatches all queued jobs to available worker capacity, while `GET /api/jobs/parallel-status` provides live concurrency metrics and active job IDs.
+- **Rapid Kinetic Caption Preset (`src/autoshorts/media/ass_styler.py`)**:
+  - **Hyper-Retention Typography**: New `"rapid"` preset configured with 84pt Montserrat ExtraBold, 1–2 word ultra-fast kinetic pop bursts (`words_per_burst=2`, `min_w=1`), and dynamic active word micro-scaling (122% pop, 135% emphasis pop).
+- **Cross-Platform Launcher Updates**:
+  - `start.bat` & `start.sh`: Added parallel engine status (`Parallel Multi-Video Processing Engine (3 Workers)`) to `--check` preflight diagnostics, Rapid Kinetic caption notice to launcher banner, and full environment variable support for `AUTOSHORTS_CONCURRENCY=3`.
 - **Comprehensive Test Suite & CI Validation**:
-  - Test suite expanded to **657+ passing tests** across all modules with 100% test pass rate.
+  - Test suite expanded to **670+ passing tests** across all modules with 100% test pass rate.
 
 ---
 

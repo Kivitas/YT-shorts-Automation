@@ -18,8 +18,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from send2trash import send2trash
-
 from autoshorts.core.config import CleanupConfig, Settings
 from autoshorts.core.contracts import Cleaner
 from autoshorts.core.exceptions import CleanupError, PathSecurityError
@@ -33,6 +31,35 @@ from autoshorts.core.paths import (
 )
 
 logger = logging.getLogger(__name__)
+
+try:  # pragma: no cover - presence depends on the installed environment
+    from send2trash import send2trash
+    _SEND2TRASH_IMPORT_ERROR: str | None = None
+except ImportError as _send2trash_exc:  # pragma: no cover
+    send2trash = None  # type: ignore[assignment]
+    _SEND2TRASH_IMPORT_ERROR = str(_send2trash_exc)
+
+
+def _resolve_send2trash() -> Any | None:
+    """Return the ``send2trash`` callable, or ``None`` when unavailable.
+
+    ``send2trash`` is a declared dependency but must not be required at import time:
+    importing it eagerly made every consumer of the pipeline (dashboard, CLI, tests)
+    fail to collect when the package was absent from the environment. The module-level
+    name is kept patchable so callers/tests can still inject a stub.
+    """
+    global send2trash, _SEND2TRASH_IMPORT_ERROR
+    if send2trash is not None:
+        return send2trash
+    try:
+        from send2trash import send2trash as _send2trash
+
+        send2trash = _send2trash
+        _SEND2TRASH_IMPORT_ERROR = None
+        return send2trash
+    except ImportError as exc:
+        _SEND2TRASH_IMPORT_ERROR = str(exc)
+        return None
 
 
 class SafetyCleaner(Cleaner):
@@ -337,7 +364,14 @@ class SafetyCleaner(Cleaner):
                     elif target.is_dir():
                         shutil.rmtree(target)
                 else:
-                    send2trash(str(target))
+                    trash_fn = _resolve_send2trash()
+                    if trash_fn is None:
+                        raise CleanupError(
+                            "send2trash is not installed, so the Recycle Bin is unavailable. "
+                            f"Install it (pip install send2trash) or run cleanup with "
+                            f"permanent=True / use_recycle_bin=false. ({_SEND2TRASH_IMPORT_ERROR})"
+                        )
+                    trash_fn(str(target))
                 return
             except (PermissionError, OSError) as err:
                 last_error = err

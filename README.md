@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Version: v1.3](https://img.shields.io/badge/Version-v1.3-brightgreen.svg)](pyproject.toml)
-[![Tests: 657+ Passing](https://img.shields.io/badge/Tests-657%2B%20Passing-brightgreen.svg)](tests/)
+[![Tests: 670+ Passing](https://img.shields.io/badge/Tests-670%2B%20Passing-brightgreen.svg)](tests/)
 [![Status: Production Release](https://img.shields.io/badge/Status-v1.3--Production-success.svg)](PLAN.md)
 
 An on-device, CPU-optimized YouTube clip-to-Shorts and autonomous faceless video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution) and macOS Monterey 12+ (Apple Silicon & Intel). Transforms long-form YouTube videos and neural text scripts into high-retention 9:16 vertical Shorts using the Master Brain Orchestrator multi-agent swarm, Google Research TimesFM time-series forecasting, Laya rhythm and beat snapping, word-level animated karaoke captions, multi-layout compositing, and closed-loop analytics.
@@ -44,12 +44,19 @@ For the exhaustive engineering specification and architecture, see **[PLAN.md](P
   - **Sub-40ms System 1 Hook Triage (`LayaRouter`)**: Fast heuristic hook scoring bridge (<40ms latency) evaluating power words, curiosity tension, and weak passive opening penalties.
 - 🔊 **Compositor & Audio Ducking Hardening (`src/autoshorts/media/compositor.py`)**:
   - Explicit `bgm_path` and `bgm_volume` parameter handling dynamically activating sidechain ducking across all video presets, overriding preset defaults when background music is supplied.
+  - **High Dopamine Split Divider Line**: For `split_50_50` and `split_70_30` layouts, customizable `split_separator` (`glow`, `line`, `shadow`, or `none`) inserts a sleek cyan/white glowing separator line or subtle depth shadow between speaker and gameplay views.
+  - **Resilient Media Stream Handling**: Automated `ffprobe` stream validation (`has_audio_stream`, `has_video_stream`) dynamically probes inputs and synthesizes fallback silent audio or video, preventing FFmpeg filtergraph failures when media clips lack standard streams.
+- ⚡ **Parallel Multi-Video Processing Engine (`src/autoshorts/core/parallel_runner.py`)**:
+  - **Concurrent Queue Processor**: Bounded thread pool executor handling parallel ingestion, slicing, transcription, and compositing with default `AUTOSHORTS_CONCURRENCY=3` workers.
+  - **Queue REST API**: `POST /api/jobs/process-queue` automatically dispatches all queued jobs to available worker capacity, while `GET /api/jobs/parallel-status` provides live concurrency metrics and active job IDs.
+- 🔤 **Rapid Kinetic Caption Preset (`src/autoshorts/media/ass_styler.py`)**:
+  - **Hyper-Retention Typography**: New `"rapid"` preset configured with 84pt Montserrat ExtraBold, 1–2 word ultra-fast kinetic pop bursts (`words_per_burst=2`, `min_w=1`), and dynamic active word micro-scaling (122% pop, 135% emphasis pop).
 - 🚀 **Cross-Platform Launchers & Verification Suite**:
-  - **Windows `start.bat`**: Full parameter parsing supporting `--check` / `-c` (7-stage pre-flight diagnostics), `--test` / `-t` (automated pytest execution), `--port` / `-p` (custom port binding), `--collect` / `--collect-gameplay` (interactive CC0 gameplay asset downloader), `--no-browser`, and `--host`.
-  - **macOS & Linux `start.sh`**: Unified POSIX launcher supporting macOS 12+ Monterey (Apple Silicon M1-M4 & Intel x86_64) and Linux distributions.
+  - **Windows `start.bat`**: Full parameter parsing supporting `--check` / `-c` (7-stage pre-flight diagnostics including Parallel Processing status and Rapid Kinetic preset banner), `--test` / `-t` (automated pytest execution), `--port` / `-p` (custom port binding), `--collect` / `--collect-gameplay` (interactive CC0 gameplay asset downloader), `--no-browser`, and `--host`.
+  - **macOS & Linux `start.sh`**: Unified POSIX launcher supporting macOS 12+ Monterey (Apple Silicon M1-M4 & Intel x86_64) and Linux distributions with parity across all flags and documented `AUTOSHORTS_CONCURRENCY=3` default.
   - **Homebrew One-Line Setup**: `brew install python@3.12 ffmpeg uv` followed by `chmod +x start.sh && ./start.sh` (Safari 15+ verified).
 - 🧪 **Comprehensive Test Suite & CI Validation**:
-  - Test suite expanded to **657+ passing tests** across all modules with 100% test pass rate.
+  - Test suite expanded to **670+ passing tests** across all modules with 100% test pass rate.
 
 ---
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import threading
 from collections.abc import Sequence
 from datetime import datetime
@@ -209,12 +210,16 @@ class ShortsPipeline:
         cleaner: Cleaner | None = None,
         scheduler: SpreadScheduler | None = None,
         quota_tracker: QuotaTracker | None = None,
-        concurrency: int = 1,
+        concurrency: int | None = None,
     ) -> None:
         """Initialize pipeline with injected or default components."""
         self.config = config or load_config()
         self.state_manager = state_manager or StateManager()
-        self.concurrency = max(1, concurrency)
+        if concurrency is None:
+            resolved_concurrency = int(os.environ.get("AUTOSHORTS_CONCURRENCY", "3"))
+        else:
+            resolved_concurrency = concurrency
+        self.concurrency = max(1, resolved_concurrency)
         self._render_lock = threading.Semaphore(self.concurrency)
 
         # Quota tracker
@@ -510,6 +515,38 @@ class ShortsPipeline:
     # Internal Stage Implementations
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_local_source(job: Job) -> Path | None:
+        """Return the job's local source clip, but only when the job says it is local.
+
+        Previously this inferred "local file" from ``Path(job.source_url).is_file()``, which
+        meant a YouTube URL that happened to match a file on disk could silently be treated
+        as the canonical source. Origin is now explicit via ``Job.origin_kind``.
+        """
+        if job.origin_kind == "youtube":
+            return None
+
+        # raw_video_path is always an explicit local path chosen by the caller.
+        if job.raw_video_path:
+            try:
+                path = Path(job.raw_video_path)
+                if path.is_file():
+                    return path.resolve()
+            except OSError:  # pragma: no cover - malformed path
+                pass
+
+        # source_url is only usable as a local clip when it is plainly a path, never a URL.
+        source = (job.source_url or "").strip()
+        if source and not source.lower().startswith(("http://", "https://")):
+            try:
+                path = Path(source)
+                if path.is_file():
+                    return path.resolve()
+            except OSError:  # pragma: no cover - malformed path
+                pass
+
+        return None
+
     def _resolve_job(self, job_or_id: Job | str) -> Job:
         if isinstance(job_or_id, Job):
             return job_or_id
@@ -522,13 +559,11 @@ class ShortsPipeline:
         stage_id = self.state_manager.record_stage_start(job.id, "metadata_fetch")
         try:
             # Check if job points to a pre-existing local source clip
-            local_src: Path | None = None
-            if job.raw_video_path and Path(job.raw_video_path).is_file():
-                local_src = Path(job.raw_video_path).resolve()
-            elif job.source_url:
-                candidate_path = Path(job.source_url)
-                if candidate_path.is_file():
-                    local_src = candidate_path.resolve()
+            local_src: Path | None = self._resolve_local_source(job)
+            if local_src is not None:
+                if job.origin_kind is None:
+                    job.origin_kind = "local_file"
+                if not job.raw_video_path:
                     job.raw_video_path = str(local_src)
 
             if local_src is not None:
@@ -578,13 +613,7 @@ class ShortsPipeline:
 
         segments: list[dict[str, Any]] = []
 
-        local_src: Path | None = None
-        if job.raw_video_path and Path(job.raw_video_path).is_file():
-            local_src = Path(job.raw_video_path).resolve()
-        elif job.source_url:
-            cand_path = Path(job.source_url)
-            if cand_path.is_file():
-                local_src = cand_path.resolve()
+        local_src: Path | None = self._resolve_local_source(job)
 
         try:
             # 1. Try fetching online subtitles via TranscriptFetcher if not a local file
@@ -783,27 +812,26 @@ class ShortsPipeline:
             raw_cut_path = work_dir / f"{job.id}_raw.mp4"
 
             # Check if job points to a pre-existing local source clip (skip download!)
-            local_src: Path | None = None
-            if job.raw_video_path and Path(job.raw_video_path).is_file():
-                local_src = Path(job.raw_video_path).resolve()
-            elif job.source_url:
-                cand_path = Path(job.source_url)
-                if cand_path.is_file():
-                    local_src = cand_path.resolve()
+            local_src: Path | None = self._resolve_local_source(job)
 
             if local_src is not None:
+                if job.origin_kind is None:
+                    job.origin_kind = "local_file"
                 logger.info(
                     "Job %s: Pre-existing local source clip detected at %s. Skipping download.",
                     job.id,
                     local_src,
                 )
+                action = "reused"
                 if local_src.resolve() != raw_cut_path.resolve():
+                    import shutil
+
+                    action = "copied"
                     clip_dur = sel.candidate.duration
                     if (
                         sel.candidate.start > 0
                         or (job.video_metadata and job.video_metadata.duration > clip_dur + 1.0)
                     ):
-                        import shutil
                         import subprocess
 
                         ffmpeg_bin = get_ffmpeg_path()
@@ -822,31 +850,89 @@ class ShortsPipeline:
                         ]
                         res = subprocess.run(trim_cmd, capture_output=True)
                         if res.returncode != 0 or not raw_cut_path.is_file():
+                            logger.warning(
+                                "Job %s: Local stream-copy trim failed (code %s); falling back "
+                                "to a full copy of the source clip.",
+                                job.id,
+                                res.returncode,
+                            )
                             shutil.copy2(str(local_src), str(raw_cut_path))
+                            action = "copied_full_fallback"
+                        else:
+                            action = "trimmed"
                     else:
-                        import shutil
-
                         shutil.copy2(str(local_src), str(raw_cut_path))
+
                 job.raw_video_path = str(raw_cut_path)
-            else:
-                self.downloader.download_section(
-                    url=job.source_url,
-                    start_sec=sel.candidate.start,
-                    end_sec=sel.candidate.end,
-                    output_path=raw_cut_path,
+                job.record_diagnostic(
+                    "download",
+                    mode="local_source",
+                    source_file=str(local_src),
+                    local_action=action,
+                    fallback=False,
                 )
+                artifacts: dict[str, Any] = {
+                    "raw_video_path": str(job.raw_video_path),
+                    "mode": "local_source",
+                    "local_action": action,
+                }
+            else:
+                if job.origin_kind is None:
+                    job.origin_kind = "youtube"
+                download_diagnostics: dict[str, Any] = {}
+                dl_kwargs: dict[str, Any] = {
+                    "url": job.source_url,
+                    "start_sec": sel.candidate.start,
+                    "end_sec": sel.candidate.end,
+                    "output_path": raw_cut_path,
+                }
+                # Only pass the diagnostics sink to downloaders that accept it, so
+                # protocol-compatible third-party/mock downloaders keep working.
+                try:
+                    dl_sig = inspect.signature(self.downloader.download_section)
+                    dl_has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in dl_sig.parameters.values()
+                    )
+                    if dl_has_varkw or "diagnostics" in dl_sig.parameters:
+                        dl_kwargs["diagnostics"] = download_diagnostics
+                except (TypeError, ValueError):  # pragma: no cover - C callables
+                    pass
+                self.downloader.download_section(**dl_kwargs)
                 job.raw_video_path = str(raw_cut_path)
+                job.record_diagnostic(
+                    "download",
+                    mode="yt_dlp",
+                    fallback=bool(download_diagnostics.get("attempt_count", 1) > 1),
+                    **download_diagnostics,
+                )
+                artifacts = {
+                    "raw_video_path": str(job.raw_video_path),
+                    "mode": "yt_dlp",
+                    "attempts": download_diagnostics.get("attempts", []),
+                    "validation": download_diagnostics.get("validation"),
+                }
 
             self.state_manager.record_stage_complete(
                 stage_id,
                 status="COMPLETED",
-                artifacts={"raw_video_path": str(job.raw_video_path)},
+                artifacts=artifacts,
             )
             self.state_manager.save_job(job)
             logger.info("Job %s: Precision cut saved to %s", job.id, job.raw_video_path)
         except Exception as e:
+            job.record_diagnostic(
+                "download",
+                mode="failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            try:
+                self.state_manager.save_job(job)
+            except Exception:  # pragma: no cover - state write is best-effort here
+                pass
             self.state_manager.record_stage_complete(
-                stage_id, status="FAILED", artifacts={"error": str(e)}
+                stage_id, status="FAILED", artifacts={"error": str(e), "error_type": type(e).__name__}
             )
             raise DownloadError(f"Precision cut download failed for job {job.id}: {e}") from e
 

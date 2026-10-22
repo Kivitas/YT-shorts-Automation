@@ -40,7 +40,9 @@ from autoshorts.discovery.url_validator import (
     parse_links_input,
 )
 from autoshorts.media.downloader import (
+    SECTION_OK,
     Downloader,
+    SectionValidation,
     format_section_arg,
 )
 from autoshorts.transcript.fetcher import (
@@ -250,8 +252,21 @@ def test_downloader_section_args_and_atomic_execution(tmp_path: Path):
         actual_temp.write_bytes(b"dummy mp4 data")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
+    valid = SectionValidation(ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=45.0)
     dl = Downloader(cookies_from_browser="chrome")
-    with patch("subprocess.run", side_effect=fake_subprocess_run) as mock_run:
+    ytdlp_cmds: list[list[str]] = []
+
+    def recording_run(cmd, **kwargs):
+        if cmd and "yt-dlp" in str(cmd[0]):
+            ytdlp_cmds.append(list(cmd))
+        return fake_subprocess_run(cmd, **kwargs)
+
+    with (
+        patch("subprocess.run", side_effect=recording_run),
+        patch(
+            "autoshorts.media.downloader.validate_section_output", return_value=valid
+        ) as mock_validate,
+    ):
         result_path = dl.download_section(
             url="https://youtu.be/dQw4w9WgXcQ",
             start_sec=65.0,
@@ -263,8 +278,12 @@ def test_downloader_section_args_and_atomic_execution(tmp_path: Path):
         assert target_mp4.is_file()
         assert target_mp4.read_bytes() == b"dummy mp4 data"
 
-        # Verify command arguments
-        called_cmd = mock_run.call_args[0][0]
+        # The finished section must be validated before it is accepted.
+        mock_validate.assert_called_once()
+
+        # Verify command arguments on the yt-dlp invocation (not the probe subprocess).
+        assert ytdlp_cmds, "yt-dlp was never invoked"
+        called_cmd = ytdlp_cmds[0]
         assert "--download-sections" in called_cmd
         sec_idx = called_cmd.index("--download-sections")
         assert called_cmd[sec_idx + 1] == "*01:05-01:50"
@@ -272,6 +291,8 @@ def test_downloader_section_args_and_atomic_execution(tmp_path: Path):
         assert "--cookies-from-browser" in called_cmd
         assert "chrome" in called_cmd
         assert "-f" in called_cmd
+        assert "--merge-output-format" in called_cmd
+        assert "mp4" in called_cmd
 
 
 def test_downloader_download_audio_only(tmp_path: Path):
@@ -760,14 +781,27 @@ def test_downloader_multiclient_fallback_and_probe(tmp_path: Path):
         temp_file.write_bytes(b"mp4 content")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
+    valid = SectionValidation(ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=40.0)
     dl = YtDlpDownloader(max_retries=2, retry_delay_sec=0.01)
-    with patch("subprocess.run", side_effect=side_effect_run):
-        res = dl.download_section("https://youtu.be/dQw4w9WgXcQ", 10.0, 50.0, target)
+    with (
+        patch("subprocess.run", side_effect=side_effect_run),
+        patch("autoshorts.media.downloader.validate_section_output", return_value=valid),
+    ):
+        diagnostics: dict = {}
+        res = dl.download_section(
+            "https://youtu.be/dQw4w9WgXcQ", 10.0, 50.0, target, diagnostics=diagnostics
+        )
         assert res == target
-        assert len(calls) == 2
-        assert "--extractor-args" not in calls[0]
-        assert "--extractor-args" in calls[1]
-        assert "youtube:player_client=android,web" in calls[1]
+        # Only the yt-dlp invocations count; the ffprobe/ffmpeg probe is not an attempt.
+        ytdlp_calls = [c for c in calls if c and "yt-dlp" in str(c[0])]
+        assert len(ytdlp_calls) == 2
+        assert "--extractor-args" not in ytdlp_calls[0]
+        assert "--extractor-args" in ytdlp_calls[1]
+        assert "youtube:player_client=android,web" in ytdlp_calls[1]
+        # The attempt trace records the failed first attempt and the successful retry.
+        outcomes = [a["outcome"] for a in diagnostics["attempts"]]
+        assert outcomes[0].startswith("yt_dlp_exit_")
+        assert outcomes[-1] == SECTION_OK
 
     # Test probe_video_stream_info
     ffprobe_json = json.dumps(

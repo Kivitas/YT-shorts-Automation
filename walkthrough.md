@@ -12,7 +12,7 @@ Follow this checklist for your first run:
 
 - [ ] **System Prereqs**: Windows 10/11, macOS 12+ Monterey (Apple Silicon M1-M4 & Intel), or Linux. Python 3.12 (or `uv`), and FFmpeg (`brew install python@3.12 ffmpeg uv` on macOS; bundled via `.venv` or winget on Windows).
 - [ ] **Run Pre-Flight Check**: Execute `start.bat --check` in Windows PowerShell or `./start.sh --check` in macOS / Linux Terminal. Confirm all runtime folders, AI engines, and core dependencies show `[OK]`.
-- [ ] **Run Automated Tests**: Verify all **657+ unit and integration tests** pass cleanly with `start.bat --test` or `./start.sh --test`.
+- [ ] **Run Automated Tests**: Verify all **670+ unit and integration tests** pass cleanly with `start.bat --test` or `./start.sh --test`.
 - [ ] **Launch Dashboard**: Run `start.bat` (Windows) or `chmod +x start.sh && ./start.sh` (macOS/Linux). The studio opens at `http://127.0.0.1:8000` (tested with Safari 15+, Chrome, Edge, and Arc).
 - [ ] **Configure AI Keys**: Click **⚙️ Settings** in the top navigation. Enter your `GEMINI_API_KEY` (recommended for video understanding and SuperBrain agents) or configure OpenRouter / Local GGUF.
 - [ ] **Connect YouTube**: In **⚙️ Settings** &rarr; **YouTube API & Upload**, upload `client_secret.json` and click **"Authorize YouTube Account (OAuth 2.0)"** (or click **"Sign In with Edge"** for zero-quota Playwright uploads).
@@ -208,6 +208,18 @@ The **Laya Rhythm Engine** bridges musical beat tracking, vocal cadence, and vid
 The FFmpeg compositing engine has been hardened to support explicit audio parameter overrides across all video presets:
 - **Dynamic Sidechain Activation**: Passing explicit `bgm_path` and `bgm_volume` dynamically activates sidechain ducking across all presets (even if the chosen dopamine preset has ducking disabled by default).
 - **Rhythmic Ducking Integration**: Feeds `rhythm_ducking_release` (in milliseconds) directly into FFmpeg's `sidechaincompress` audio filter, ensuring the ducking release matches the exact musical eighth note of the background music.
+- **High Dopamine Split Divider Line**: For `split_50_50` and `split_70_30` layouts, customizable `split_separator` (`glow`, `line`, `shadow`, or `none`) inserts a sleek cyan/white glowing separator line or subtle depth shadow between speaker and gameplay views.
+- **Resilient Media Stream Handling**: Automated `ffprobe` stream validation (`has_audio_stream`, `has_video_stream`) dynamically probes inputs and synthesizes fallback silent audio or video, preventing FFmpeg filtergraph failures when media clips lack standard streams.
+
+---
+
+## ⚡ Parallel Multi-Video Processing Engine (`src/autoshorts/core/parallel_runner.py`)
+
+AutoShorts Studio features a high-throughput bounded thread pool executor for processing multiple video rendering jobs concurrently without UI stalls:
+- **Default Concurrency**: 3 parallel worker threads (configurable via `AUTOSHORTS_CONCURRENCY`, e.g. `set AUTOSHORTS_CONCURRENCY=4` or `export AUTOSHORTS_CONCURRENCY=4`).
+- **Parallel Queue Endpoints**:
+  - `POST /api/jobs/process-queue`: Scans the SQLite database for queued jobs and submits up to available worker capacity.
+  - `GET /api/jobs/parallel-status`: Returns live concurrency status (`active_count`, `max_workers`, `active_jobs`).
 
 ---
 
@@ -246,7 +258,7 @@ AutoShorts includes self-healing one-click launchers with identical command-line
 # or short flag:
 .\start.bat -c
 
-# Run automated test suite (657+ tests) and exit
+# Run automated test suite (670+ tests) and exit
 .\start.bat --test
 # or short flag:
 .\start.bat -t
@@ -275,7 +287,7 @@ chmod +x start.sh
 # Run pre-flight environment diagnostics
 ./start.sh --check
 
-# Run automated test suite (657+ tests)
+# Run automated test suite (670+ tests)
 ./start.sh --test
 
 # Interactive gameplay asset collector
@@ -518,12 +530,13 @@ When using `split_50_50`, `split_70_30`, or `full_center_crop`, specify where th
 
 ---
 
-### 7 Studio Caption Presets
+### Studio Caption Presets (Including Rapid Kinetic)
 
-AutoShorts styles subtitles using advanced SubStation Alpha (`.ass`) rendering:
+AutoShorts styles subtitles using advanced SubStation Alpha (`.ass`) rendering with customizable presets:
 
 | Preset | Aesthetic & Typography | Best Suited For |
 | :--- | :--- | :--- |
+| **`rapid`** | Ultra-bold 84pt Montserrat ExtraBold with dynamic kinetic pop scaling (122% active word pop, 135% emphasis pop) and 1–2 word burst pacing. | Hyper-retention faceless shorts, high-tempo commentary, TikTok/Reels |
 | **`neon`** *(Default)* | Vibrant yellow active karaoke pop (`#FFFF00`), dynamic scaling bounce (100% &rarr; 118% &rarr; 100%), micro-tilt angle pop (`\frz-2`), deep black outline, and keyword color accents. | High-retention clips, viral moments, gaming, fast dialogue |
 | **`hormozi`** | Ultra-bold punchy text (The Bold Font / Montserrat Black) with bright yellow active words, deep green keyword accents, and heavy black stroke. | Motivation, business, direct-response advice, personal branding |
 | **`mrbeast`** | Energetic pop font with dynamic orange, lime, and yellow highlights, playful active scale wobble, and thick drop shadows. | Challenges, surprising facts, viral entertainment |

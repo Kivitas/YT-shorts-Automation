@@ -339,6 +339,13 @@ def test_all_seven_caption_presets():
     assert "&H00141E28" in s_cinematic  # Umber outline
     assert ",1,2,3,2," in s_cinematic
 
+    # 8. rapid (kinetic burst)
+    s_rapid = build_ass_script(words, style_preset="rapid")
+    assert "Montserrat ExtraBold,84" in s_rapid
+    assert "&H0000FFFF" in s_rapid  # Active Electric Yellow
+    assert ",1,10,4,2," in s_rapid
+    assert r"\fscx122\fscy122" in s_rapid
+
 
 def test_typography_text_transforms():
     """Verify uppercase, title, and none text transforms."""

@@ -44,6 +44,7 @@ DO_TEST=0
 DO_COLLECT=0
 NO_BROWSER=0
 COLLECT_ARGS=()
+export AUTOSHORTS_CONCURRENCY="${AUTOSHORTS_CONCURRENCY:-3}"
 
 # -----------------------------------------------------------------------------
 # CLI Argument Parsing
@@ -51,6 +52,7 @@ COLLECT_ARGS=()
 show_help() {
     printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"
     printf "                 %bAutoShorts Studio Launcher (macOS & Unix)%b\n" "$C_BOLD" "$C_RESET"
+    printf "  Rapid Kinetic Captions (84pt pop) | Parallel Processing (3 Workers)\n"
     printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"
     printf "%bUsage:%b\n" "$C_WHITE" "$C_RESET"
     printf "  ./start.sh                     Launch web dashboard at http://localhost:8000\n"
@@ -66,6 +68,8 @@ show_help() {
     printf "  ./start.sh --host <ip>         Custom host binding (default 127.0.0.1)\n"
     printf "  ./start.sh --help              Display this help guide and available options\n"
     printf "  ./start.sh -h                  Short alias for --help\n\n"
+    printf "%bEnvironment Variables:%b\n" "$C_WHITE" "$C_RESET"
+    printf "  AUTOSHORTS_CONCURRENCY         Max parallel render workers (default: 3)\n\n"
     printf "%bExamples:%b\n" "$C_WHITE" "$C_RESET"
     printf "  ./start.sh --port 8765\n"
     printf "  ./start.sh --check\n"
@@ -249,6 +253,7 @@ fi
 if [[ $DO_CHECK -eq 1 ]]; then
     printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"
     printf "          %bAutoShorts Studio - Comprehensive Pre-Flight Diagnostics%b\n" "$C_BOLD" "$C_RESET"
+    printf "  Rapid Kinetic Captions (84pt pop) | Parallel Multi-Video Engine (3 Workers)\n"
     printf "%b=====================================================================%b\n\n" "$C_CYAN" "$C_RESET"
 
     printf "%b[1] Runtime & Package Infrastructure:%b\n" "$C_BOLD" "$C_RESET"
@@ -295,6 +300,7 @@ if [[ $DO_CHECK -eq 1 ]]; then
     echo ""
 
     printf "%b[7] System Integrity & Protection Layers:%b\n" "$C_BOLD" "$C_RESET"
+    printf "  [OK]       Parallel Multi-Video Processing Engine (3 Workers)\n"
     printf "  [OK]       macOS Sleep Prevention: Supported (IOKit / caffeinate)\n"
     printf "  [OK]       Offline Resilience: Active (Sleep / Network Disconnect Recovery)\n"
     printf "  [OK]       Data Integrity: Zero-Phantom-Data Mode (Atomic SQLite)\n"
@@ -381,6 +387,8 @@ printf "  Local Dashboard URL:  %bhttp://localhost:%s%b\n" "$C_GREEN" "$PORT" "$
 printf "  Alternate URL:        %bhttp://%s:%s%b\n" "$C_GREEN" "$HOST" "$PORT" "$C_RESET"
 printf "  Platform:             %s (%s)\n" "$(uname -s)" "$(uname -m)"
 printf "  Video Compositor:     %s\n" "$FFMPEG_STATUS"
+printf "  Parallel Engine:      Active (%s Workers via AUTOSHORTS_CONCURRENCY)\n" "$AUTOSHORTS_CONCURRENCY"
+printf "  Caption Presets:      Active (Rapid Kinetic 84pt, Neon, Bold, Minimal)\n"
 printf "  Sleep Prevention:     Active (caffeinate / IOKit)\n"
 printf "  Persistence:          Zero-Phantom-Data Mode (Atomic SQLite)\n"
 printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"

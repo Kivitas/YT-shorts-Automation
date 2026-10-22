@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DopaminePreset:
-    """Feature toggles corresponding to low, medium, or high dopamine presets."""
+    """Feature toggles corresponding to dopamine presets."""
 
     level: str
     enable_progress_bar: bool
@@ -39,9 +39,22 @@ class DopaminePreset:
     enable_music_ducking: bool
     enable_sfx: bool
     enable_hook_card: bool
+    enable_split_separator: bool = False
+    split_separator_style: str = "none"
 
 
 DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
+    "none": DopaminePreset(
+        level="none",
+        enable_progress_bar=False,
+        enable_zoom_punch_ins=False,
+        enable_loudnorm=False,
+        enable_music_ducking=False,
+        enable_sfx=False,
+        enable_hook_card=False,
+        enable_split_separator=False,
+        split_separator_style="none",
+    ),
     "low": DopaminePreset(
         level="low",
         enable_progress_bar=False,
@@ -50,6 +63,8 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_music_ducking=False,
         enable_sfx=False,
         enable_hook_card=False,
+        enable_split_separator=False,
+        split_separator_style="none",
     ),
     "medium": DopaminePreset(
         level="medium",
@@ -59,6 +74,8 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_music_ducking=False,
         enable_sfx=False,
         enable_hook_card=True,
+        enable_split_separator=False,
+        split_separator_style="none",
     ),
     "high": DopaminePreset(
         level="high",
@@ -68,12 +85,36 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_music_ducking=True,
         enable_sfx=True,
         enable_hook_card=True,
+        enable_split_separator=False,
+        split_separator_style="none",
+    ),
+    "ultra": DopaminePreset(
+        level="ultra",
+        enable_progress_bar=True,
+        enable_zoom_punch_ins=True,
+        enable_loudnorm=True,
+        enable_music_ducking=True,
+        enable_sfx=True,
+        enable_hook_card=True,
+        enable_split_separator=True,
+        split_separator_style="glow",
+    ),
+    "extreme": DopaminePreset(
+        level="extreme",
+        enable_progress_bar=True,
+        enable_zoom_punch_ins=True,
+        enable_loudnorm=True,
+        enable_music_ducking=True,
+        enable_sfx=True,
+        enable_hook_card=True,
+        enable_split_separator=True,
+        split_separator_style="glow",
     ),
 }
 
 
 def get_dopamine_preset(level: str = "medium") -> DopaminePreset:
-    """Retrieve the DopaminePreset for the specified level ('low', 'medium', 'high')."""
+    """Retrieve the DopaminePreset for the specified level ('none', 'low', 'medium', 'high', 'ultra', 'extreme')."""
     normalized = (level or "medium").strip().lower()
     return DOPAMINE_PRESETS.get(normalized, DOPAMINE_PRESETS["medium"])
 
@@ -246,6 +287,8 @@ def build_split_separator_filter(
 
     Supported styles:
     - 'glow': Modern cyan/white glowing separator line with subtle gradient depth
+    - 'drawbox' / 'neon': 4px glowing neon divider via drawbox filter
+    - 'dark': Clean dark border divider via drawbox filter
     - 'shadow': Soft drop-shadow bar creating visual elevation between top and bottom clips
     - 'line': Clean minimalist neutral line
     - 'none': Pass through unchanged
@@ -256,7 +299,19 @@ def build_split_separator_filter(
 
     dur = max(1.0, duration_sec)
 
-    if clean_style == "shadow":
+    if clean_style in ("drawbox", "neon"):
+        line_filter = (
+            f"[{input_label}]drawbox=x=0:y={seam_y - 2}:w=iw:h=4:color=0x00E5FF@0.9:t=fill[{output_label}]"
+        )
+        return line_filter, output_label
+
+    elif clean_style == "dark":
+        line_filter = (
+            f"[{input_label}]drawbox=x=0:y={seam_y - 2}:w=iw:h=4:color=black@0.85:t=fill[{output_label}]"
+        )
+        return line_filter, output_label
+
+    elif clean_style == "shadow":
         line_filter = (
             f"color=c=black@0.45:s={width}x8:d={dur:.2f}[shadow_bar]; "
             f"[{input_label}][shadow_bar]overlay=x=0:y={seam_y - 4}[{output_label}]"
@@ -506,6 +561,8 @@ def build_complex_filtergraph(
     fps: int = 30,
     crop_focus: str = "center",
     split_separator: str = "none",
+    source_clip_has_video: bool = True,
+    rhythm_ducking_release: float | None = None,
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -530,10 +587,52 @@ def build_complex_filtergraph(
     )
     current_a = "0:a" if source_clip_has_audio else None
 
+    # Determine effective split separator style across layout and preset
+    eff_sep = split_separator if split_separator != "none" else (
+        dopamine_preset.split_separator_style
+        if getattr(dopamine_preset, "enable_split_separator", False)
+        else "none"
+    )
+
     # -------------------------------------------------------------------------
     # 1. Video Layout Composition
     # -------------------------------------------------------------------------
-    if mode == "split_70_30":
+    if not source_clip_has_video:
+        # Audio-only source clip: use background video or black canvas as full vertical canvas
+        if has_background_video:
+            filter_stages.append(
+                f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},setsar=1,fps={fps}[bg_full]"
+            )
+            top_final = "bg_full"
+        else:
+            filter_stages.append(
+                f"color=c=black:s={width}x{height}:r={fps}:d={duration_sec}[bg_full]"
+            )
+            top_final = "bg_full"
+
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, top_cut, audio_cut = build_jumpcut_select_filter(
+                    valid_cuts,
+                    v_in=top_final,
+                    v_out="v_cut",
+                    a_in="0:a",
+                    a_out="a_cut",
+                )
+                filter_stages.append(jc_filter)
+                current_v = top_cut
+                current_a = audio_cut
+            else:
+                drop_conds = [f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts]
+                filter_stages.append(
+                    f"[{top_final}]select='not({'+'.join(drop_conds)})',setpts=N/FRAME_RATE/TB[v_cut]"
+                )
+                current_v = "v_cut"
+        else:
+            current_v = top_final
+
+    elif mode == "split_70_30":
         # 70/30 split: top 70% (1344 @ 1080p), bottom 30% (576 @ 1080p)
         top_h = int(height * 0.70) // 2 * 2
         bottom_h = height - top_h
@@ -582,14 +681,14 @@ def build_complex_filtergraph(
         )
         filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
         current_v = "stacked"
-        if split_separator != "none":
+        if eff_sep != "none":
             sep_str, sep_out = build_split_separator_filter(
                 input_label=current_v,
                 output_label="stacked_sep",
                 seam_y=top_h,
                 width=width,
                 duration_sec=duration_sec,
-                style=split_separator,
+                style=eff_sep,
             )
             filter_stages.append(sep_str)
             current_v = sep_out
@@ -733,9 +832,18 @@ def build_complex_filtergraph(
             f"crop={pip_w}:{pip_h},setsar=1,fps={fps}[pip_scaled]"
         )
 
+        if eff_sep != "none":
+            box_col = "black@0.85" if eff_sep == "dark" else "0x00E5FF@0.9"
+            filter_stages.append(
+                f"[pip_scaled]drawbox=x=0:y=0:w=iw:h=ih:color={box_col}:t=4[pip_bordered]"
+            )
+            pip_in = "pip_bordered"
+        else:
+            pip_in = "pip_scaled"
+
         pip_x = "W-w-48" if width == 1080 else f"W-w-{int(48 * width / 1080)}"
         pip_y = "H-h-420" if height == 1920 else f"H-h-{int(420 * height / 1920)}"
-        filter_stages.append(f"[{main_final}][pip_scaled]overlay=x={pip_x}:y={pip_y}[stacked]")
+        filter_stages.append(f"[{main_final}][{pip_in}]overlay=x={pip_x}:y={pip_y}[stacked]")
         current_v = "stacked"
 
     else:
@@ -787,14 +895,14 @@ def build_complex_filtergraph(
         )
         filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
         current_v = "stacked"
-        if split_separator != "none":
+        if eff_sep != "none":
             sep_str, sep_out = build_split_separator_filter(
                 input_label=current_v,
                 output_label="stacked_sep",
                 seam_y=top_h,
                 width=width,
                 duration_sec=duration_sec,
-                style=split_separator,
+                style=eff_sep,
             )
             filter_stages.append(sep_str)
             current_v = sep_out
@@ -877,10 +985,15 @@ def build_complex_filtergraph(
 
         # Mix background music if available using sidechain compression
         if dopamine_preset.enable_music_ducking and music_input_index is not None:
+            duck_release = (
+                int(rhythm_ducking_release)
+                if rhythm_ducking_release is not None
+                else 300
+            )
             filter_stages.append(
                 f"[{voice_label}]asplit=2[v_main][v_side]; "
                 f"[{music_input_index}:a]volume={bg_music_volume:.2f}[bg_raw]; "
-                f"[bg_raw][v_side]sidechaincompress=threshold=0.1:ratio=4:attack=20:release=300[bg_ducked]; "
+                f"[bg_raw][v_side]sidechaincompress=threshold=0.1:ratio=4:attack=20:release={duck_release}[bg_ducked]; "
                 f"[v_main][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[mixed_a]"
             )
             voice_label = "mixed_a"
@@ -899,7 +1012,13 @@ def build_complex_filtergraph(
             voice_label = "sfx_mixed_a"
 
         # Master audio limiting: protect against clipping and maintain -1.0dB true peak
-        filter_stages.append(f"[{voice_label}]alimiter=limit=-1.0dB[master_a]")
+        limiter_extra = ""
+        if rhythm_ducking_release is not None and not (
+            dopamine_preset.enable_music_ducking and music_input_index is not None
+        ):
+            limiter_rel = min(1000, max(10, int(rhythm_ducking_release)))
+            limiter_extra = f":release={limiter_rel}"
+        filter_stages.append(f"[{voice_label}]alimiter=limit=-1.0dB{limiter_extra}[master_a]")
         out_audio_label = "[master_a]"
     else:
         # Generate silent audio if source has no audio track

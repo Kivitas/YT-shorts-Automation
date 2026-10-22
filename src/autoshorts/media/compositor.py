@@ -38,7 +38,11 @@ from autoshorts.media.dopamine_effects import (
     get_dopamine_preset,
     pick_background_asset,
 )
-from autoshorts.media.downloader import run_command_with_cleanup, terminate_process_tree
+from autoshorts.media.downloader import (
+    probe_video_stream_info,
+    run_command_with_cleanup,
+    terminate_process_tree,
+)
 from autoshorts.media.encoder_probe import EncoderInfo
 
 logger = logging.getLogger(__name__)
@@ -104,6 +108,10 @@ def has_audio_stream(media_path: Path | str) -> bool:
     if not target.is_file():
         return False
 
+    info = probe_video_stream_info(target)
+    if info.get("has_audio"):
+        return True
+
     ffprobe_bin = shutil.which("ffprobe")
     if not ffprobe_bin:
         return True  # Optimistic assumption
@@ -126,6 +134,42 @@ def has_audio_stream(media_path: Path | str) -> bool:
             timeout=10.0,
         )
         return "audio" in proc.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
+def has_video_stream(media_path: Path | str) -> bool:
+    """Return True if media file contains at least one video stream."""
+    target = Path(media_path).resolve()
+    if not target.is_file():
+        return False
+
+    info = probe_video_stream_info(target)
+    if info.get("has_video"):
+        return True
+
+    ffprobe_bin = shutil.which("ffprobe")
+    if not ffprobe_bin:
+        return True  # Optimistic fallback
+
+    cmd = [
+        ffprobe_bin,
+        "-v",
+        "error",
+        "-select_streams",
+        "v",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        str(target),
+    ]
+    try:
+        proc = run_command_with_cleanup(
+            cmd,
+            timeout=10.0,
+        )
+        return "video" in proc.stdout.lower()
     except (OSError, subprocess.SubprocessError):
         return True
 
@@ -291,6 +335,74 @@ _HW_PROBE_CACHE: dict[str, EncoderInfo] = {}
 def clear_hardware_encoder_cache() -> None:
     """Clear cached hardware encoder probe results (useful for test isolation)."""
     _HW_PROBE_CACHE.clear()
+
+
+def detect_encoder_pixel_format(
+    codec: str,
+    extra_args: list[str] | None = None,
+    ffmpeg_binary: str = "ffmpeg",
+    timeout_sec: float = 2.0,
+) -> str:
+    """Detect whether encoder supports yuv420p or falls back to nv12."""
+    if codec == "libx264":
+        return "yuv420p"
+
+    resolved_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+    extra = extra_args or []
+
+    # First test standard yuv420p
+    cmd_yuv = [
+        resolved_bin,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=256x256:d=0.1",
+        "-c:v",
+        codec,
+        *extra,
+        "-pix_fmt",
+        "yuv420p",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd_yuv, capture_output=True, timeout=timeout_sec, check=False)
+        if proc.returncode == 0:
+            return "yuv420p"
+    except Exception:
+        pass
+
+    # If yuv420p fails, test nv12 (widely required/preferred by Intel QSV & NVIDIA NVENC)
+    cmd_nv12 = [
+        resolved_bin,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=256x256:d=0.1",
+        "-c:v",
+        codec,
+        *extra,
+        "-pix_fmt",
+        "nv12",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        proc = subprocess.run(cmd_nv12, capture_output=True, timeout=timeout_sec, check=False)
+        if proc.returncode == 0:
+            return "nv12"
+    except Exception:
+        pass
+
+    return "yuv420p"
 
 
 def detect_hardware_encoder(
@@ -601,6 +713,7 @@ class FFmpegCompositor:
         target_lufs: float | None = None,
         bg_music_volume: float | None = None,
         crop_focus: str = "center",
+        split_separator: str | None = None,
         bg_music_path: Path | str | None = None,
         bgm_path: Path | str | None = None,
         bgm_volume: float | None = None,
@@ -667,6 +780,10 @@ class FFmpegCompositor:
             else getattr(audio_cfg, "bg_music_volume", 0.18)
         )
 
+        # Early stream detection for robust audio/video layout configuration
+        has_src_audio = has_audio_stream(src)
+        has_src_video = has_video_stream(src)
+
         # Determine target duration and trim points
         clip_duration = probe_media_duration(src)
         hook_in = 0.0
@@ -680,12 +797,14 @@ class FFmpegCompositor:
 
         target_duration = max(1.0, min(60.0, hook_out - hook_in))
         logger.info(
-            "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs, layout=%s)",
+            "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs, layout=%s, has_v=%s, has_a=%s)",
             job_id,
             target_duration,
             hook_in,
             hook_out,
             eff_layout,
+            has_src_video,
+            has_src_audio,
         )
 
         level = dopamine_level or self.config.job_defaults.dopamine_level
@@ -701,8 +820,8 @@ class FFmpegCompositor:
             cmd.extend(["-ss", f"{hook_in:.3f}"])
         cmd.extend(["-t", f"{target_duration:.3f}", "-i", str(src)])
 
-        # Single source vs multi-source layouts
-        is_single_source = eff_layout in ("full_blur_bg", "full_center_crop")
+        # Single source vs multi-source layouts (audio-only source cannot be single-source)
+        is_single_source = (eff_layout in ("full_blur_bg", "full_center_crop")) and has_src_video
         has_bg_file = False
         next_input_idx = 1 if is_single_source else 2
 
@@ -713,7 +832,7 @@ class FFmpegCompositor:
 
             if background_path:
                 p = Path(background_path).resolve()
-                if p.is_file():
+                if p.is_file() and has_video_stream(p):
                     bg_file = p
                     bg_dur = probe_media_duration(p)
                     max_offset = max(0.0, bg_dur - target_duration)
@@ -726,7 +845,10 @@ class FFmpegCompositor:
                     or self.config.job_defaults.background_category
                     or "minecraft"
                 )
-                bg_file, bg_offset = pick_background_asset(category=bg_style)
+                cand_file, cand_offset = pick_background_asset(category=bg_style, auto_fetch=False)
+                if cand_file and cand_file.is_file() and has_video_stream(cand_file):
+                    bg_file = cand_file
+                    bg_offset = cand_offset
 
             if bg_file and bg_file.is_file():
                 cmd.extend(
@@ -744,6 +866,7 @@ class FFmpegCompositor:
                 has_bg_file = True
             else:
                 # Procedural fallback background via lavfi color/gradients
+                lavfi_dims = "1080x1920" if not has_src_video else "1080x960"
                 cmd.extend(
                     [
                         "-f",
@@ -751,10 +874,10 @@ class FFmpegCompositor:
                         "-t",
                         f"{target_duration:.3f}",
                         "-i",
-                        f"color=c=0x16213e:s=1080x960:r=30:d={target_duration:.3f}",
+                        f"color=c=0x16213e:s={lavfi_dims}:r=30:d={target_duration:.3f}",
                     ]
                 )
-                has_bg_file = False
+                has_bg_file = True
 
         # Optional audio assets (music, sfx)
         music_idx: int | None = None
@@ -784,9 +907,25 @@ class FFmpegCompositor:
                 sfx_idx = next_input_idx
                 next_input_idx += 1
 
-        has_src_audio = has_audio_stream(src)
         fonts_dir = get_assets_dir() / "fonts"
         fonts_param = fonts_dir if fonts_dir.is_dir() else None
+
+        # Resolve split separator style
+        eff_split_sep = (
+            split_separator
+            or getattr(branding, "split_separator", None)
+            or (
+                preset.split_separator_style
+                if getattr(preset, "enable_split_separator", False)
+                else "none"
+            )
+        )
+
+        effective_release = rhythm_ducking_release or kwargs.get("rhythm_ducking_release")
+        if effective_release is None and job:
+            r_meta = getattr(job, "rhythm_metadata", None)
+            if isinstance(r_meta, dict):
+                effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
 
         # Build complex filtergraph
         filtergraph, out_v, out_a = build_complex_filtergraph(
@@ -810,13 +949,10 @@ class FFmpegCompositor:
             target_lufs=eff_target_lufs,
             bg_music_volume=eff_bg_music_vol,
             crop_focus=eff_crop_focus,
+            split_separator=eff_split_sep,
+            source_clip_has_video=has_src_video,
+            rhythm_ducking_release=effective_release,
         )
-
-        effective_release = rhythm_ducking_release or kwargs.get("rhythm_ducking_release")
-        if effective_release is None and job:
-            r_meta = getattr(job, "rhythm_metadata", None)
-            if isinstance(r_meta, dict):
-                effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
 
         if effective_release is not None and "release=300" in filtergraph:
             filtergraph = filtergraph.replace(
@@ -826,8 +962,18 @@ class FFmpegCompositor:
         cmd.extend(["-filter_complex", filtergraph])
         cmd.extend(["-map", out_v, "-map", out_a])
 
-        # Video encoding parameters
-        cmd.extend(encoder.get_ffmpeg_args())
+        # Video encoding parameters with hardware encoder pixel format detection
+        enc_args = list(encoder.get_ffmpeg_args())
+        pix_fmt = detect_encoder_pixel_format(
+            encoder.codec,
+            encoder.extra_args,
+            ffmpeg_binary=self.ffmpeg_binary,
+        )
+        if pix_fmt != "yuv420p" and "-pix_fmt" in enc_args:
+            idx = enc_args.index("-pix_fmt")
+            if idx + 1 < len(enc_args):
+                enc_args[idx + 1] = pix_fmt
+        cmd.extend(enc_args)
 
         # Audio encoding parameters
         cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100"])
@@ -848,6 +994,32 @@ class FFmpegCompositor:
                 timeout=timeout_sec,
             )
             elapsed = time.time() - start_time
+            if proc.returncode != 0:
+                # If hardware encoder failed, retry with CPU fallback libx264
+                if encoder.is_hardware_accelerated:
+                    logger.warning(
+                        "Hardware encoder %s failed (code %d). Retrying with libx264 CPU fallback...",
+                        encoder.codec,
+                        proc.returncode,
+                    )
+                    cpu_args = [
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "22",
+                        "-threads",
+                        "4",
+                        "-pix_fmt",
+                        "yuv420p",
+                    ]
+                    if "-c:v" in cmd:
+                        c_idx = cmd.index("-c:v")
+                        a_idx = cmd.index("-c:a") if "-c:a" in cmd else len(cmd) - 1
+                        cmd_fallback = cmd[:c_idx] + cpu_args + cmd[a_idx:]
+                        proc = run_command_with_cleanup(cmd_fallback, timeout=timeout_sec)
+
             if proc.returncode != 0:
                 if tmp_dest.is_file():
                     tmp_dest.unlink(missing_ok=True)
@@ -1035,11 +1207,13 @@ __all__ = [
     "FFmpegCompositor",
     "FasterWhisperTranscriber",
     "clear_hardware_encoder_cache",
+    "detect_encoder_pixel_format",
     "detect_hardware_encoder",
     "extract_16khz_mono_wav",
     "find_best_thumbnail_timestamp",
     "get_ffmpeg_path",
     "has_audio_stream",
+    "has_video_stream",
     "probe_media_duration",
     "run_command_with_cleanup",
     "score_frame_visual_quality",

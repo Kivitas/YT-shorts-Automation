@@ -158,6 +158,14 @@ class MultimodalEditPlanner(EditPlanner):
         self.provider = provider
         self.default_duration = default_duration
         self.last_privacy_warning: str | None = None
+        # Provenance for the most recent generate_edl() call.
+        self.last_source: str = "deterministic"
+        self.last_fallback_reason: str | None = None
+
+    def _record(self, source: str, reason: str | None = None) -> None:
+        """Remember how the current plan was produced for stage artifacts."""
+        self.last_source = source
+        self.last_fallback_reason = reason
 
     def generate_edl(
         self,
@@ -175,11 +183,17 @@ class MultimodalEditPlanner(EditPlanner):
 
         # If planner is disabled or no provider injected, return empty fallback
         if not self.config.enabled or self.provider is None:
-            logger.info("Edit planner disabled or no provider injected; returning clean empty EDL")
-            return create_empty_edl(clip_duration=clip_duration)
+            reason = (
+                "planner disabled by config" if not self.config.enabled else "no LLM provider"
+            )
+            logger.info("Edit planner unavailable (%s); returning clean empty EDL", reason)
+            self._record("empty_fallback", reason)
+            return create_empty_edl(clip_duration=clip_duration, fallback_reason=reason)
 
         # 1. Attempt generation (multimodal or transcript-only)
         raw_output: str | None = None
+        chosen_source = "multimodal"
+        degrade_note: str | None = None
 
         # Check if provider supports multimodal video analysis
         if hasattr(self.provider, "analyze_video") or hasattr(self.provider, "complete_multimodal"):
@@ -200,11 +214,18 @@ class MultimodalEditPlanner(EditPlanner):
                     raw_output = self.provider.complete_multimodal(clip_path, prompt=prompt)
             except Exception as e:
                 logger.warning("Multimodal video analysis failed: %s", e)
+                degrade_note = f"multimodal analysis failed: {e}"
                 if not self.config.fallback_to_transcript:
-                    return create_empty_edl(clip_duration=clip_duration)
+                    self._record("empty_fallback", degrade_note)
+                    return create_empty_edl(
+                        clip_duration=clip_duration, fallback_reason=degrade_note
+                    )
 
         # Fallback to transcript-only completion if raw_output is still None
         if raw_output is None:
+            chosen_source = "transcript"
+            if degrade_note is None:
+                degrade_note = "multimodal analysis unavailable for this provider"
             try:
                 prompt = build_edl_prompt(
                     clip_duration=clip_duration,
@@ -216,10 +237,16 @@ class MultimodalEditPlanner(EditPlanner):
                     raw_output = self.provider.complete(prompt=prompt)
                 else:
                     logger.warning("Provider lacks complete() interface; returning empty EDL")
-                    return create_empty_edl(clip_duration=clip_duration)
+                    self._record("empty_fallback", "provider lacks complete() interface")
+                    return create_empty_edl(
+                        clip_duration=clip_duration,
+                        fallback_reason="provider lacks complete() interface",
+                    )
             except Exception as e:
                 logger.warning("Transcript-only edit planning failed: %s", e)
-                return create_empty_edl(clip_duration=clip_duration)
+                reason = f"transcript-only planning failed: {e}"
+                self._record("empty_fallback", reason)
+                return create_empty_edl(clip_duration=clip_duration, fallback_reason=reason)
 
         # 2. Parse and validate JSON with 1-shot schema repair
         validated_edl: EditDecisionList | None = None
@@ -263,8 +290,25 @@ Do NOT include markdown explanations or code blocks outside the JSON.
             logger.warning(
                 "All EDL validation attempts failed; falling back to deterministic empty EDL"
             )
-            return create_empty_edl(clip_duration=clip_duration)
+            reason = f"schema validation failed after repair retry: {validation_error}"
+            self._record("empty_fallback", reason)
+            return create_empty_edl(clip_duration=clip_duration, fallback_reason=reason)
 
         # 3. Clamp times and reject absurd/overlapping jump cuts
         final_edl = clamp_edl(validated_edl, clip_duration=clip_duration)
+
+        # Record where this plan came from, and note any degradation along the way.
+        notes: list[str] = []
+        if degrade_note:
+            notes.append(degrade_note)
+        if final_edl.jump_cuts != validated_edl.jump_cuts or (
+            final_edl.zoom_punch_ins != validated_edl.zoom_punch_ins
+        ):
+            notes.append("clamping rejected some proposed cuts/punch-ins")
+        reason = "; ".join(notes) if notes else None
+
+        final_edl = final_edl.model_copy(
+            update={"source": chosen_source, "fallback_reason": reason}
+        )
+        self._record(chosen_source, reason)
         return final_edl

@@ -108,16 +108,33 @@ class SemIfDecider(Decider):
         self,
         candidates: Sequence[ClipCandidate],
         instructions: str | None = None,
+        max_llm_candidates: int = 6,
     ) -> list[ClipCandidate]:
-        """Approach A: Evaluate each candidate window independently using binary SemIf logits."""
+        """Approach A: Evaluate candidate windows using binary SemIf logits with fast pre-filtering."""
         scored: list[ClipCandidate] = []
         user_prompt = instructions or self.settings.job_defaults.focus_prompt
 
-        for cand in candidates:
+        # Determine which candidates qualify for LLM scoring (top candidates by heatmap & hook)
+        eligible_for_llm: set[int] = set()
+        if self.provider is not None and len(candidates) > max_llm_candidates:
+            ranked_indices = sorted(
+                range(len(candidates)),
+                key=lambda idx: (
+                    candidates[idx].heatmap_score * 0.5
+                    + candidates[idx].hook_strength * 0.3
+                    + evaluate_heuristic(candidates[idx].text, candidates[idx].duration) * 0.2
+                ),
+                reverse=True,
+            )
+            eligible_for_llm = set(ranked_indices[:max_llm_candidates])
+        elif self.provider is not None:
+            eligible_for_llm = set(range(len(candidates)))
+
+        for idx, cand in enumerate(candidates):
             score = 0.0
             reason = "Heuristic fallback evaluation"
 
-            if self.provider is not None:
+            if self.provider is not None and idx in eligible_for_llm:
                 try:
                     context = {
                         "Candidate Window": f"[{cand.start:.1f}s - {cand.end:.1f}s] ({cand.duration:.1f}s)",
@@ -142,9 +159,12 @@ class SemIfDecider(Decider):
                     )
                     score = evaluate_heuristic(cand.text, cand.duration)
                     reason = f"Heuristic fallback: {score:.3f}"
-            else:
+            elif self.provider is None:
                 score = evaluate_heuristic(cand.text, cand.duration)
                 reason = f"Heuristic (no provider): {score:.3f}"
+            else:
+                score = evaluate_heuristic(cand.text, cand.duration)
+                reason = f"Heuristic: {score:.3f}"
 
             nc = compute_narrative_completeness_score(cand.text)
             fused_score = _fuse_candidate_score(

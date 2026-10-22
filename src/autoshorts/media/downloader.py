@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -36,13 +37,144 @@ from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
-# Sensible CPU-capped format string: max 1080p height, prefers MP4
+# Section downloads must land as a normal, universally-decodable video+audio pair.
+#
+# Preference order is deliberate:
+#   1. H.264 (avc1) in MP4 over direct HTTP/DASH - decodes everywhere, re-encodes fast,
+#      and is what YouTube Shorts accepts without a second transcode.
+#   2. The same but without pinning the codec (some uploads only ship VP9/AV1).
+#   3. Progressive `best` MP4 as a last resort before anything goes.
+#
+# Every branch pins a paired video+audio OR a progressive muxed format, so a section
+# download can never resolve to an audio-only stream by construction.
 DEFAULT_FORMAT_SPEC = (
+    "bestvideo[height<=1080][vcodec^=avc1][protocol^=http][ext=mp4]"
+    "+bestaudio[protocol^=http][ext=m4a]/"
+    "bestvideo[height<=1080][vcodec^=avc1][ext=mp4]"
+    "+bestaudio[ext=m4a]/"
+    "bestvideo[height<=1080][protocol^=http][ext=mp4]"
+    "+bestaudio[protocol^=http][ext=m4a]/"
+    "bestvideo[height<=1080][protocol^=http]+bestaudio[protocol^=http]/"
     "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
+    "bestvideo[height<=1080]+bestaudio/"
+    "best[height<=1080][protocol^=http][ext=mp4]/"
     "best[height<=1080][ext=mp4]/"
     "best[height<=1080]/"
     "best"
 )
+
+# Validation outcomes for a finished section download.
+SECTION_OK = "ok"
+SECTION_MISSING = "missing_file"
+SECTION_EMPTY = "empty_file"
+SECTION_NO_VIDEO = "missing_video"
+SECTION_NO_AUDIO = "missing_audio"
+SECTION_UNREADABLE = "unreadable"
+
+
+@dataclass(frozen=True)
+class SectionValidation:
+    """Result of inspecting a finished section download before accepting it."""
+
+    ok: bool
+    reason: str
+    has_video: bool = False
+    has_audio: bool = False
+    duration: float = 0.0
+    size_bytes: int = 0
+    detail: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serializable form for stage artifacts and job diagnostics."""
+        return {
+            "ok": self.ok,
+            "reason": self.reason,
+            "has_video": self.has_video,
+            "has_audio": self.has_audio,
+            "duration": round(self.duration, 3),
+            "size_bytes": self.size_bytes,
+            "detail": self.detail,
+        }
+
+
+def validate_section_output(
+    path: Path | str,
+    *,
+    require_video: bool = True,
+    require_audio: bool = True,
+    min_duration_sec: float = 0.5,
+) -> SectionValidation:
+    """Inspect a downloaded section and decide whether it is actually usable.
+
+    A successful ``yt-dlp`` exit code is not proof of a usable cut: the merge step can
+    silently emit audio-only or truncated output. This treats the wrong output class as
+    an explicit failure so the caller can retry or abort instead of shipping it forward.
+    """
+    target = Path(path)
+    if not target.is_file():
+        return SectionValidation(ok=False, reason=SECTION_MISSING, detail="file does not exist")
+
+    size = target.stat().st_size
+    if size <= 0:
+        return SectionValidation(
+            ok=False, reason=SECTION_EMPTY, size_bytes=0, detail="zero-byte output"
+        )
+
+    try:
+        info = probe_video_stream_info(target)
+    except Exception as exc:  # pragma: no cover - probe already swallows internally
+        return SectionValidation(
+            ok=False, reason=SECTION_UNREADABLE, size_bytes=size, detail=str(exc)
+        )
+
+    has_video = bool(info.get("has_video"))
+    has_audio = bool(info.get("has_audio"))
+    duration = float(info.get("duration") or 0.0)
+
+    base = {
+        "has_video": has_video,
+        "has_audio": has_audio,
+        "duration": duration,
+        "size_bytes": size,
+    }
+
+    if require_video and not has_video:
+        return SectionValidation(
+            ok=False,
+            reason=SECTION_NO_VIDEO,
+            detail="output has no video stream (audio-only stream selected)",
+            **base,
+        )
+    if require_audio and not has_audio:
+        return SectionValidation(
+            ok=False,
+            reason=SECTION_NO_AUDIO,
+            detail="output has no audio stream",
+            **base,
+        )
+    if duration and duration < min_duration_sec:
+        return SectionValidation(
+            ok=False,
+            reason=SECTION_UNREADABLE,
+            detail=f"output duration {duration:.2f}s is shorter than {min_duration_sec:.2f}s",
+            **base,
+        )
+
+    return SectionValidation(ok=True, reason=SECTION_OK, detail="video+audio present", **base)
+
+
+def _summarize_attempts(attempts: list[dict[str, Any]]) -> str:
+    """Render a compact, human-readable trace of every download attempt."""
+    lines: list[str] = []
+    for entry in attempts:
+        outcome = entry.get("outcome", "unknown")
+        detail = str(entry.get("detail")
+                     or "").strip().replace("\n", " ")
+        if len(detail) > 240:
+            detail = detail[:240] + "..."
+        client = entry.get("player_client", "default")
+        lines.append(f"  - attempt {entry.get('attempt')} [{client}]: {outcome} {detail}".rstrip())
+    return "\n".join(lines)
 
 
 def format_section_arg(start_sec: float, end_sec: float) -> str:
@@ -272,6 +404,7 @@ class Downloader:
         timeout_sec: float = 180.0,
         max_retries: int = 3,
         retry_delay_sec: float = 1.0,
+        require_audio_stream: bool = True,
     ) -> None:
         """Initialize Downloader.
 
@@ -283,6 +416,8 @@ class Downloader:
             timeout_sec: Subprocess timeout in seconds.
             max_retries: Number of retry attempts on transient network/download failures.
             retry_delay_sec: Initial delay between retries.
+            require_audio_stream: Treat a section without an audio stream as a failed
+                download instead of silently accepting it.
         """
         self.settings = settings or load_config()
         self.yt_dlp_binary = resolve_yt_dlp_binary(yt_dlp_binary)
@@ -290,6 +425,9 @@ class Downloader:
         self.timeout_sec = timeout_sec
         self.max_retries = max(1, max_retries)
         self.retry_delay_sec = max(0.1, retry_delay_sec)
+        self.require_audio_stream = require_audio_stream
+        # Populated by the most recent download_section() call (success or failure).
+        self.last_download_diagnostics: dict[str, Any] = {}
 
         # Resolve cookies from browser: argument overrides config / env
         resolved_cookies = cookies_from_browser
@@ -324,18 +462,25 @@ class Downloader:
         start_sec: float,
         end_sec: float,
         output_path: Path,
+        diagnostics: dict[str, Any] | None = None,
     ) -> Path:
         """Download strictly the requested timestamp slice using yt-dlp --download-sections.
 
         Enforces --force-keyframes-at-cuts and outputs to work/<video_id>/ atomically.
-        Automatically retries with multi-client extractor args
+        Retries with multi-client extractor args
         (--extractor-args "youtube:player_client=android,web") if the primary command fails.
+
+        A zero exit code is treated as necessary but not sufficient: the finished file must
+        contain both a video and an audio stream, otherwise it is discarded, retried, and
+        finally reported as a failure rather than silently passed downstream.
 
         Args:
             url: YouTube watch URL or 11-char ID.
             start_sec: Cut start in seconds.
             end_sec: Cut end in seconds.
             output_path: Destination file path.
+            diagnostics: Optional mutable dict populated with the full attempt trace so
+                callers can persist *why* a download succeeded or failed.
 
         Returns:
             Resolved Path of the saved cut MP4.
@@ -390,10 +535,26 @@ class Downloader:
 
         last_error: Exception | None = None
         total_attempts = max(2, self.max_retries) if self.max_retries == 1 else self.max_retries
+
+        # Every attempt (command failure *and* wrong-output-class) is recorded here so a
+        # final failure can explain exactly what was tried instead of only the last error.
+        attempt_log: list[dict[str, Any]] = []
+
+        def _cleanup_temps() -> None:
+            for f in dest.parent.glob(f".tmp_{unique_token}_*"):
+                try:
+                    f.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
         for attempt in range(1, total_attempts + 1):
             attempt_cmd = list(base_cmd)
+            # First attempt uses yt-dlp's default client selection. Retries widen the
+            # client pool, which is what actually recovers from 403s on section capping.
+            player_client = "default"
             if attempt > 1:
-                attempt_cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
+                player_client = "android,web"
+                attempt_cmd.extend(["--extractor-args", f"youtube:player_client={player_client}"])
             attempt_cmd.append(canonical_url)
 
             try:
@@ -409,37 +570,135 @@ class Downloader:
                         downloaded_file = matching[0]
                         # Atomically rename to requested destination
                         os.replace(downloaded_file, dest)
-                        logger.info("Successfully downloaded section to %s", dest)
-                        return dest
-                    # If temp file wasn't found under pattern, check if destination was directly written
-                    if dest.is_file():
-                        return dest
-                    raise DownloadError(
-                        f"yt-dlp exited with 0 but output file matching {pattern} was not found"
+                    elif not dest.is_file():
+                        attempt_log.append(
+                            {
+                                "attempt": attempt,
+                                "player_client": player_client,
+                                "outcome": "no_output_file",
+                                "detail": f"yt-dlp exited 0 but nothing matched {pattern}",
+                            }
+                        )
+                        raise DownloadError(
+                            f"yt-dlp exited with 0 but output file matching {pattern} was not found"
+                        )
+
+                    # A zero exit code is not proof of usability: verify the output is
+                    # really a video+audio section before accepting it.
+                    validation = validate_section_output(
+                        dest, require_audio=self.require_audio_stream
                     )
+                    if validation.ok:
+                        attempt_log.append(
+                            {
+                                "attempt": attempt,
+                                "player_client": player_client,
+                                "outcome": SECTION_OK,
+                                "detail": validation.detail,
+                                "validation": validation.as_dict(),
+                            }
+                        )
+                        if diagnostics is not None:
+                            diagnostics.clear()
+                            diagnostics.update(
+                                {
+                                    "attempts": attempt_log,
+                                    "attempt_count": attempt,
+                                    "section": section_arg,
+                                    "player_client": player_client,
+                                    "validation": validation.as_dict(),
+                                    "url": canonical_url,
+                                }
+                            )
+                        self.last_download_diagnostics = diagnostics or {}
+                        logger.info(
+                            "Successfully downloaded section to %s (video=%s audio=%s, %.2fs)",
+                            dest,
+                            validation.has_video,
+                            validation.has_audio,
+                            validation.duration,
+                        )
+                        return dest
+
+                    # Wrong output class: retry when attempts remain, otherwise report.
+                    attempt_log.append(
+                        {
+                            "attempt": attempt,
+                            "player_client": player_client,
+                            "outcome": validation.reason,
+                            "detail": validation.detail,
+                            "validation": validation.as_dict(),
+                        }
+                    )
+                    logger.warning(
+                        "yt-dlp produced an unusable section on attempt %d/%d (%s: %s); "
+                        "discarding and retrying",
+                        attempt,
+                        total_attempts,
+                        validation.reason,
+                        validation.detail,
+                    )
+                    dest.unlink(missing_ok=True)
+                    _cleanup_temps()
+                    if attempt < total_attempts:
+                        time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
+                    continue
 
                 err_msg = (proc.stderr or proc.stdout or "").strip()
+                attempt_log.append(
+                    {
+                        "attempt": attempt,
+                        "player_client": player_client,
+                        "outcome": f"yt_dlp_exit_{proc.returncode}",
+                        "detail": err_msg,
+                    }
+                )
                 raise DownloadError(f"yt-dlp exited with code {proc.returncode}: {err_msg}")
 
             except Exception as exc:
                 last_error = exc
+                if not any(e.get("attempt") == attempt for e in attempt_log):
+                    attempt_log.append(
+                        {
+                            "attempt": attempt,
+                            "player_client": player_client,
+                            "outcome": type(exc).__name__,
+                            "detail": str(exc),
+                        }
+                    )
                 logger.warning(
                     "yt-dlp download section attempt %d/%d failed: %s",
                     attempt,
                     total_attempts,
                     exc,
                 )
-                # Cleanup any leftover partial temp files
-                for f in dest.parent.glob(f".tmp_{unique_token}_*"):
-                    try:
-                        f.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                _cleanup_temps()
+                dest.unlink(missing_ok=True)
                 if attempt < total_attempts:
                     time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
 
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update(
+                {
+                    "attempts": attempt_log,
+                    "attempt_count": len(attempt_log),
+                    "section": section_arg,
+                    "url": canonical_url,
+                }
+            )
+        self.last_download_diagnostics = diagnostics or {}
+
+        reasons = {str(e.get("outcome")) for e in attempt_log}
+        hint = ""
+        if SECTION_NO_VIDEO in reasons or SECTION_NO_AUDIO in reasons:
+            hint = (
+                " The selected formats were missing a required stream; the site likely "
+                "only served audio or an incomplete pair for this section."
+            )
         raise DownloadError(
-            f"Failed to download section {section_arg} for {canonical_url} after {total_attempts} attempts: {last_error}"
+            f"Failed to download section {section_arg} for {canonical_url} after "
+            f"{total_attempts} attempt(s).{hint}\nAttempt trace:\n{_summarize_attempts(attempt_log)}"
         ) from last_error
 
     def download_audio_only(
@@ -540,9 +799,16 @@ YtDlpDownloader = Downloader
 
 __all__ = [
     "DEFAULT_FORMAT_SPEC",
+    "SECTION_EMPTY",
+    "SECTION_MISSING",
+    "SECTION_NO_AUDIO",
+    "SECTION_NO_VIDEO",
+    "SECTION_OK",
+    "SECTION_UNREADABLE",
     "DownloadError",
     "Downloader",
     "HeatmapPoint",
+    "SectionValidation",
     "SponsorSegment",
     "VideoChapter",
     "VideoMetadata",
@@ -552,4 +818,5 @@ __all__ = [
     "probe_video_stream_info",
     "run_command_with_cleanup",
     "terminate_process_tree",
+    "validate_section_output",
 ]

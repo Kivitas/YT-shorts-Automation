@@ -19,6 +19,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refreshScheduler();
   refreshJobs();
   refreshBackgrounds();
+  refreshParallelStatus();
   initLogStream();
   checkInitialEdgeAuth();
   checkInitialYouTubeAuth();
@@ -34,6 +35,12 @@ document.addEventListener("DOMContentLoaded", () => {
   initCaptionAnimationTicker();
   initKeyboardShortcuts();
 
+  // Attach click listener for process-queue-btn if present
+  const pqBtn = document.getElementById("process-queue-btn");
+  if (pqBtn) {
+    pqBtn.addEventListener("click", processQueueNow);
+  }
+
   // Initialize Top-Level View Tabs & Autonomous Hubs
   initMainViewTabs();
   initResearchAgent();
@@ -45,13 +52,14 @@ document.addEventListener("DOMContentLoaded", () => {
     tickPtCountdown();
   }, 1000);
 
-  // Auto-refresh metrics, jobs, scheduler, and auth every 4 seconds
+  // Auto-refresh metrics, jobs, scheduler, auth, and parallel status every 4 seconds
   setInterval(() => {
     refreshQuota();
     refreshScheduler();
     refreshJobs();
     refreshBackgrounds();
     refreshSchedulerSlots();
+    refreshParallelStatus();
     checkInitialYouTubeAuth();
   }, 4000);
 });
@@ -453,6 +461,20 @@ function buildStepperHtml(job) {
 // Job Queue, Filter Tabs & Rendering
 // -----------------------------------------------------------------------------
 
+async function refreshParallelStatus() {
+  try {
+    const res = await fetch("/api/jobs/parallel-status");
+    if (!res.ok) return;
+    const data = await res.json();
+    const badge = document.getElementById("parallel-workers-badge");
+    if (badge) {
+      badge.textContent = `⚡ ${data.active_count ?? 0}/${data.max_workers ?? 3} Workers`;
+    }
+  } catch (err) {
+    console.debug("Parallel status error:", err);
+  }
+}
+
 async function refreshJobs() {
   try {
     const res = await fetch("/api/jobs");
@@ -463,6 +485,7 @@ async function refreshJobs() {
   } catch (err) {
     console.debug("Jobs refresh error:", err);
   }
+  refreshParallelStatus();
 }
 
 function setJobFilter(filter) {
@@ -605,8 +628,30 @@ function renderJobs(jobs) {
 }
 
 // -----------------------------------------------------------------------------
-// Batch Actions: Retry Failed & Clean Completed
+// Batch Actions: Process Queue, Retry Failed & Clean Completed
 // -----------------------------------------------------------------------------
+
+async function processQueueNow() {
+  const btn = document.getElementById("process-queue-btn");
+  if (btn) btn.disabled = true;
+  showToast("⚡ Processing queue with parallel workers...", "info");
+  try {
+    const res = await fetch("/api/jobs/process-queue", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      showToast(`⚡ Dispatched ${data.dispatched_count || 0} queued job(s)!`, "success");
+      refreshJobs();
+      refreshParallelStatus();
+      return;
+    }
+    const err = await res.json();
+    showToast("Process queue failed: " + (err.detail || "Server error"), "error");
+  } catch (err) {
+    showToast("Network error processing queue: " + err, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 async function batchRetryFailed() {
   const failedJobs = _jobsCache.filter(j => j.status === "FAILED");

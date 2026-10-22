@@ -143,10 +143,17 @@ def test_encoder_info_get_ffmpeg_args():
 
 
 def test_dopamine_presets():
-    """Verify feature flags for low, medium, and high dopamine presets."""
+    """Verify feature flags for none, low, medium, high, ultra, and extreme dopamine presets."""
+    none = get_dopamine_preset("none")
     low = get_dopamine_preset("low")
     med = get_dopamine_preset("medium")
     high = get_dopamine_preset("high")
+    ultra = get_dopamine_preset("ultra")
+    extreme = get_dopamine_preset("extreme")
+
+    assert none.enable_progress_bar is False
+    assert none.enable_loudnorm is False
+    assert none.enable_zoom_punch_ins is False
 
     assert low.enable_progress_bar is False
     assert low.enable_loudnorm is False
@@ -159,6 +166,16 @@ def test_dopamine_presets():
     assert high.enable_zoom_punch_ins is True
     assert high.enable_music_ducking is True
     assert high.enable_sfx is True
+
+    assert ultra.enable_zoom_punch_ins is True
+    assert ultra.enable_sfx is True
+    assert ultra.enable_music_ducking is True
+    assert ultra.enable_split_separator is True
+
+    assert extreme.enable_zoom_punch_ins is True
+    assert extreme.enable_sfx is True
+    assert extreme.enable_music_ducking is True
+    assert extreme.enable_split_separator is True
 
 
 def test_build_progress_bar_filter():
@@ -537,7 +554,9 @@ def test_pick_background_asset_fallback(tmp_path: Path):
     """Verify pick_background_asset returns None when directory is empty."""
     empty_assets = tmp_path / "assets"
     empty_assets.mkdir(parents=True)
-    video_path, offset = pick_background_asset(category="minecraft", assets_dir=empty_assets)
+    video_path, offset = pick_background_asset(
+        category="minecraft", assets_dir=empty_assets, auto_fetch=False
+    )
     assert video_path is None
     assert offset == 0.0
 
@@ -1081,5 +1100,291 @@ def test_explicit_bgm_path_alias_and_job_ducking(tmp_path: Path):
     assert str(bgm_file) in " ".join(captured_cmd)
     assert "sidechaincompress=" in filtergraph
     assert "volume=0.33" in filtergraph
+
+
+def test_compose_source_clip_has_video_false(tmp_path: Path):
+    """Verify compose() succeeds when source_clip_has_video=False without 'matches no streams' error."""
+    src_audio = tmp_path / "audio_only_source.mp3"
+    src_audio.write_bytes(b"dummy audio content")
+
+    sub_file = tmp_path / "subs.ass"
+    sub_file.write_text("[Script Info]\n", encoding="utf-8")
+
+    bg_video = tmp_path / "gameplay_bg.mp4"
+    bg_video.write_bytes(b"dummy bg video content")
+
+    out_file = tmp_path / "output_audio_only.mp4"
+
+    comp = FFmpegCompositor()
+    captured_cmd: list[str] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"dummy output mp4")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=25.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+        patch(
+            "autoshorts.media.compositor.has_video_stream",
+            side_effect=lambda p: str(p) == str(bg_video.resolve()),
+        ),
+    ):
+        result = comp.compose(
+            job_id="job_audio_only_source",
+            source_clip=src_audio,
+            edl=None,
+            background_path=bg_video,
+            subtitles_path=sub_file,
+            output_path=out_file,
+            layout_mode="split_50_50",
+            dopamine_level="high",
+        )
+
+    assert result == out_file
+    assert out_file.is_file()
+
+    # Verify filtergraph does NOT reference [0:v] and scales [1:v] as full canvas
+    fg_idx = captured_cmd.index("-filter_complex")
+    filtergraph = captured_cmd[fg_idx + 1]
+    assert "[0:v]" not in filtergraph
+    assert (
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30[bg_full]"
+        in filtergraph
+    )
+    assert "[bg_full]" in filtergraph
+    assert "subtitles=" in filtergraph
+    assert "[master_a]" in captured_cmd
+
+
+def test_split_screen_separator_line_rendering():
+    """Verify visual separator divider line rendering for split_50_50 and pip_gameplay."""
+    from autoshorts.media.dopamine_effects import build_complex_filtergraph, get_dopamine_preset
+
+    # 1. split_50_50 with drawbox neon separator
+    fg_drawbox, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=get_dopamine_preset("medium"),
+        layout_mode="split_50_50",
+        split_separator="drawbox",
+    )
+    assert "drawbox=x=0:y=958:w=iw:h=4:color=0x00E5FF@0.9:t=fill[stacked_sep]" in fg_drawbox
+
+    # 2. split_50_50 with dark border separator
+    fg_dark, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=get_dopamine_preset("medium"),
+        layout_mode="split_50_50",
+        split_separator="dark",
+    )
+    assert "drawbox=x=0:y=958:w=iw:h=4:color=black@0.85:t=fill[stacked_sep]" in fg_dark
+
+    # 3. pip_gameplay with border separator divider
+    fg_pip_sep, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=get_dopamine_preset("high"),
+        layout_mode="pip_gameplay",
+        split_separator="drawbox",
+    )
+    assert (
+        "[pip_scaled]drawbox=x=0:y=0:w=iw:h=ih:color=0x00E5FF@0.9:t=4[pip_bordered]"
+        in fg_pip_sep
+    )
+    assert "[pip_bordered]overlay=" in fg_pip_sep
+
+    # 4. Ultra preset automatically enables split separator
+    ultra = get_dopamine_preset("ultra")
+    fg_ultra, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=ultra,
+        layout_mode="split_50_50",
+        split_separator="none",  # Defaults to preset style 'glow'
+    )
+    assert "[sep_halo]overlay=" in fg_ultra
+    assert "[sep_core]overlay=" in fg_ultra
+
+
+def test_preset_rapid_subtitle_integration(tmp_path: Path):
+    """Verify rapid subtitle preset generation and its burn-in integration in FFmpeg compositor."""
+    from autoshorts.media.ass_styler import TimedWord, build_ass_script
+
+    words = [
+        TimedWord(word="UNBELIEVABLE", start=0.5, end=1.0),
+        TimedWord(word="SPEED", start=1.0, end=1.5),
+        TimedWord(word="BOOM", start=1.5, end=2.0),
+    ]
+    # Build rapid subtitle script
+    ass_content = build_ass_script(words, style_preset="rapid")
+    assert "Montserrat ExtraBold,84" in ass_content
+    assert "&H0000FFFF" in ass_content  # Active Electric Yellow
+
+    subs_file = tmp_path / "rapid_subs.ass"
+    subs_file.write_text(ass_content, encoding="utf-8")
+
+    src_video = tmp_path / "src.mp4"
+    src_video.write_bytes(b"dummy source")
+    out_video = tmp_path / "out_rapid.mp4"
+
+    comp = FFmpegCompositor()
+    captured_cmd: list[str] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        captured_cmd = list(cmd)
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"rendered rapid short")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=20.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+        patch("autoshorts.media.compositor.has_video_stream", return_value=True),
+    ):
+        result = comp.compose(
+            job_id="job_rapid_subs",
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=subs_file,
+            output_path=out_video,
+            dopamine_level="high",
+        )
+
+    assert result == out_video
+    assert out_video.is_file()
+    cmd_str = " ".join(captured_cmd)
+    assert "subtitles=" in cmd_str
+    assert "rapid_subs.ass" in cmd_str
+
+
+def test_hardware_encoder_format_fallback(tmp_path: Path):
+    """Verify pixel format detection fallback (yuv420p -> nv12) and runtime encoder CPU fallback."""
+    from autoshorts.media.compositor import detect_encoder_pixel_format
+    from autoshorts.media.encoder_probe import EncoderInfo
+
+    # 1. detect_encoder_pixel_format: when yuv420p fails but nv12 succeeds -> returns "nv12"
+    def mock_pix_fmt_run(cmd, *args, **kwargs):
+        mock_proc = MagicMock()
+        # Fail if yuv420p is requested, succeed if nv12 is requested
+        if "-pix_fmt" in cmd and cmd[cmd.index("-pix_fmt") + 1] == "yuv420p":
+            mock_proc.returncode = 1
+        else:
+            mock_proc.returncode = 0
+        return mock_proc
+
+    with patch("subprocess.run", side_effect=mock_pix_fmt_run):
+        detected_fmt = detect_encoder_pixel_format("h264_qsv", extra_args=["-look_ahead", "0"])
+        assert detected_fmt == "nv12"
+
+    # 2. compose() uses detected nv12 pixel format for hardware encoder
+    src_video = tmp_path / "src_hw.mp4"
+    src_video.write_bytes(b"dummy source")
+    sub_file = tmp_path / "subs_hw.ass"
+    sub_file.write_text("[Script Info]\n", encoding="utf-8")
+    out_video = tmp_path / "out_hw.mp4"
+
+    qsv_encoder = EncoderInfo(
+        codec="h264_qsv",
+        extra_args=["-global_quality", "25"],
+        is_hardware_accelerated=True,
+        verified=True,
+    )
+
+    captured_cmds: list[list[str]] = []
+
+    def mock_hw_run(cmd, *args, **kwargs):
+        captured_cmds.append(list(cmd))
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"rendered hw short")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    comp = FFmpegCompositor()
+    with (
+        patch.object(comp, "_get_encoder", return_value=qsv_encoder),
+        patch("autoshorts.media.compositor.detect_encoder_pixel_format", return_value="nv12"),
+        patch("subprocess.run", side_effect=mock_hw_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=20.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+        patch("autoshorts.media.compositor.has_video_stream", return_value=True),
+    ):
+        res = comp.compose(
+            job_id="job_qsv_nv12",
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=sub_file,
+            output_path=out_video,
+        )
+
+    assert res == out_video
+    final_cmd = captured_cmds[-1]
+    assert "-c:v" in final_cmd
+    assert "h264_qsv" in final_cmd
+    assert "-pix_fmt" in final_cmd
+    assert final_cmd[final_cmd.index("-pix_fmt") + 1] == "nv12"
+
+    # 3. compose() retries with CPU fallback when hardware encoder fails at runtime
+    out_video_fallback = tmp_path / "out_hw_fallback.mp4"
+    calls_count = 0
+
+    called_cmds = []
+
+    def mock_hw_failure_then_cpu_success(cmd, *args, **kwargs):
+        nonlocal calls_count
+        calls_count += 1
+        called_cmds.append(list(cmd))
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        if "h264_qsv" in cmd:
+            mock_proc.returncode = -1  # Hardware abort
+            mock_proc.stderr = "QSV device init failed"
+            return mock_proc
+        # Fallback CPU command
+        target_tmp = cmd[-1]
+        Path(target_tmp).write_bytes(b"rendered cpu short")
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with (
+        patch.object(comp, "_get_encoder", return_value=qsv_encoder),
+        patch("autoshorts.media.compositor.detect_encoder_pixel_format", return_value="yuv420p"),
+        patch("subprocess.run", side_effect=mock_hw_failure_then_cpu_success),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=20.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+        patch("autoshorts.media.compositor.has_video_stream", return_value=True),
+    ):
+        res_fb = comp.compose(
+            job_id="job_hw_fail",
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=sub_file,
+            output_path=out_video_fallback,
+        )
+
+    assert res_fb == out_video_fallback
+    ffmpeg_calls = [c for c in called_cmds if "ffmpeg" in str(c[0]).lower()]
+    assert len(ffmpeg_calls) == 2
+    assert "h264_qsv" in ffmpeg_calls[0]
+    assert "libx264" in ffmpeg_calls[1]
 
 

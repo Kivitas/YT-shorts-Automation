@@ -154,9 +154,15 @@ def test_local_provider_single_forward_pass_scoring():
 
 
 def test_gemini_provider_missing_key(monkeypatch):
-    """Verify GeminiProvider raises when API key is missing."""
+    """Verify GeminiProvider raises when API key is missing.
+
+    The key must be neutralised at the settings accessor, not just in os.environ: Settings
+    is backed by a .env file, so a developer machine with a real GEMINI_API_KEY in .env
+    would otherwise make this test assert nothing.
+    """
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     settings = Settings(gemini_api_key=None)
+    monkeypatch.setattr(Settings, "get_gemini_api_key_str", lambda self: None)
     provider = GeminiProvider(api_key=None, settings=settings)
     with pytest.raises(ProviderError) as exc_info:
         provider.complete("Hello")

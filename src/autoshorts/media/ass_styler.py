@@ -218,6 +218,18 @@ CAPTION_PRESETS: dict[str, dict[str, Any]] = {
         "outline": 2,
         "shadow": 3,
     },
+    "rapid": {
+        "font_name": "Montserrat ExtraBold",
+        "font_size": 84,
+        "active_color": "&H0000FFFF",  # Neon Electric Yellow #FFFF00 (BGR)
+        "emphasis_color": "&H0000FF66",  # Intense Spring Green #66FF00 (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": "&H00000000",  # 10px Deep Black stroke
+        "back_color": "&H80000000",
+        "border_style": 1,
+        "outline": 10,
+        "shadow": 4,
+    },
 }
 
 
@@ -587,9 +599,12 @@ def build_ass_script(
             total_duration_sec = max(1.0, total_duration_sec - total_cut_dur)
 
     # Clean and chunk the words
+    wpb = kwargs.get("words_per_burst", (2 if preset_name == "rapid" else config.words_per_burst))
+    min_w = 1 if (preset_name == "rapid" or wpb <= 2) else 2
     chunks = chunk_words(
         words,
-        words_per_burst=config.words_per_burst,
+        words_per_burst=wpb,
+        min_words=min_w,
     )
 
     # Calculate total duration if not provided
@@ -688,7 +703,13 @@ def build_ass_script(
                     color_tag = resolved_emphasis_color if emphasis else resolved_active_color
 
                     # Preset-specific animation and scale pops
-                    if preset_name == "hormozi":
+                    if preset_name == "rapid":
+                        scale_val = 135 if emphasis else 122
+                        word_line = (
+                            f"{{\\t(0,45,\\fscx{scale_val}\\fscy{scale_val})"
+                            f"\\t(45,90,\\fscx100\\fscy100)\\c{color_tag}&}}{w_formatted}"
+                        )
+                    elif preset_name == "hormozi":
                         scale_val = 138 if emphasis else 130
                         word_line = (
                             f"{{\\t(0,70,\\fscx{scale_val}\\fscy{scale_val})"

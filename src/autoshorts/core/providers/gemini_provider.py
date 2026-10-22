@@ -241,7 +241,7 @@ class GeminiProvider(BaseLLMProvider):
         url: str,
         params: dict[str, str],
         client: httpx.Client,
-        votes: int = 3,
+        votes: int = 1,
     ) -> dict[str, float]:
         """Perform constrained single-letter voting with temperature 0 and majority tallying."""
         allowed_keys = list(options.keys())

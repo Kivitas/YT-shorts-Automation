@@ -80,10 +80,13 @@ def create_empty_edl(
     title: str = "",
     hook: str = "",
     background: str = "minecraft",
+    fallback_reason: str | None = None,
 ) -> EditDecisionList:
     """Generate a deterministic empty Edit Decision List with no micro-edits.
 
     Used as an unyielding fallback if multimodal LLM calls or schema repair fail.
+    The result is tagged ``source="empty_fallback"`` so downstream stages and the
+    dashboard can tell a placeholder plan from a deliberately edit-free real plan.
     """
     safe_duration = max(5.0, float(clip_duration))
     safe_title = (title.strip() if title else "Viral Insight #Shorts")[:60]
@@ -100,6 +103,8 @@ def create_empty_edl(
         recommended_title=safe_title,
         recommended_hook=safe_hook,
         background_style_recommendation=bg_style,  # type: ignore[arg-type]
+        source="empty_fallback",
+        fallback_reason=fallback_reason,
     )
 
 
@@ -223,4 +228,7 @@ def clamp_edl(edl: EditDecisionList, clip_duration: float) -> EditDecisionList:
         recommended_title=title,
         recommended_hook=hook,
         background_style_recommendation=bg_style,
+        # Clamping must never launder the plan's provenance.
+        source=edl.source,
+        fallback_reason=edl.fallback_reason,
     )

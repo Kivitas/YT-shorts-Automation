@@ -387,6 +387,7 @@
                   <option value="minimal">Clean Minimalist (Emerald)</option>
                   <option value="cyberpunk">Cyberpunk (Cyan/Magenta Pulse)</option>
                   <option value="cinematic">Cinematic (Warm Cream/Gold)</option>
+                  <option value="rapid">Rapid Kinetic (Montserrat Pop)</option>
                 </select>
               </div>
 
@@ -757,7 +758,10 @@
         <div class="card queue-card">
           <div class="card-title">
             <span>📋 Job Queue &amp; Live Status</span>
-            <button class="btn btn-icon btn-sm" onclick="refreshDashboard()" title="Refresh">🔄</button>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span id="parallel-workers-badge" class="badge" title="Active parallel rendering threads">⚡ 0/3 Workers</span>
+              <button class="btn btn-icon btn-sm" onclick="refreshDashboard()" title="Refresh">🔄</button>
+            </div>
           </div>
 
           <!-- Queue Filter Tabs & Batch Actions -->
@@ -780,6 +784,9 @@
               </button>
             </div>
             <div class="batch-actions-group">
+              <button id="process-queue-btn" class="btn btn-secondary btn-xs" onclick="processQueueNow()" title="Process queued jobs immediately with parallel workers">
+                ⚡ Process Queue Now
+              </button>
               <button id="batch-retry-btn" class="btn btn-secondary btn-xs" onclick="batchRetryFailed()" title="Retry all failed jobs">
                 🔄 Retry Failed
               </button>
@@ -1191,6 +1198,7 @@
                   <option value="minimal">Clean Minimalist</option>
                   <option value="cyberpunk">Cyberpunk Dual Pulse</option>
                   <option value="cinematic">Cinematic Cream/Gold</option>
+                  <option value="rapid">Rapid Kinetic (Montserrat Pop)</option>
                 </select>
               </div>
 
@@ -1944,6 +1952,7 @@
                   <option value="minimal">minimal (Clean Minimalist Emerald)</option>
                   <option value="cyberpunk">cyberpunk (Cyan/Magenta Pulse)</option>
                   <option value="cinematic">cinematic (Warm Cream/Gold)</option>
+                  <option value="rapid">rapid (Rapid Kinetic Montserrat Pop)</option>
                 </select>
               </div>
 
@@ -2295,6 +2304,7 @@
                   <option value="minimal">Clean Minimalist (Emerald)</option>
                   <option value="cyberpunk">Cyberpunk (Cyan/Magenta Pulse)</option>
                   <option value="cinematic">Cinematic (Warm Cream/Gold)</option>
+                  <option value="rapid">Rapid Kinetic (Montserrat Pop)</option>
                 </select>
               </div>
 

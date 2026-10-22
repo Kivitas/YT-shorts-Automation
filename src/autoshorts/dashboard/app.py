@@ -149,8 +149,9 @@ async def scheduler_worker(
     stop_event: asyncio.Event,
     interval_sec: float = 15.0,
     inbox_watcher: Any | None = None,
+    parallel_runner: Any | None = None,
 ) -> None:
-    """Async background worker that calls pipe.scheduler.run_tick() and polls inbox every interval_sec."""
+    """Async background worker that calls pipe.scheduler.run_tick(), polls queued jobs, and polls inbox."""
     logger.info("Scheduler background worker started (interval=%.1fs)", interval_sec)
     while not stop_event.is_set():
         try:
@@ -158,6 +159,11 @@ async def scheduler_worker(
                 await asyncio.to_thread(pipe.scheduler.run_tick)
         except Exception as e:
             logger.warning("Error during scheduler background run_tick: %s", e)
+        try:
+            if parallel_runner is not None and hasattr(parallel_runner, "poll_queued_jobs"):
+                await asyncio.to_thread(parallel_runner.poll_queued_jobs)
+        except Exception as e:
+            logger.warning("Error during parallel queue polling: %s", e)
         try:
             if inbox_watcher is not None and hasattr(inbox_watcher, "poll_once"):
                 await asyncio.to_thread(inbox_watcher.poll_once)
@@ -242,6 +248,18 @@ DEFAULT_STUDIO_PROFILES = [
         "color_grading": "crisp",
         "dopamine_level": "medium",
         "background_category": "minecraft",
+        "subtitle_position": "center",
+        "text_transform": "uppercase",
+    },
+    {
+        "id": "rapid_kinetic",
+        "name": "⚡ Rapid Kinetic",
+        "description": "High-velocity word-by-word kinetic captions with extreme dopamine pacing",
+        "layout_mode": "split_50_50",
+        "style_preset": "rapid",
+        "color_grading": "vibrant",
+        "dopamine_level": "extreme",
+        "background_category": "subway",
         "subtitle_position": "center",
         "text_transform": "uppercase",
     },
@@ -541,10 +559,19 @@ def create_app(
     state_mgr = state_manager or (pipeline.state_manager if pipeline else StateManager())
     pipe = pipeline or ShortsPipeline(config=cfg, state_manager=state_mgr)
 
+    from autoshorts.core.parallel_runner import ParallelJobExecutor
+
+    parallel_runner = ParallelJobExecutor(
+        pipeline=pipe,
+        state_manager=state_mgr,
+        max_workers=getattr(cfg.pipeline, "concurrency", None) if hasattr(cfg, "pipeline") else None,
+    )
+
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI):
         stop_event = asyncio.Event()
         worker_task = None
+        app_instance.state.parallel_runner = parallel_runner
 
         watcher = inbox_watcher
         if watcher is None:
@@ -572,6 +599,7 @@ def create_app(
                     stop_event,
                     interval_sec=scheduler_interval_sec,
                     inbox_watcher=watcher,
+                    parallel_runner=parallel_runner,
                 )
             )
             app_instance.state.scheduler_worker_task = worker_task
@@ -586,6 +614,10 @@ def create_app(
                     await worker_task
                 except (asyncio.CancelledError, Exception):
                     pass
+            try:
+                parallel_runner.shutdown(wait=False)
+            except Exception as shutdown_err:
+                logger.debug("Parallel runner shutdown error: %s", shutdown_err)
 
     app = FastAPI(
         title="AutoShorts Dashboard",
@@ -772,21 +804,42 @@ def create_app(
                     set_job_attr(job, field_name, val)
             state_mgr.save_job(job)
 
-        # Trigger processing in background thread
+        # Trigger processing via parallel runner
         for job in jobs:
-            background_tasks.add_task(
-                pipe.process_job,
+            parallel_runner.submit_job(
                 job_or_id=job,
                 auto_upload=req.auto_upload,
                 immediate_upload=req.immediate_upload,
                 background_category=req.background,
                 dopamine_level=req.dopamine,
+                style_preset=req.style_preset,
+                privacy_status=req.privacy_status,
             )
 
         return {
             "success": True,
             "count": len(jobs),
             "jobs": [j.model_dump() for j in jobs],
+        }
+
+    @app.post("/api/jobs/process-queue")
+    async def process_queue() -> dict[str, Any]:
+        """Manually trigger queue scan and dispatch queued jobs to available worker threads."""
+        dispatched = await asyncio.to_thread(parallel_runner.poll_queued_jobs)
+        return {
+            "success": True,
+            "dispatched_count": len(dispatched),
+            "dispatched_job_ids": dispatched,
+            "active_count": parallel_runner.active_count,
+        }
+
+    @app.get("/api/jobs/parallel-status")
+    async def parallel_status() -> dict[str, Any]:
+        """Return active worker pool telemetry."""
+        return {
+            "active_count": parallel_runner.active_count,
+            "max_workers": parallel_runner.max_workers,
+            "active_job_ids": list(parallel_runner.active_job_ids),
         }
 
     @app.get("/api/jobs")
@@ -1274,7 +1327,7 @@ def create_app(
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
-        background_tasks.add_task(pipe.retry_job, job_id=job_id)
+        parallel_runner.submit_job(job_id)
         return {"success": True, "message": f"Job {job_id} scheduled for retry."}
 
     @app.post("/api/jobs/{job_id}/upload-now")
@@ -1330,7 +1383,7 @@ def create_app(
         """Retry all failed jobs in background worker tasks."""
         failed_jobs = state_mgr.list_jobs(status=JobStatus.FAILED)
         for j in failed_jobs:
-            background_tasks.add_task(pipe.retry_job, job_id=j.id)
+            parallel_runner.submit_job(j.id)
         return {
             "success": True,
             "count": len(failed_jobs),
