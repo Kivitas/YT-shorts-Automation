@@ -83,6 +83,8 @@ class PlaywrightStudioUploader:
         self.channel = channel
         self.headless = headless
         self.context_factory = context_factory
+        # Set by verify(); Studio results are DOM-derived, never API-confirmed.
+        self.last_verification_kind: str = "unverified"
 
     def _get_playwright(self) -> Any:
         """Lazy import playwright sync API."""
@@ -793,13 +795,27 @@ class PlaywrightStudioUploader:
                     logger.warning("Error clicking done/publish button: %s", ex)
 
                 ret_privacy = "scheduled" if is_scheduled else effective_privacy
+                # Studio automation is a WEAKER success signal than the Data API.
+                # The video id (and even its creation) is inferred by scraping the Studio
+                # DOM, so this must never be reported as YouTube-confirmed.
+                logger.warning(
+                    "Job upload for %s completed via YouTube Studio automation; the video id "
+                    "was parsed from the Studio DOM, not confirmed by the Data API.",
+                    video_id,
+                )
                 return UploadResult(
                     video_id=video_id,
                     url=f"https://youtube.com/shorts/{video_id}",
-                    status="uploaded",
-                    verified=True,
+                    status="uploaded_unconfirmed",
+                    verified=False,
                     privacy_status=ret_privacy,
                     quota_spent=0,
+                    verification_kind="studio_dom",
+                    verification_note=(
+                        "Uploaded through Studio browser automation. Video id and upload state "
+                        "were read from the Studio DOM, not confirmed by videos.list. Verify "
+                        "manually in YouTube Studio before treating this as published."
+                    ),
                     raw_response={
                         "mode": "studio_playwright",
                         "channel": self.channel,
@@ -835,6 +851,7 @@ class PlaywrightStudioUploader:
         """
         if not video_id:
             return False
+        self.last_verification_kind = "unverified"
         try:
             with self._launch_browser_session(headless=True) as (_context, page):
                 resp = page.goto(
@@ -853,7 +870,12 @@ class PlaywrightStudioUploader:
                     page.content() if hasattr(page, "content") and callable(page.content) else ""
                 )
                 content = raw_content if isinstance(raw_content, str) else ""
-                return not ("Video unavailable" in title or "Video unavailable" in content)
+                reachable = not ("Video unavailable" in title or "Video unavailable" in content)
+                if reachable:
+                    # Still DOM-derived: the Shorts page loaded, but this is not an API
+                    # confirmation of processing status or visibility.
+                    self.last_verification_kind = "studio_dom"
+                return reachable
         except Exception as e:
             logger.warning("Studio video verification error for %s: %s", video_id, e)
             return False

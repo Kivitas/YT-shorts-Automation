@@ -234,6 +234,31 @@ class EditDecisionList(BaseModel):
 
 VerificationKind = Literal["api_confirmed", "studio_dom", "local_export", "unverified"]
 
+VERIFICATION_KINDS: frozenset[str] = frozenset(
+    {"api_confirmed", "studio_dom", "local_export", "unverified"}
+)
+
+# Only these kinds constitute a positive confirmation of an upload.
+CONFIRMING_VERIFICATION_KINDS: frozenset[str] = frozenset({"api_confirmed", "local_export"})
+
+
+def resolve_verification(
+    declared_kind: Any,
+    verified: bool,
+) -> tuple[str, bool]:
+    """Resolve an uploader's reported verification into (kind, confirmed).
+
+    ``verified`` must mean "positively confirmed": a DOM-scraped Studio result never
+    counts. Uploaders that do not declare a kind (custom implementations, test doubles)
+    keep the historic behaviour of trusting their own boolean.
+    """
+    kind = declared_kind if isinstance(declared_kind, str) else ""
+    if kind not in VERIFICATION_KINDS:
+        kind = "api_confirmed" if verified else "unverified"
+    if not verified:
+        return "unverified", False
+    return kind, kind in CONFIRMING_VERIFICATION_KINDS
+
 
 class UploadResult(BaseModel):
     """Outcome of YouTube video upload and verification."""
@@ -392,7 +417,9 @@ class Job(BaseModel):
 
 
 __all__ = [
+    "CONFIRMING_VERIFICATION_KINDS",
     "VALID_TRANSITIONS",
+    "VERIFICATION_KINDS",
     "CandidateClip",
     "CaptionCorrection",
     "ChannelProfile",
@@ -411,4 +438,5 @@ __all__ = [
     "VideoMetadata",
     "ZoomPunchIn",
     "can_transition",
+    "resolve_verification",
 ]

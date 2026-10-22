@@ -598,19 +598,19 @@ class Downloader:
                                 "validation": validation.as_dict(),
                             }
                         )
+                        trace = {
+                            "attempts": attempt_log,
+                            "attempt_count": attempt,
+                            "section": section_arg,
+                            "player_client": player_client,
+                            "validation": validation.as_dict(),
+                            "url": canonical_url,
+                            "ok": True,
+                        }
                         if diagnostics is not None:
                             diagnostics.clear()
-                            diagnostics.update(
-                                {
-                                    "attempts": attempt_log,
-                                    "attempt_count": attempt,
-                                    "section": section_arg,
-                                    "player_client": player_client,
-                                    "validation": validation.as_dict(),
-                                    "url": canonical_url,
-                                }
-                            )
-                        self.last_download_diagnostics = diagnostics or {}
+                            diagnostics.update(trace)
+                        self.last_download_diagnostics = trace
                         logger.info(
                             "Successfully downloaded section to %s (video=%s audio=%s, %.2fs)",
                             dest,
@@ -677,17 +677,17 @@ class Downloader:
                 if attempt < total_attempts:
                     time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
 
+        failure_trace = {
+            "attempts": attempt_log,
+            "attempt_count": len(attempt_log),
+            "section": section_arg,
+            "url": canonical_url,
+            "ok": False,
+        }
         if diagnostics is not None:
             diagnostics.clear()
-            diagnostics.update(
-                {
-                    "attempts": attempt_log,
-                    "attempt_count": len(attempt_log),
-                    "section": section_arg,
-                    "url": canonical_url,
-                }
-            )
-        self.last_download_diagnostics = diagnostics or {}
+            diagnostics.update(failure_trace)
+        self.last_download_diagnostics = failure_trace
 
         reasons = {str(e.get("outcome")) for e in attempt_log}
         hint = ""

@@ -48,6 +48,7 @@ from autoshorts.core.models import (
     JumpCut,
     UploadResult,
     VideoMetadata,
+    resolve_verification,
 )
 from autoshorts.core.paths import get_output_dir, get_work_dir
 from autoshorts.core.providers import get_provider
@@ -879,26 +880,17 @@ class ShortsPipeline:
             else:
                 if job.origin_kind is None:
                     job.origin_kind = "youtube"
-                download_diagnostics: dict[str, Any] = {}
-                dl_kwargs: dict[str, Any] = {
-                    "url": job.source_url,
-                    "start_sec": sel.candidate.start,
-                    "end_sec": sel.candidate.end,
-                    "output_path": raw_cut_path,
-                }
-                # Only pass the diagnostics sink to downloaders that accept it, so
-                # protocol-compatible third-party/mock downloaders keep working.
-                try:
-                    dl_sig = inspect.signature(self.downloader.download_section)
-                    dl_has_varkw = any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD
-                        for p in dl_sig.parameters.values()
-                    )
-                    if dl_has_varkw or "diagnostics" in dl_sig.parameters:
-                        dl_kwargs["diagnostics"] = download_diagnostics
-                except (TypeError, ValueError):  # pragma: no cover - C callables
-                    pass
-                self.downloader.download_section(**dl_kwargs)
+                # Call through the unchanged Downloader protocol, then read the attempt
+                # trace the implementation records on itself (absent on stubs).
+                self.downloader.download_section(
+                    url=job.source_url,
+                    start_sec=sel.candidate.start,
+                    end_sec=sel.candidate.end,
+                    output_path=raw_cut_path,
+                )
+                download_diagnostics: dict[str, Any] = dict(
+                    getattr(self.downloader, "last_download_diagnostics", None) or {}
+                )
                 job.raw_video_path = str(raw_cut_path)
                 job.record_diagnostic(
                     "download",
@@ -958,23 +950,80 @@ class ShortsPipeline:
             if edl.recommended_hook:
                 sel.hook_text = edl.recommended_hook
 
+            # Provenance: is this a real plan, a degraded plan, or a placeholder?
+            # Values are type-checked so a stubbed planner cannot leak a non-serializable
+            # object into the stage artifacts.
+            raw_source = getattr(self.edit_planner, "last_source", None)
+            edl_source_attr = getattr(edl, "source", None)
+            planner_source = (
+                raw_source
+                if isinstance(raw_source, str)
+                else (edl_source_attr if isinstance(edl_source_attr, str) else "unknown")
+            )
+            raw_reason = getattr(self.edit_planner, "last_fallback_reason", None)
+            edl_reason_attr = getattr(edl, "fallback_reason", None)
+            planner_reason = (
+                raw_reason
+                if isinstance(raw_reason, str)
+                else (edl_reason_attr if isinstance(edl_reason_attr, str) else None)
+            )
+            placeholder = (
+                getattr(edl, "is_placeholder", False) is True
+                or planner_source == "empty_fallback"
+            )
+            has_micro_edits = getattr(edl, "has_micro_edits", None) is True
+            job.record_diagnostic(
+                "editing",
+                edl_source=planner_source,
+                edl_fallback_reason=planner_reason,
+                edl_placeholder=placeholder,
+                has_micro_edits=has_micro_edits,
+                jump_cut_count=len(edl.jump_cuts),
+                punch_in_count=len(edl.zoom_punch_ins),
+                fallback=placeholder or planner_source == "transcript",
+            )
             self.state_manager.record_stage_complete(
                 stage_id,
                 status="COMPLETED",
-                artifacts={"edl": json.loads(edl.model_dump_json())},
+                artifacts={
+                    "edl": json.loads(edl.model_dump_json()),
+                    "edl_source": planner_source,
+                    "edl_placeholder": placeholder,
+                },
             )
             self.state_manager.save_job(job)
-            logger.info(
-                "Job %s: Multimodal EDL planned with %d jump cut(s) and %d punch-in(s).",
-                job.id,
-                len(edl.jump_cuts),
-                len(edl.zoom_punch_ins),
-            )
+            if placeholder:
+                logger.warning(
+                    "Job %s: Edit plan is a PLACEHOLDER (no micro-edits) - reason: %s",
+                    job.id,
+                    planner_reason,
+                )
+            else:
+                logger.info(
+                    "Job %s: EDL planned (%s) with %d jump cut(s) and %d punch-in(s).",
+                    job.id,
+                    planner_source,
+                    len(edl.jump_cuts),
+                    len(edl.zoom_punch_ins),
+                )
         except Exception as e:
+            reason = f"edit planning raised: {e}"
             logger.warning(
                 "Edit planning failed for job %s: %s; falling back to clean EDL", job.id, e
             )
-            job.edl = create_empty_edl()
+            job.edl = create_empty_edl(fallback_reason=reason)
+            job.record_diagnostic(
+                "editing",
+                edl_source="empty_fallback",
+                edl_fallback_reason=reason,
+                edl_placeholder=True,
+                has_micro_edits=False,
+                fallback=True,
+            )
+            try:
+                self.state_manager.save_job(job)
+            except Exception:  # pragma: no cover
+                pass
             self.state_manager.record_stage_complete(
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
@@ -989,6 +1038,8 @@ class ShortsPipeline:
             aligned_words_cache = work_dir / "aligned_words.json"
 
             words: list[dict[str, Any]] = []
+            # Provenance of the karaoke timing actually used for this render.
+            timing_source = "none"
 
             # 0. Check for existing cached aligned_words.json (user transcript edits)
             if use_cached_words and aligned_words_cache.is_file():
@@ -997,6 +1048,7 @@ class ShortsPipeline:
                         cached_data = json.load(f)
                         if isinstance(cached_data, list) and cached_data:
                             words = cached_data
+                            timing_source = "cached_alignment"
                             logger.info(
                                 "Job %s: Loaded %d words from cached aligned_words.json",
                                 job.id,
@@ -1013,6 +1065,7 @@ class ShortsPipeline:
                     aligned = self.transcriber.align_words(wav_path)
                     if aligned:
                         words = aligned
+                        timing_source = "aligned"
                 except Exception as align_err:
                     logger.debug("Transcriber alignment skipped/failed: %s", align_err)
 
@@ -1025,6 +1078,21 @@ class ShortsPipeline:
                     {"word": w, "start": i * step, "end": (i + 1) * step, "probability": 1.0}
                     for i, w in enumerate(text_tokens)
                 ]
+                timing_source = "heuristic_spread"
+                logger.warning(
+                    "Job %s: No word alignment available; subtitle timing fell back to a "
+                    "duration-spread estimate (%d words over %.1fs).",
+                    job.id,
+                    len(words),
+                    dur,
+                )
+
+            job.record_diagnostic(
+                "subtitles",
+                timing_source=timing_source,
+                word_count=len(words),
+                fallback=timing_source == "heuristic_spread",
+            )
 
             # Save aligned_words.json for transcript editing & fast re-rendering
             if words:
@@ -1097,15 +1165,73 @@ class ShortsPipeline:
             self.state_manager.record_stage_complete(
                 stage_id,
                 status="COMPLETED",
-                artifacts={"subtitles_path": str(ass_path), "words_count": len(words)},
+                artifacts={
+                    "subtitles_path": str(ass_path),
+                    "words_count": len(words),
+                    "timing_source": timing_source,
+                },
             )
             self.state_manager.save_job(job)
-            logger.info("Job %s: Generated ASS subtitles (%d words).", job.id, len(words))
+            logger.info(
+                "Job %s: Generated ASS subtitles (%d words, timing=%s).",
+                job.id,
+                len(words),
+                timing_source,
+            )
         except Exception as e:
             self.state_manager.record_stage_complete(
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
             raise
+
+    @staticmethod
+    def _build_editing_summary(job: Job, final_path: Path | None) -> dict[str, Any]:
+        """Condense how this render was made into one serializable record."""
+        editing = job.diagnostics.get("editing", {}) if isinstance(job.diagnostics, dict) else {}
+        subtitles = (
+            job.diagnostics.get("subtitles", {}) if isinstance(job.diagnostics, dict) else {}
+        )
+        download = job.diagnostics.get("download", {}) if isinstance(job.diagnostics, dict) else {}
+
+        thumbnail_source = "none"
+        if job.selected_clips:
+            tp = getattr(job.selected_clips[0], "thumbnail_path", None)
+            if isinstance(tp, str) and tp:
+                thumbnail_source = "compositor_frame"
+
+        window = None
+        if job.selected_clips:
+            cand = job.selected_clips[0].candidate
+            window = {
+                "start": round(cand.start, 2),
+                "end": round(cand.end, 2),
+                "duration": round(cand.duration, 2),
+            }
+
+        fallbacks = [
+            name
+            for name, section in (
+                ("download", download),
+                ("editing", editing),
+                ("subtitles", subtitles),
+            )
+            if isinstance(section, dict) and section.get("fallback")
+        ]
+
+        return {
+            "window": window,
+            "edl_source": editing.get("edl_source"),
+            "edl_placeholder": editing.get("edl_placeholder"),
+            "edl_fallback_reason": editing.get("edl_fallback_reason"),
+            "has_micro_edits": editing.get("has_micro_edits"),
+            "jump_cut_count": editing.get("jump_cut_count"),
+            "punch_in_count": editing.get("punch_in_count"),
+            "subtitle_timing_source": subtitles.get("timing_source"),
+            "thumbnail_source": thumbnail_source,
+            "download_mode": download.get("mode"),
+            "fallbacks": fallbacks,
+            "render_path": str(final_path) if final_path else None,
+        }
 
     def _run_compositing_stage(
         self,
@@ -1269,6 +1395,10 @@ class ShortsPipeline:
                 except Exception as p_err:
                     logger.warning("Job %s: Low-res preview generation failed: %s", job.id, p_err)
 
+            # Publish a compact editing summary so a finished render is explainable
+            # without digging through per-stage logs.
+            job.record_diagnostic("render", **self._build_editing_summary(job, final_path))
+
             if job.status not in (JobStatus.COMPOSITING, JobStatus.READY_FOR_REVIEW):
                 job.status = JobStatus.COMPOSITING
             job.transition_to(JobStatus.READY_FOR_REVIEW)
@@ -1278,6 +1408,7 @@ class ShortsPipeline:
                 artifacts={
                     "master_video": str(master_path),
                     "preview_video": job.preview_video_path,
+                    "editing_summary": job.diagnostics.get("render", {}),
                 },
             )
             self.state_manager.save_job(job)
@@ -1348,7 +1479,8 @@ class ShortsPipeline:
                 except Exception:
                     pass
 
-        # Verify raw video file exists
+        # --- Pre-flight: verify the artifacts this re-render depends on ---------------
+        rerender_state = {"raw_source": None, "raw_source_recovered": False, "steps": []}
         raw_path = Path(job.raw_video_path) if job.raw_video_path else None
         if not raw_path or not raw_path.is_file():
             # Check work directory candidates (section_*.mp4 or *_raw.mp4)
@@ -1358,20 +1490,47 @@ class ShortsPipeline:
                 + list(work_dir.glob("*_raw.mp4"))
                 + list(work_dir.glob(f"{job.id}*.mp4"))
             )
-            found = False
+            found: Path | None = None
             for cand in candidates:
-                if cand.is_file():
-                    job.raw_video_path = str(cand)
-                    found = True
+                if cand.is_file() and cand.stat().st_size > 0:
+                    found = cand
                     break
-            if not found:
-                if job.selected_clips and (job.source_url or job.video_metadata):
-                    logger.info("Job %s: Re-extracting missing raw cut video for re-render...", job_id)
-                    self._run_download_stage(job)
-                else:
-                    raise AutoShortsError(
-                        f"Raw cut video not found for job {job_id}; cannot re-render without raw source."
-                    )
+            if found is not None:
+                job.raw_video_path = str(found)
+                raw_path = found
+                rerender_state["raw_source_recovered"] = True
+            elif job.selected_clips and (job.source_url or job.video_metadata):
+                logger.info("Job %s: Re-extracting missing raw cut video for re-render...", job_id)
+                self._run_download_stage(job)
+                rerender_state["steps"].append("re_download")
+                raw_path = Path(job.raw_video_path) if job.raw_video_path else None
+            else:
+                raise AutoShortsError(
+                    f"Raw cut video not found for job {job_id} and it cannot be regenerated "
+                    "(no source URL or video metadata). Re-render requires an existing cut."
+                )
+
+        # Verify the recovered source is actually usable before spending a render on it.
+        if raw_path is not None:
+            try:
+                size = raw_path.stat().st_size
+            except OSError as stat_err:
+                raise AutoShortsError(
+                    f"Raw cut for job {job_id} is unreadable ({stat_err}); cannot re-render."
+                ) from stat_err
+            if size <= 0:
+                raise AutoShortsError(
+                    f"Raw cut for job {job_id} is empty ({raw_path}); cannot re-render."
+                )
+            rerender_state["raw_source"] = str(raw_path)
+
+        if not job.selected_clips or not job.selected_clips[0].candidate:
+            raise AutoShortsError(
+                f"Job {job_id} has no selected clip/window recorded; cannot re-render "
+                "without a source window. Re-run the clipping pipeline instead."
+            )
+
+        job.record_diagnostic("rerender", **rerender_state)
 
         # Reset status to allow stage transitions through valid state machine
         job.status = JobStatus.DOWNLOADING_SECTION
@@ -1381,6 +1540,7 @@ class ShortsPipeline:
             try:
                 # Re-run Stage 7: Subtitle (.ass) Generation (using cached aligned_words.json if present)
                 self._run_subtitles_stage(job, use_cached_words=True)
+                rerender_state["steps"].append("subtitles")
 
                 # Re-run Stage 8: Compositing
                 self._run_compositing_stage(
@@ -1395,8 +1555,14 @@ class ShortsPipeline:
                 self.state_manager.save_job(job)
                 raise
 
+        rerender_state["steps"].append("compositing")
+        job.record_diagnostic("rerender", **rerender_state)
         self.state_manager.save_job(job)
-        logger.info("Job %s fast re-render complete; ready for review.", job.id)
+        logger.info(
+            "Job %s fast re-render complete (%s); ready for review.",
+            job.id,
+            ", ".join(rerender_state["steps"]) or "no-op",
+        )
         return job
 
     def auto_trim_job_silence(self, job_id: str, min_gap_sec: float = 0.48) -> dict[str, Any]:
@@ -1656,8 +1822,27 @@ class ShortsPipeline:
             self.state_manager.save_job(job)
 
             verified = use_uploader.verify(result.video_id)
-            result.verified = verified
+
+            # `verified` must mean "positively confirmed", so a DOM-scraped Studio result
+            # is recorded as studio_dom and stays unverified.
+            declared_kind = getattr(use_uploader, "last_verification_kind", None)
+            kind, confirmed = resolve_verification(declared_kind, bool(verified))
+            result.verified = confirmed
+            result.verification_kind = kind  # type: ignore[assignment]
+            if kind == "studio_dom":
+                result.verification_note = (
+                    "Studio browser automation succeeded but the result was read from the "
+                    "Studio DOM. Confirm the video manually before treating it as published."
+                )
             job.upload_result = result
+            job.record_diagnostic(
+                "upload",
+                uploader=type(use_uploader).__name__,
+                verification_kind=result.verification_kind,
+                verified=result.verified,
+                fell_back_to_studio=fell_back_to_studio,
+                fallback=fell_back_to_studio or not result.verified,
+            )
 
             job.transition_to(JobStatus.COMPLETED)
             self.state_manager.record_stage_complete(
@@ -1667,13 +1852,28 @@ class ShortsPipeline:
             )
             self.state_manager.save_job(job)
             logger.info(
-                "Job %s: Uploaded and verified as %s (%s)", job.id, result.video_id, result.url
+                "Job %s: Uploaded %s (%s) - verification=%s (confirmed=%s)",
+                job.id,
+                result.video_id,
+                result.url,
+                result.verification_kind,
+                result.verified,
             )
 
-            # Post-upload transactional cleanup
+            # Post-upload transactional cleanup. Only delete intermediates when the
+            # upload was positively confirmed; an unconfirmed Studio upload keeps them.
             if self.cleaner and getattr(getattr(self.config, "cleanup", None), "enabled", True):
+                if not result.verified:
+                    logger.warning(
+                        "Job %s: Skipping intermediate cleanup because the upload is not "
+                        "confirmed (verification=%s).",
+                        job.id,
+                        result.verification_kind,
+                    )
                 try:
-                    self.cleaner.cleanup_job(job.id, verified=True, upload_result=result)
+                    self.cleaner.cleanup_job(
+                        job.id, verified=result.verified, upload_result=result
+                    )
                     job.transition_to(JobStatus.CLEANED)
                     self.state_manager.save_job(job)
                     logger.info("Job %s: Post-upload cleanup completed.", job.id)

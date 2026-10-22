@@ -26,6 +26,8 @@ class LocalExportUploader:
             self.export_dir = (get_output_dir() / "export").resolve()
         self.export_dir.mkdir(parents=True, exist_ok=True)
         self._exported_files: dict[str, Path] = {}
+        # Set by verify(); a local export confirms the file, never a YouTube upload.
+        self.last_verification_kind: str = "local_export"
 
     def upload(
         self,
@@ -69,11 +71,15 @@ class LocalExportUploader:
             video_id=video_id,
             url=f"file:///{dest_path.as_posix()}",
             status="exported",
+            # "Verified" here means the exported file is present on disk; there is no
+            # YouTube upload to confirm. verification_kind keeps that distinction explicit.
             verified=True,
             uploaded_at=datetime.now(UTC),
             quota_spent=0,
             privacy_status=privacy,
             raw_response={"export_path": str(dest_path), "sidecar_path": str(meta_path)},
+            verification_kind="local_export",
+            verification_note="Local file export only; nothing was uploaded to YouTube.",
         )
 
     def verify(self, video_id: str) -> bool:

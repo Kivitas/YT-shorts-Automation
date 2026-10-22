@@ -17,7 +17,7 @@ from typing import Any
 from autoshorts.core.config import SchedulerConfig, Settings, UploadConfig
 from autoshorts.core.contracts import Cleaner, Uploader
 from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
-from autoshorts.core.models import JobStatus, UploadResult
+from autoshorts.core.models import JobStatus, UploadResult, resolve_verification
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.power_management import allow_system_sleep, prevent_system_sleep
@@ -516,13 +516,23 @@ class SpreadScheduler:
                 self.state_manager.update_job_status(job_id, JobStatus.VERIFYING)
 
             verified = uploader_to_use.verify(result.video_id)
-            if verified:
-                result.verified = True
-                if (
-                    not fell_back_to_studio
-                    and getattr(uploader_to_use, "quota_tracker", None) is None
-                ):
-                    self.quota_tracker.record_general(1)
+
+            # Same verification contract as the immediate-upload path: a DOM-scraped Studio
+            # result is "queried", never "confirmed".
+            declared_kind = getattr(uploader_to_use, "last_verification_kind", None)
+            kind, confirmed = resolve_verification(declared_kind, bool(verified))
+            result.verified = confirmed
+            result.verification_kind = kind  # type: ignore[assignment]
+            if kind == "studio_dom":
+                result.verification_note = (
+                    "Studio browser automation succeeded but the result was read from the "
+                    "Studio DOM. Confirm the video manually before treating it as published."
+                )
+
+            if verified and not fell_back_to_studio and getattr(
+                uploader_to_use, "quota_tracker", None
+            ) is None:
+                self.quota_tracker.record_general(1)
 
             if fell_back_to_studio:
                 if isinstance(result.raw_response, dict):

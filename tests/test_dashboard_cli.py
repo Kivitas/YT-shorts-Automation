@@ -452,11 +452,17 @@ async def test_scheduler_background_worker_lifecycle(tmp_path: Path):
     assert task.done()
 
 
-def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any]):
-    """Verify GET /api/logs/stream returns SSE events and POST /api/logs/clear flushes buffer."""
+async def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any]):
+    """Verify GET /api/logs/stream emits a valid SSE frame and POST /api/logs/clear flushes.
+
+    The stream endpoint is intentionally infinite, so it must not be consumed through
+    TestClient.stream()/iter_lines(): httpx buffers a streaming body until it completes and
+    the test would block forever. Pull exactly one frame from the response iterator instead.
+    """
     import logging
 
     from autoshorts.core.logging_setup import get_log_stream_handler
+    from autoshorts.dashboard.app import create_app
 
     client: TestClient = dashboard_client["client"]
     handler = get_log_stream_handler()
@@ -465,19 +471,48 @@ def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any]):
     test_logger = logging.getLogger("autoshorts.test")
     test_logger.info("Test SSE log line alpha")
 
-    # Connect to SSE stream
-    with client.stream("GET", "/api/logs/stream") as response:
-        assert response.status_code == 200
-        assert "text/event-stream" in response.headers["content-type"]
+    # The buffered record must be captured before the stream is opened (deterministic).
+    assert any("Test SSE log line alpha" in item for item in handler.get_history())
 
-        lines = []
-        for line in response.iter_lines():
-            if line:
-                lines.append(line)
-            if any("Test SSE log line alpha" in l for l in lines):
-                break
+    app = client.app if hasattr(client, "app") else create_app()
+    stream_route = next(
+        r for r in app.routes if getattr(r, "path", None) == "/api/logs/stream"
+    )
 
-        assert any("Test SSE log line alpha" in l for l in lines)
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/api/logs/stream",
+        "raw_path": b"/api/logs/stream",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"testserver")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    async def _receive() -> dict[str, Any]:
+        # A non-disconnect message keeps request.is_disconnected() False so the generator
+        # proceeds to emit the buffered log frame.
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    response = await stream_route.endpoint(Request(scope, receive=_receive))
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+    iterator = response.body_iterator
+    try:
+        frame = await anext(iterator)
+    finally:
+        await iterator.aclose()  # type: ignore[attr-defined]
+
+    frame_text = frame.decode() if isinstance(frame, bytes) else str(frame)
+    assert frame_text.startswith(("data: ", ": ping"))
+    assert "Test SSE log line alpha" in frame_text
 
     # Test clearing logs
     res_clear = client.post("/api/logs/clear")

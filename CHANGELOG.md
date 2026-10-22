@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Section download validation (`SectionValidation`)**: every finished yt-dlp section is probed before it is accepted. Output must contain a video stream and (by default) an audio stream, so an audio-only or truncated merge result is now a distinct failure class (`missing_video`, `missing_audio`, `empty_file`, `unreadable`) instead of a silent success. `validate_section_output()` is exported for direct use.
+- **Download attempt traces**: `Downloader.download_section()` records every attempt (player client, outcome, detail) and surfaces it via `last_download_diagnostics` plus an optional `diagnostics` sink. Final failures now include a full attempt trace and an actionable hint.
+- **Edit-plan provenance**: `EditDecisionList.source` (`multimodal` | `transcript` | `empty_fallback` | `deterministic`) and `EditDecisionList.fallback_reason` record how a plan was produced, with `is_placeholder` / `has_micro_edits` helpers. Clamping no longer launders provenance.
+- **Job provenance diagnostics**: `Job.diagnostics` carries per-stage facts (download mode/attempts, edit-plan source, subtitle timing source, render summary, re-render steps) and persists with the job payload. `Job.origin_kind` makes local-file jobs explicit.
+- **Upload verification kinds**: `UploadResult.verification_kind` (`api_confirmed` | `studio_dom` | `local_export` | `unverified`) with `resolve_verification()` giving both upload paths one shared rule.
+
+### Changed
+- **`verified` now means positively confirmed.** Studio Playwright uploads return `status="uploaded_unconfirmed"` with `verified=False` and `verification_kind="studio_dom"`, because the video id is scraped from the Studio DOM rather than confirmed by `videos.list`. Immediate and scheduled upload paths share this contract, and intermediate cleanup is skipped for unconfirmed uploads.
+- **Local-source shortcut is explicit.** The pipeline no longer infers "local clip" from `source_url` merely existing on disk; `Job.origin_kind` decides, URL-shaped sources are never treated as paths, and the chosen action (`reused`/`copied`/`trimmed`/`copied_full_fallback`) is recorded.
+- **Subtitle timing provenance** is recorded as `aligned`, `cached_alignment`, or `heuristic_spread`, and the heuristic fallback is logged prominently.
+- **Re-render preflight** verifies the raw cut exists, is non-empty, and that a selected window exists, failing explicitly instead of half-rendering.
+- **yt-dlp format preference** pins an H.264/MP4 video+audio pair first, so a section download cannot resolve to audio-only by construction.
+
+### Fixed
+- Download failures no longer silently accept wrong-class output on the final retry attempt.
+- `SafetyCleaner` imports `send2trash` lazily, so the pipeline, dashboard, and CLI no longer fail at import time when the package is absent.
+- Missing `os` import broke `pipeline` import; the SSE log-stream test no longer hangs the suite by iterating an infinite stream through `TestClient`.
+- `test_gemini_provider_missing_key` is isolated from a developer `.env` holding a real key.
+
+---
+
 ## [1.3.0] - 2026-10-21
 
 ### Added

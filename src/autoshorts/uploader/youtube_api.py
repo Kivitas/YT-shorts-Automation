@@ -169,6 +169,8 @@ class YouTubeApiUploader:
         self.token_path = Path(token_path) if token_path else (data_dir / "token.json")
 
         self._service = youtube_service
+        # Set by verify(); the pipeline reads this to label the verification strength.
+        self.last_verification_kind: str = "unverified"
 
     def get_service(self) -> Any:
         """Return or lazily initialize the authenticated YouTube service."""
@@ -626,6 +628,10 @@ class YouTubeApiUploader:
             quota_spent=1,
             privacy_status=returned_privacy,
             raw_response=response,
+            verification_kind="unverified",
+            verification_note=(
+                "Accepted by videos.insert; not yet confirmed by videos.list processing status."
+            ),
         )
 
         logger.info(f"Upload complete for video ID: {video_id} (privacy: {returned_privacy}).")
@@ -643,6 +649,7 @@ class YouTubeApiUploader:
         """
         service = self.get_service()
         logger.debug(f"Checking processing status for video {video_id}...")
+        self.last_verification_kind = "unverified"
 
         try:
             req = service.videos().list(
@@ -685,6 +692,7 @@ class YouTubeApiUploader:
                 logger.info(
                     f"Video {video_id} verified: uploadStatus=uploaded, processingStatus=succeeded."
                 )
+                self.last_verification_kind = "api_confirmed"
                 return True
 
             logger.info(

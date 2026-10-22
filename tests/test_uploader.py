@@ -361,8 +361,12 @@ def test_studio_playwright_upload_success_flow(dummy_video: Path):
 
     assert result.video_id == "edgeVid1234"
     assert result.url == "https://youtube.com/shorts/edgeVid1234"
-    assert result.status == "uploaded"
-    assert result.verified is True
+    # Studio automation is a weaker signal than the Data API: the id was scraped from the
+    # DOM, so the result must not claim to be YouTube-confirmed.
+    assert result.status == "uploaded_unconfirmed"
+    assert result.verified is False
+    assert result.verification_kind == "studio_dom"
+    assert result.verification_note is not None
     assert result.privacy_status == "unlisted"
     assert result.quota_spent == 0
     assert result.raw_response["mode"] == "studio_playwright"
