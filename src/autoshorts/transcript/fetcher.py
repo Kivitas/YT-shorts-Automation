@@ -22,6 +22,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from autoshorts.core.exceptions import TranscriptNotFoundError
+from autoshorts.core.paths import resolve_yt_dlp_binary
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ class TranscriptFetcher:
             cookies_from_browser: Optional browser name (e.g. 'chrome', 'firefox') for cookies.
         """
         self.languages = list(languages)
-        self.yt_dlp_binary = yt_dlp_binary
+        self.yt_dlp_binary = resolve_yt_dlp_binary(yt_dlp_binary)
         self.timeout_sec = timeout_sec
         self._client = http_client
 

@@ -21,6 +21,7 @@ from autoshorts.core.models import (
     VideoChapter,
     VideoMetadata,
 )
+from autoshorts.core.paths import resolve_yt_dlp_binary
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
 
 logger = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ class MetadataFetcher:
             http_client: Optional pre-configured httpx.Client instance.
             cookies_from_browser: Optional browser name (e.g. 'chrome', 'firefox') for cookies.
         """
-        self.yt_dlp_binary = yt_dlp_binary
+        self.yt_dlp_binary = resolve_yt_dlp_binary(yt_dlp_binary)
         self.timeout_sec = timeout_sec
         self.oembed_timeout_sec = oembed_timeout_sec
         self._client = http_client

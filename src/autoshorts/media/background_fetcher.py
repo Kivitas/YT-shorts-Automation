@@ -9,15 +9,12 @@ Provides:
 from __future__ import annotations
 
 import logging
-import os
-import shutil
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from autoshorts.core.paths import get_assets_dir
+from autoshorts.core.paths import get_assets_dir, resolve_yt_dlp_binary
 from autoshorts.media.compositor import probe_media_duration
 
 logger = logging.getLogger(__name__)
@@ -94,22 +91,6 @@ def normalize_category(category: str | None) -> str:
     return cat
 
 
-def resolve_yt_dlp_binary(configured_binary: str = "yt-dlp") -> str:
-    """Resolve usable yt-dlp binary command name or absolute path."""
-    if shutil.which(configured_binary):
-        return configured_binary
-
-    scripts_candidate = (
-        Path(sys.prefix)
-        / ("Scripts" if os.name == "nt" else "bin")
-        / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp")
-    )
-    if scripts_candidate.is_file():
-        return str(scripts_candidate.resolve())
-
-    return configured_binary
-
-
 def download_clip_with_ytdlp(
     url: str,
     output_path: Path,
@@ -151,10 +132,22 @@ def download_clip_with_ytdlp(
         "--force-keyframes-at-cuts",
         "--merge-output-format",
         "mp4",
+    ]
+
+    try:
+        from autoshorts.media.encoder_probe import get_ffmpeg_path
+
+        ffmpeg_bin = get_ffmpeg_path()
+        if ffmpeg_bin:
+            cmd.extend(["--ffmpeg-location", ffmpeg_bin])
+    except Exception:
+        pass
+
+    cmd.extend([
         "-o",
         str(output_path),
         url,
-    ]
+    ])
 
     logger.info("Downloading background sample: %s -> %s", url, output_path.name)
     try:

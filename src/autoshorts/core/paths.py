@@ -7,6 +7,8 @@ path-safety assertions, and atomic file writing.
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -222,3 +224,28 @@ def atomic_write(
             except OSError:
                 pass
         raise
+
+
+def resolve_yt_dlp_binary(configured_binary: str = "yt-dlp") -> str:
+    """Resolve usable yt-dlp binary command name or absolute path.
+
+    Checks system PATH first. If not found, checks for executable in active
+    virtual environment Scripts/ (Windows) or bin/ (POSIX), or sys.executable directory.
+    Falls back to configured_binary if not found.
+    """
+    if shutil.which(configured_binary):
+        return configured_binary
+
+    candidates = [
+        Path(sys.prefix)
+        / ("Scripts" if os.name == "nt" else "bin")
+        / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp"),
+        Path(sys.executable).parent
+        / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+
+    return configured_binary
+

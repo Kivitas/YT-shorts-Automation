@@ -12,8 +12,8 @@ app:
 # - Browser automation: Exclusively Playwright for YouTube Studio upload/verification fallback.
 
 llm:
-  provider: "local"                # "local", "gemini", or "openrouter"
-  model: null                      # null = use provider default (resolved dynamically at runtime)
+  provider: "gemini"               # "local", "gemini", or "openrouter"
+  model: "gemini-3.5-flash-lite"   # Default Google Gemini model
   local_model_path: "data/models/Qwen3-0.6B-Instruct-Q8_0.gguf"
   n_threads: 4                     # Bounded for CPU execution
   temperature: 0.0

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -25,11 +26,13 @@ from autoshorts.core.models import (
     VideoChapter,
     VideoMetadata,
 )
+from autoshorts.core.paths import resolve_yt_dlp_binary
 from autoshorts.discovery.metadata_fetcher import (
     MetadataFetcher,
     fetch_sponsor_segments,
 )
 from autoshorts.discovery.url_validator import extract_video_id, normalize_youtube_url
+from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +155,7 @@ def run_command_with_cleanup(
 
 
 def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
-    """Check resolution, duration, and whether audio stream is present via ffprobe."""
+    """Check resolution, duration, and whether audio stream is present via ffprobe or ffmpeg."""
     info: dict[str, Any] = {
         "width": 0,
         "height": 0,
@@ -177,43 +180,78 @@ def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15.0, check=False)
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return info
-        payload = json.loads(proc.stdout)
-        streams = payload.get("streams") or []
-        for s in streams:
-            if not isinstance(s, dict):
-                continue
-            ctype = s.get("codec_type")
-            if ctype == "video":
-                info["has_video"] = True
-                w = int(s.get("width") or 0)
-                h = int(s.get("height") or 0)
-                if w > 0 and h > 0:
-                    info["width"] = w
-                    info["height"] = h
-                    info["resolution"] = f"{w}x{h}"
-                if s.get("duration") and info["duration"] <= 0.0:
-                    try:
-                        info["duration"] = max(0.0, float(s["duration"]))
-                    except (TypeError, ValueError):
-                        pass
-            elif ctype == "audio":
-                info["has_audio"] = True
-                if s.get("duration") and info["duration"] <= 0.0:
-                    try:
-                        info["duration"] = max(0.0, float(s["duration"]))
-                    except (TypeError, ValueError):
-                        pass
+        if proc.returncode == 0 and proc.stdout.strip():
+            payload = json.loads(proc.stdout)
+            streams = payload.get("streams") or []
+            for s in streams:
+                if not isinstance(s, dict):
+                    continue
+                ctype = s.get("codec_type")
+                if ctype == "video":
+                    info["has_video"] = True
+                    w = int(s.get("width") or 0)
+                    h = int(s.get("height") or 0)
+                    if w > 0 and h > 0:
+                        info["width"] = w
+                        info["height"] = h
+                        info["resolution"] = f"{w}x{h}"
+                    if s.get("duration") and info["duration"] <= 0.0:
+                        try:
+                            info["duration"] = max(0.0, float(s["duration"]))
+                        except (TypeError, ValueError):
+                            pass
+                elif ctype == "audio":
+                    info["has_audio"] = True
+                    if s.get("duration") and info["duration"] <= 0.0:
+                        try:
+                            info["duration"] = max(0.0, float(s["duration"]))
+                        except (TypeError, ValueError):
+                            pass
 
-        fmt = payload.get("format") or {}
-        if isinstance(fmt, dict) and fmt.get("duration"):
-            try:
-                info["duration"] = max(info["duration"], float(fmt["duration"]))
-            except (TypeError, ValueError):
-                pass
+            fmt = payload.get("format") or {}
+            if isinstance(fmt, dict) and fmt.get("duration"):
+                try:
+                    info["duration"] = max(info["duration"], float(fmt["duration"]))
+                except (TypeError, ValueError):
+                    pass
+            if info["has_video"] or info["duration"] > 0:
+                return info
     except Exception as exc:
         logger.debug("ffprobe failed for %s: %s", p, exc)
+
+    # Fallback to ffmpeg -hide_banner -i when ffprobe is missing on PATH or fails
+    try:
+        ffmpeg_bin = get_ffmpeg_path()
+        if ffmpeg_bin:
+            proc = subprocess.run(
+                [ffmpeg_bin, "-hide_banner", "-i", str(p)],
+                capture_output=True,
+                text=True,
+                timeout=15.0,
+                check=False,
+            )
+            raw = (proc.stderr or "") + (proc.stdout or "")
+            dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+            if dur_match:
+                hours, mins, secs = dur_match.groups()
+                dur_val = int(hours) * 3600.0 + int(mins) * 60.0 + float(secs)
+                if dur_val > 0:
+                    info["duration"] = max(info["duration"], dur_val)
+
+            for line in raw.splitlines():
+                if "Stream #" in line:
+                    if "Video:" in line:
+                        info["has_video"] = True
+                        res_match = re.search(r"(\d{2,5})x(\d{2,5})", line)
+                        if res_match:
+                            w, h = int(res_match.group(1)), int(res_match.group(2))
+                            info["width"] = w
+                            info["height"] = h
+                            info["resolution"] = f"{w}x{h}"
+                    elif "Audio:" in line:
+                        info["has_audio"] = True
+    except Exception as exc:
+        logger.debug("ffmpeg stream probe fallback failed for %s: %s", p, exc)
 
     return info
 
@@ -247,7 +285,7 @@ class Downloader:
             retry_delay_sec: Initial delay between retries.
         """
         self.settings = settings or load_config()
-        self.yt_dlp_binary = yt_dlp_binary
+        self.yt_dlp_binary = resolve_yt_dlp_binary(yt_dlp_binary)
         self.format_spec = format_spec
         self.timeout_sec = timeout_sec
         self.max_retries = max(1, max_retries)
@@ -327,9 +365,16 @@ class Downloader:
             self.format_spec,
             "--merge-output-format",
             "mp4",
+        ]
+
+        ffmpeg_bin = get_ffmpeg_path()
+        if ffmpeg_bin:
+            base_cmd.extend(["--ffmpeg-location", ffmpeg_bin])
+
+        base_cmd.extend([
             "-o",
             str(temp_template),
-        ]
+        ])
 
         if self.cookies_from_browser:
             base_cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
@@ -430,10 +475,17 @@ class Downloader:
             "-f",
             "bestaudio/best",
             "-x",
+        ]
+
+        ffmpeg_bin = get_ffmpeg_path()
+        if ffmpeg_bin:
+            cmd.extend(["--ffmpeg-location", ffmpeg_bin])
+
+        cmd.extend([
             "-o",
             str(temp_template),
             canonical_url,
-        ]
+        ])
 
         if self.cookies_from_browser:
             cmd.extend(["--cookies-from-browser", self.cookies_from_browser])

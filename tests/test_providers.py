@@ -153,9 +153,10 @@ def test_local_provider_single_forward_pass_scoring():
 # -----------------------------------------------------------------------------
 
 
-def test_gemini_provider_missing_key():
+def test_gemini_provider_missing_key(monkeypatch):
     """Verify GeminiProvider raises when API key is missing."""
-    settings = Settings()
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    settings = Settings(gemini_api_key=None)
     provider = GeminiProvider(api_key=None, settings=settings)
     with pytest.raises(ProviderError) as exc_info:
         provider.complete("Hello")
