@@ -17,13 +17,30 @@ from typing import Any
 
 from autoshorts.core.config import Settings, UploadConfig
 from autoshorts.core.credential_guardian import classify_api_error
-from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
+from autoshorts.core.exceptions import QuotaExhaustedError
 from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import get_data_dir
 from autoshorts.core.resilience import classify_network_or_outage_error
 from autoshorts.quota.quota_tracker import QuotaTracker
+from autoshorts.uploader.description_builder import truncate_on_word
+from autoshorts.uploader.errors import (
+    AuthError,
+    PermanentUploadError,
+    ProcessingError,
+    QuotaExceededError,
+    RateLimitError,
+    TransientUploadError,
+    UploadError,
+    classify_google_error,
+)
 
 logger = logging.getLogger(__name__)
+
+MAX_TITLE_CHARS: int = 100
+MAX_DESCRIPTION_CHARS: int = 5000
+MAX_TAGS_CHARS: int = 500
+THUMBNAIL_MAX_BYTES: int = 2 * 1024 * 1024
+_SHORTS_SUFFIX: str = " #Shorts"
 
 SCOPES: list[str] = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -44,12 +61,12 @@ QUOTA_COSTS: dict[str, int] = {
 DAILY_QUOTA_CAP: int = 10000
 
 
-class CredentialsError(AutoShortsError):
-    """Raised when OAuth credentials cannot be loaded or refreshed."""
+class CredentialsError(AuthError):
+    """Raised when OAuth credentials cannot be loaded or refreshed. Not retryable."""
 
 
-class UploadFailedError(AutoShortsError):
-    """Raised when a video upload fails permanently."""
+class UploadFailedError(PermanentUploadError):
+    """Raised when an upload fails permanently: a non-retryable 4xx, or retries exhausted."""
 
 
 def build_compliant_tags(
@@ -109,6 +126,41 @@ def build_compliant_tags(
         compliant.append(shorts_tag)
 
     return compliant
+
+
+def build_upload_title(title: str) -> str:
+    """Return a YouTube-valid Shorts title.
+
+    Guarantees: at most 100 characters (including the ' #Shorts' tag), no '<' or '>',
+    no control characters (YouTube rejects newlines in titles), exactly one trailing
+    '#Shorts', and never an empty title (falls back to 'Short').
+    """
+    cleaned = str(title or "").replace("<", "").replace(">", "")
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"(?i)\s*#shorts\s*$", "", cleaned).strip()
+    if not cleaned:
+        cleaned = "Short"
+
+    max_core = MAX_TITLE_CHARS - len(_SHORTS_SUFFIX)
+    if len(cleaned) > max_core:
+        head = truncate_on_word(cleaned, max_core - 3).rstrip(" -|:,.!?")
+        cleaned = f"{head or cleaned[: max_core - 3]}..."
+    return f"{cleaned}{_SHORTS_SUFFIX}"
+
+
+def _read_thumbnail_mimetype(path: Path) -> str | None:
+    """Return 'image/jpeg' or 'image/png' by magic bytes, or None if neither."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8)
+    except OSError:
+        return None
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    return None
 
 
 def _get_google_libraries() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -171,6 +223,8 @@ class YouTubeApiUploader:
         self._service = youtube_service
         # Set by verify(); the pipeline reads this to label the verification strength.
         self.last_verification_kind: str = "unverified"
+        # Privacy this uploader requested per video ID, so verify() can detect a mismatch.
+        self._requested_privacy: dict[str, str] = {}
 
     def get_service(self) -> Any:
         """Return or lazily initialize the authenticated YouTube service."""
@@ -198,9 +252,12 @@ class YouTubeApiUploader:
             except Exception as e:
                 report = classify_api_error("youtube_oauth", e)
                 logger.error(f"Failed to refresh OAuth token: {report.message} ({e})")
-                creds = None
-                if report.status in ("revoked", "expired"):
-                    raise CredentialsError(report.message) from e
+                # Never fall through to the interactive browser OAuth flow here: an
+                # unattended pipeline would block on it. Surface a clear error instead.
+                raise CredentialsError(
+                    f"YouTube OAuth token refresh failed ({report.status}): {report.message} "
+                    f"Re-authorize via Settings or check network access."
+                ) from e
 
         if not creds or not creds.valid:
             if not self.client_secret_path.is_file():
@@ -223,6 +280,21 @@ class YouTubeApiUploader:
     # -------------------------------------------------------------------------
     # Upload Protocol Implementation
     # -------------------------------------------------------------------------
+
+    def _mark_upload_quota_exhausted(self) -> None:
+        """Record a 403 quotaExceeded in the tracker by consuming today's remaining upload budget.
+
+        This makes can_upload() / is_throttled() report the exhaustion, so the scheduler
+        stops sending uploads and the configured fallback takes over.
+        """
+        if self.quota_tracker is None:
+            return
+        try:
+            remaining = int(self.quota_tracker.get_upload_remaining())
+            if remaining > 0:
+                self.quota_tracker.record_upload(remaining)
+        except Exception as e:
+            logger.warning("Could not record upload quota exhaustion in tracker: %s", e)
 
     def add_to_playlist(self, video_id: str, playlist_id: str) -> bool:
         """Add an uploaded video to a YouTube playlist via playlistItems.insert.
@@ -295,12 +367,35 @@ class YouTubeApiUploader:
         if not thumb_file.is_file():
             logger.warning("Thumbnail file does not exist for video %s: %s", video_id, thumb_file)
             return False
+        # thumbnails.set accepts only JPEG/PNG up to 2 MB; reject anything else up front.
+        try:
+            size_bytes = thumb_file.stat().st_size
+        except OSError as e:
+            logger.warning("Cannot stat thumbnail %s for video %s: %s", thumb_file, video_id, e)
+            return False
+        if size_bytes > THUMBNAIL_MAX_BYTES:
+            logger.warning(
+                "Thumbnail %s is %d bytes; YouTube limit is %d. Skipping thumbnail for video %s.",
+                thumb_file,
+                size_bytes,
+                THUMBNAIL_MAX_BYTES,
+                video_id,
+            )
+            return False
+        mimetype = _read_thumbnail_mimetype(thumb_file)
+        if mimetype is None:
+            logger.warning(
+                "Thumbnail %s is not a JPEG or PNG file; skipping thumbnail for video %s.",
+                thumb_file,
+                video_id,
+            )
+            return False
         try:
             service = self.get_service()
             _, _, _, _, _, MediaFileUpload = _get_google_libraries()
             req = service.thumbnails().set(
                 videoId=video_id,
-                media_body=MediaFileUpload(str(thumb_file), mimetype="image/jpeg"),
+                media_body=MediaFileUpload(str(thumb_file), mimetype=mimetype),
             )
             req.execute()
             if self.quota_tracker:
@@ -308,7 +403,13 @@ class YouTubeApiUploader:
             logger.info("Custom thumbnail uploaded for video %s (%s).", video_id, thumb_file)
             return True
         except Exception as e:
-            logger.warning("Failed to upload custom thumbnail for video %s: %s", video_id, e)
+            typed = classify_google_error(e)
+            logger.warning(
+                "Failed to upload custom thumbnail for video %s (%s): %s",
+                video_id,
+                type(typed).__name__,
+                e,
+            )
             return False
 
     def batch_get_videos(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -422,21 +523,11 @@ class YouTubeApiUploader:
                 limit=self.quota_tracker.daily_upload_budget,
             )
 
-        # Ensure title contains #Shorts and does not exceed 100 characters
-        final_title = title.strip()
-        if "#shorts" not in final_title.lower():
-            if len(final_title) + len(" #Shorts") <= 100:
-                final_title = f"{final_title} #Shorts"
-            else:
-                final_title = f"{final_title[:91].rstrip()}... #Shorts"
-        else:
-            if len(final_title) > 100:
-                # Remove trailing #Shorts, truncate body, and re-append #Shorts
-                clean_no_tag = re.sub(r"(?i)\s*#shorts\b", "", final_title).strip()
-                final_title = f"{clean_no_tag[:91].rstrip()} #Shorts"
+        # Title: <=100 chars, no < or >, single trailing #Shorts, never empty
+        final_title = build_upload_title(title)
 
         service = self.get_service()
-        _, _, _, _, HttpError, MediaFileUpload = _get_google_libraries()
+        _, _, _, _, _, MediaFileUpload = _get_google_libraries()
 
         effective_privacy = (
             privacy_status or privacy or getattr(self.config, "privacy_status", "unlisted")
@@ -462,8 +553,8 @@ class YouTubeApiUploader:
                     effective_tags.append(cleaned)
                     curr_len += cost
 
-        # Enforce YouTube API's 5000-character description cap
-        final_description = (description or "")[:5000]
+        # Enforce YouTube API's 5000-character description cap (word-boundary cut)
+        final_description = truncate_on_word(description or "", MAX_DESCRIPTION_CHARS)
 
         snippet: dict[str, Any] = {
             "title": final_title,
@@ -530,40 +621,24 @@ class YouTubeApiUploader:
                     pct = int(status_res.progress() * 100)
                     logger.debug(f"Resumable upload progress: {pct}%")
                 retry_count = 0  # Reset retry counter on successful chunk
-            except (HttpError, OSError, ConnectionError, TimeoutError, Exception) as ex:
-                # Classify credentials & quota errors via credential_guardian
-                health_report = classify_api_error("youtube_oauth", ex)
-                if health_report.status in ("revoked", "expired") or health_report.error_code in (
-                    "invalid_grant",
-                    "unauthorized_client",
-                ):
-                    logger.error(
-                        "OAuth token revoked or expired during upload: %s", health_report.message
-                    )
-                    raise CredentialsError(health_report.message) from ex
+            except Exception as ex:
+                typed = classify_google_error(ex)
+                if isinstance(typed, AuthError):
+                    logger.error("OAuth token revoked or expired during upload: %s", typed)
+                    raise CredentialsError(str(typed)) from ex
 
-                if health_report.status == "quota_exhausted" or health_report.error_code in (
-                    "quotaExceeded",
-                    "dailyLimitExceeded",
-                ):
-                    logger.warning("YouTube API quota exceeded: %s", health_report.message)
-                    raise QuotaExhaustedError(health_report.message) from ex
+                if isinstance(typed, QuotaExceededError):
+                    logger.warning("YouTube API quota exceeded: %s", typed)
+                    self._mark_upload_quota_exhausted()
+                    raise QuotaExceededError(str(typed)) from ex
 
-                # Check if client error (4xx) that is permanent and non-retryable
-                is_permanent_4xx = False
-                if HttpError is not None and isinstance(ex, HttpError):
-                    status_code = (
-                        getattr(ex.resp, "status", None) if hasattr(ex, "resp") else None
-                    )
-                    if status_code and 400 <= status_code < 500 and status_code not in (408, 429):
-                        is_permanent_4xx = True
-
-                if is_permanent_4xx:
+                if isinstance(typed, PermanentUploadError):
                     logger.error(f"Permanent HTTP client error during upload: {ex}")
                     raise UploadFailedError(
                         f"Upload failed permanently with HTTP client error: {ex}"
                     ) from ex
 
+                # RateLimitError and TransientUploadError fall through to retry with backoff.
                 retry_count += 1
                 if retry_count > self.max_retries:
                     logger.error(f"Upload failed after {self.max_retries} chunk retries: {ex}")
@@ -581,6 +656,7 @@ class YouTubeApiUploader:
         if not video_id:
             raise UploadFailedError(f"YouTube response missing video ID: {response}")
 
+        self._requested_privacy[video_id] = str(status["privacyStatus"])
         returned_privacy = response.get("status", {}).get("privacyStatus", status["privacyStatus"])
 
         # Persist credentials if refreshed during operation
@@ -641,15 +717,26 @@ class YouTubeApiUploader:
     # Verification Implementation
     # -------------------------------------------------------------------------
 
-    def verify(self, video_id: str) -> bool:
-        """Query videos.list to check processingStatus and privacyStatus.
+    def verify(self, video_id: str, expected_privacy: str | None = None) -> bool:
+        """Query videos.list to check processing status and privacy.
 
         Consumes 1 general quota unit if quota tracker is attached.
-        Returns True if processing succeeded, False otherwise (pending or failed).
+
+        Returns:
+            True only when processing succeeded and the privacy matches the requested value
+            (``expected_privacy``, or the value this uploader sent for ``video_id``).
+            False while the video is still processing or on a transient error (poll again).
+
+        Raises:
+            ProcessingError: processing failed or was rejected, or privacy does not match
+                the request. Retrying cannot change these outcomes.
+            AuthError / PermanentUploadError: the request can never succeed as sent.
         """
         service = self.get_service()
         logger.debug(f"Checking processing status for video {video_id}...")
         self.last_verification_kind = "unverified"
+        expected = expected_privacy or self._requested_privacy.get(video_id)
+        expected = expected.lower() if expected else None
 
         try:
             req = service.videos().list(
@@ -682,11 +769,30 @@ class YouTubeApiUploader:
                     "video viewing mode may be locked until compliance audit."
                 )
 
-            # Processing outcome evaluation
-            if processing_status == "failed":
-                reason = proc_obj.get("processingFailureReason", "unknown")
+            # Definitive processing failure: stop polling immediately.
+            if processing_status == "failed" or upload_status in ("rejected", "failed"):
+                reason = (
+                    proc_obj.get("processingFailureReason")
+                    or status_obj.get("rejectionReason")
+                    or status_obj.get("failureReason")
+                    or "unknown"
+                )
                 logger.error(f"Video {video_id} processing failed: {reason}")
-                return False
+                raise ProcessingError(f"Video {video_id} processing failed: {reason}")
+
+            # A privacy mismatch is a clear failure, never a silent success.
+            if expected and privacy_status is not None:
+                if str(privacy_status).lower() != expected:
+                    logger.error(
+                        "Video %s privacy mismatch: requested '%s', YouTube reports '%s'.",
+                        video_id,
+                        expected,
+                        privacy_status,
+                    )
+                    raise ProcessingError(
+                        f"Video {video_id} privacy mismatch: requested '{expected}' "
+                        f"but YouTube reports '{privacy_status}'."
+                    )
 
             if upload_status == "uploaded" and processing_status == "succeeded":
                 logger.info(
@@ -700,6 +806,12 @@ class YouTubeApiUploader:
                 f"processingStatus={processing_status}. Needs retry."
             )
             return False
+        except UploadError:
+            raise
         except Exception as e:
-            logger.error(f"Failed to verify video {video_id}: {e}")
-            return False
+            typed = classify_google_error(e)
+            if isinstance(typed, TransientUploadError | RateLimitError):
+                logger.warning(f"Transient error verifying video {video_id}; will retry: {e}")
+                return False
+            logger.error(f"Failed to verify video {video_id}: {typed}")
+            raise typed from e

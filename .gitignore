@@ -12,6 +12,9 @@ venv/
 env/
 ENV/
 
+# Runtime user config (rewritten by the dashboard; config/config.example.yaml stays tracked)
+config/config.yaml
+
 # Environment Variables & Secrets
 .env
 .env.local

@@ -285,7 +285,7 @@ cleanup:
         config=cfg,
         run_scheduler_worker=False,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost:8765")
 
     return {
         "client": client,

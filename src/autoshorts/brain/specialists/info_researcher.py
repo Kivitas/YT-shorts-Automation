@@ -54,7 +54,9 @@ class InfoResearcherAgent:
             if brief.trending_sources:
                 sources = [s.url for s in brief.trending_sources if getattr(s, "url", None)]
                 first_s = brief.trending_sources[0]
-                if getattr(first_s, "viral_score", None) and hasattr(first_s.viral_score, "total_score"):
+                if getattr(first_s, "viral_score", None) and hasattr(
+                    first_s.viral_score, "total_score"
+                ):
                     top_score = float(first_s.viral_score.total_score)
 
             insights: list[str] = []

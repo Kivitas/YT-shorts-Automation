@@ -45,7 +45,7 @@ def dashboard_client(tmp_path: Path):
     mock_pipeline.cleaner = mock_cleaner
 
     app = create_app(pipeline=mock_pipeline, state_manager=state_mgr)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost:8765")
     return {
         "client": client,
         "state_mgr": state_mgr,
@@ -438,7 +438,7 @@ async def test_scheduler_background_worker_lifecycle(tmp_path: Path):
         scheduler_interval_sec=0.04,
     )
 
-    with TestClient(app):
+    with TestClient(app, base_url="http://localhost:8765"):
         # Worker should be active
         assert hasattr(app.state, "scheduler_worker_task")
         task = app.state.scheduler_worker_task
@@ -475,9 +475,7 @@ async def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any
     assert any("Test SSE log line alpha" in item for item in handler.get_history())
 
     app = client.app if hasattr(client, "app") else create_app()
-    stream_route = next(
-        r for r in app.routes if getattr(r, "path", None) == "/api/logs/stream"
-    )
+    stream_route = next(r for r in app.routes if getattr(r, "path", None) == "/api/logs/stream")
 
     from starlette.requests import Request
 
@@ -491,10 +489,11 @@ async def test_realtime_log_stream_sse_and_clear(dashboard_client: dict[str, Any
         "raw_path": b"/api/logs/stream",
         "query_string": b"",
         "root_path": "",
-        "headers": [(b"host", b"testserver")],
+        "headers": [(b"host", b"localhost:8765")],
         "client": ("127.0.0.1", 12345),
-        "server": ("testserver", 80),
+        "server": ("localhost", 8765),
     }
+
     async def _receive() -> dict[str, Any]:
         # A non-disconnect message keeps request.is_disconnected() False so the generator
         # proceeds to emit the buffered log frame.
@@ -756,7 +755,7 @@ async def test_dashboard_inbox_watcher_lifespan_polling(tmp_path: Path):
         inbox_watcher=mock_watcher,
     )
 
-    with TestClient(app):
+    with TestClient(app, base_url="http://localhost:8765"):
         assert app.state.inbox_watcher is mock_watcher
         time.sleep(0.1)
         assert mock_watcher.poll_once.call_count >= 1

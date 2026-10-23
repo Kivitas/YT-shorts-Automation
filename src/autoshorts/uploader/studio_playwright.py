@@ -24,6 +24,9 @@ from autoshorts.core.paths import get_data_dir
 
 logger = logging.getLogger(__name__)
 
+# Explicit bound for navigation and file-attach waits so a stalled Studio page cannot hang the pipeline.
+_NAV_TIMEOUT_MS = 60_000
+
 _LOGIN_STATE_LOCK = threading.Lock()
 LOGIN_SESSION_STATE: dict[str, Any] = {
     "status": "idle",
@@ -538,7 +541,11 @@ class PlaywrightStudioUploader:
 
         with self._launch_browser_session(headless=self.headless) as (_context, page):
             try:
-                page.goto("https://studio.youtube.com", wait_until="domcontentloaded")
+                page.goto(
+                    "https://studio.youtube.com",
+                    wait_until="domcontentloaded",
+                    timeout=_NAV_TIMEOUT_MS,
+                )
 
                 # Validate authenticated session
                 raw_url = (
@@ -565,7 +572,8 @@ class PlaywrightStudioUploader:
 
                 # Set file input
                 file_input = page.locator("input[type='file']").first
-                file_input.set_input_files(str(target_path.resolve()))
+                # Attach the file programmatically (no native OS file dialog), bounded wait.
+                file_input.set_input_files(str(target_path.resolve()), timeout=_NAV_TIMEOUT_MS)
 
                 # Ensure #Shorts is in title
                 shorts_title = (
@@ -855,7 +863,9 @@ class PlaywrightStudioUploader:
         try:
             with self._launch_browser_session(headless=True) as (_context, page):
                 resp = page.goto(
-                    f"https://www.youtube.com/shorts/{video_id}", wait_until="domcontentloaded"
+                    f"https://www.youtube.com/shorts/{video_id}",
+                    wait_until="domcontentloaded",
+                    timeout=_NAV_TIMEOUT_MS,
                 )
                 if (
                     resp is not None

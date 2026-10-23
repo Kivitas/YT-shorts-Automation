@@ -20,7 +20,9 @@ from autoshorts.core.config import JobDefaultsConfig
 from autoshorts.core.exceptions import InvalidURLError
 
 # YouTube 11-character video ID regex (alphanumeric, underscores, hyphens)
-YOUTUBE_VIDEO_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{11}$")
+# \A and \Z, not ^ and $: "$" also matches before a trailing newline, which let an ID
+# such as "dQw4w9WgXcQ\n" (from a percent-encoded query) through into the canonical URL.
+YOUTUBE_VIDEO_ID_REGEX = re.compile(r"\A[a-zA-Z0-9_-]{11}\Z")
 
 # Recognized YouTube domain host suffixes
 ALLOWED_YOUTUBE_HOSTS = {

@@ -342,7 +342,7 @@ def test_client(tmp_path: Path):
         config=cfg,
         run_scheduler_worker=False,
     )
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost:8765")
 
 
 def test_api_research_trending(test_client: TestClient):

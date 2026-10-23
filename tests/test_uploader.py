@@ -14,6 +14,7 @@ from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.uploader.local_exporter import LocalExportUploader
 from autoshorts.uploader.studio_playwright import (
+    _NAV_TIMEOUT_MS,
     LOGIN_SESSION_STATE,
     PlaywrightStudioUploader,
     update_login_session_state,
@@ -371,8 +372,8 @@ def test_studio_playwright_upload_success_flow(dummy_video: Path):
     assert result.quota_spent == 0
     assert result.raw_response["mode"] == "studio_playwright"
 
-    # Verify key steps were called
-    mock_loc.set_input_files.assert_called_with(str(dummy_video.resolve()))
+    # Verify key steps were called (file attach carries an explicit timeout)
+    mock_loc.set_input_files.assert_called_with(str(dummy_video.resolve()), timeout=_NAV_TIMEOUT_MS)
     mock_loc.fill.assert_any_call("Edge Automated Short #Shorts")
     mock_loc.fill.assert_any_call("Uploaded via Playwright Edge persistent profile")
 
@@ -947,31 +948,45 @@ def test_youtube_api_invalid_grant_handling(dummy_video: Path):
     with pytest.raises(CredentialsError) as exc_info:
         uploader.upload(path=dummy_video, title="Invalid Grant Test")
 
-    assert "invalid_grant" in str(exc_info.value).lower() or "revoked" in str(exc_info.value).lower()
+    assert (
+        "invalid_grant" in str(exc_info.value).lower() or "revoked" in str(exc_info.value).lower()
+    )
 
 
 def test_youtube_api_token_refresh_persisted(tmp_path: Path):
     """Verify that expired OAuth credentials are refreshed and persisted to token_path."""
     token_file = tmp_path / "token.json"
-    token_file.write_text('{"token": "old_token", "refresh_token": "valid_refresh"}', encoding="utf-8")
+    token_file.write_text(
+        '{"token": "old_token", "refresh_token": "valid_refresh"}', encoding="utf-8"
+    )
 
     mock_creds = MagicMock()
     mock_creds.expired = True
     mock_creds.refresh_token = "valid_refresh"
     mock_creds.valid = True
-    mock_creds.to_json.return_value = '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
+    mock_creds.to_json.return_value = (
+        '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
+    )
 
     with patch("autoshorts.uploader.youtube_api._get_google_libraries") as mock_libs:
         mock_req_cls = MagicMock()
         mock_creds_cls = MagicMock()
         mock_creds_cls.from_authorized_user_file.return_value = mock_creds
         mock_build = MagicMock()
-        mock_libs.return_value = (mock_req_cls, mock_creds_cls, MagicMock(), mock_build, MagicMock(), MagicMock())
+        mock_libs.return_value = (
+            mock_req_cls,
+            mock_creds_cls,
+            MagicMock(),
+            mock_build,
+            MagicMock(),
+            MagicMock(),
+        )
 
         uploader = YouTubeApiUploader(token_path=token_file)
         uploader.get_service()
 
         mock_creds.refresh.assert_called_once()
-        assert token_file.read_text(encoding="utf-8") == '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
-
-
+        assert (
+            token_file.read_text(encoding="utf-8")
+            == '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
+        )

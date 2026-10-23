@@ -49,7 +49,10 @@ def test_macos_power_management_iokit_success():
             return mock_cf
         raise OSError(f"Cannot load {path}")
 
-    with patch("sys.platform", "darwin"), patch("ctypes.cdll.LoadLibrary", side_effect=fake_load_library):
+    with (
+        patch("sys.platform", "darwin"),
+        patch("ctypes.cdll.LoadLibrary", side_effect=fake_load_library),
+    ):
         assert pm.prevent_system_sleep() is True
         assert pm._darwin_assertion_id == 42
         assert pm._darwin_caffeinate_proc is None
@@ -104,8 +107,12 @@ def test_macos_power_management_context_manager():
 
     with (
         patch("sys.platform", "darwin"),
-        patch("autoshorts.scheduler.power_management.prevent_system_sleep", return_value=True) as mock_prev,
-        patch("autoshorts.scheduler.power_management.allow_system_sleep", return_value=True) as mock_allow,
+        patch(
+            "autoshorts.scheduler.power_management.prevent_system_sleep", return_value=True
+        ) as mock_prev,
+        patch(
+            "autoshorts.scheduler.power_management.allow_system_sleep", return_value=True
+        ) as mock_allow,
     ):
         with pm.system_sleep_prevented():
             mock_prev.assert_called_once()
@@ -163,7 +170,9 @@ def test_terminate_process_tree_windows():
         patch("subprocess.run") as mock_run,
     ):
         terminate_process_tree(mock_proc)
-        mock_run.assert_called_once_with(["taskkill", "/F", "/T", "/PID", "5678"], capture_output=True, check=False)
+        mock_run.assert_called_once_with(
+            ["taskkill", "/F", "/T", "/PID", "5678"], capture_output=True, check=False
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -182,7 +191,9 @@ def test_safari_css_glassmorphism_backdrop_filter_parity():
             # Check surrounding context for -webkit-backdrop-filter
             surrounding = lines[max(0, i - 2) : min(len(lines), i + 3)]
             has_webkit = any("-webkit-backdrop-filter:" in s for s in surrounding)
-            assert has_webkit, f"Line {i+1} in style.css has 'backdrop-filter:' without '-webkit-backdrop-filter:':\n{line}"
+            assert has_webkit, (
+                f"Line {i + 1} in style.css has 'backdrop-filter:' without '-webkit-backdrop-filter:':\n{line}"
+            )
 
 
 def test_safari_css_form_appearance_resets():
@@ -190,7 +201,9 @@ def test_safari_css_form_appearance_resets():
     css_path = Path("src/autoshorts/dashboard/static/style.css")
     content = css_path.read_text(encoding="utf-8")
 
-    assert "-webkit-appearance: none;" in content, "Missing '-webkit-appearance: none;' in style.css"
+    assert "-webkit-appearance: none;" in content, (
+        "Missing '-webkit-appearance: none;' in style.css"
+    )
     assert "appearance: none;" in content, "Missing 'appearance: none;' in style.css"
 
 
@@ -219,20 +232,27 @@ def test_safari_js_date_parsing_and_sse_backoff():
 
     # Date parsing
     assert "function parseSafariSafeDate" in content, "Missing parseSafariSafeDate helper in app.js"
-    assert 's.replace(/\\s+/, "T")' in content or "s.replace(' ', 'T')" in content or 's.replace(" ", "T")' in content, (
-        "parseSafariSafeDate must replace space with 'T' for strict Safari ISO-8601 parsing"
-    )
+    assert (
+        's.replace(/\\s+/, "T")' in content
+        or "s.replace(' ', 'T')" in content
+        or 's.replace(" ", "T")' in content
+    ), "parseSafariSafeDate must replace space with 'T' for strict Safari ISO-8601 parsing"
 
     # SSE Reconnection with Backoff
     assert "scheduleSseReconnect" in content, "Missing scheduleSseReconnect in app.js"
     assert "EventSource.CLOSED" in content, "Missing EventSource.CLOSED handling in app.js"
 
     # HTML5 Video Autoplay Attributes
-    assert "ensureSafariMediaCompatibility" in content, "Missing ensureSafariMediaCompatibility in app.js"
-    assert 'video.setAttribute("playsinline"' in content or "video.setAttribute('playsinline'" in content, (
-        "openPreview must set playsinline on preview video element"
+    assert "ensureSafariMediaCompatibility" in content, (
+        "Missing ensureSafariMediaCompatibility in app.js"
     )
-    assert "video.muted = true" in content, "openPreview must set video.muted = true for Safari autoplay"
+    assert (
+        'video.setAttribute("playsinline"' in content
+        or "video.setAttribute('playsinline'" in content
+    ), "openPreview must set playsinline on preview video element"
+    assert "video.muted = true" in content, (
+        "openPreview must set video.muted = true for Safari autoplay"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -246,10 +266,14 @@ def test_start_sh_launcher_properties():
     assert sh_path.exists(), "start.sh was not found in project root"
 
     content_bytes = sh_path.read_bytes()
-    assert b"\r" not in content_bytes, "start.sh contains Windows CRLF line endings! Must be UNIX LF."
+    assert b"\r" not in content_bytes, (
+        "start.sh contains Windows CRLF line endings! Must be UNIX LF."
+    )
 
     content = content_bytes.decode("utf-8")
-    assert content.startswith("#!/usr/bin/env bash"), "start.sh must have '#!/usr/bin/env bash' shebang"
+    assert content.startswith("#!/usr/bin/env bash"), (
+        "start.sh must have '#!/usr/bin/env bash' shebang"
+    )
     assert "set -euo pipefail" in content, "start.sh must enforce 'set -euo pipefail'"
 
     # Flag parity with start.bat
@@ -273,8 +297,12 @@ def test_start_sh_launcher_properties():
     # macOS Homebrew and open command detection
     assert "/opt/homebrew/bin" in content, "start.sh missing Apple Silicon Homebrew path"
     assert "/usr/local/bin" in content, "start.sh missing Intel Mac Homebrew path"
-    assert 'open "$TARGET_URL"' in content or 'open "http://localhost:${PORT}"' in content or "open " in content, (
-        "start.sh missing macOS 'open' command for browser auto-opening"
-    )
+    assert (
+        'open "$TARGET_URL"' in content
+        or 'open "http://localhost:${PORT}"' in content
+        or "open " in content
+    ), "start.sh missing macOS 'open' command for browser auto-opening"
     assert "xdg-open" in content, "start.sh missing Linux xdg-open fallback"
-    assert "caffeinate" in content, "start.sh should acknowledge macOS sleep prevention / caffeinate"
+    assert "caffeinate" in content, (
+        "start.sh should acknowledge macOS sleep prevention / caffeinate"
+    )

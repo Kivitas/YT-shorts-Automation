@@ -328,6 +328,7 @@ class TranscriptFetcher:
             "--skip-download",
             "--no-playlist",
             "--no-warnings",
+            "--",
             canonical_url,
         ]
 
@@ -382,12 +383,21 @@ class TranscriptFetcher:
                 (f["url"] for f in target_entry if f.get("ext") == "vtt" and "url" in f), None
             )
 
+            # A failed or malformed subtitle URL must not skip the remaining fallbacks.
             if json3_url:
-                segments = self._fetch_and_parse_json3(json3_url)
+                try:
+                    segments = self._fetch_and_parse_json3(json3_url)
+                except Exception as exc:
+                    logger.debug("json3 subtitle fetch failed for %s: %s", video_id, exc)
+                    segments = []
                 if segments:
                     return segments
             if vtt_url:
-                segments = self._fetch_and_parse_vtt(vtt_url)
+                try:
+                    segments = self._fetch_and_parse_vtt(vtt_url)
+                except Exception as exc:
+                    logger.debug("vtt subtitle fetch failed for %s: %s", video_id, exc)
+                    segments = []
                 if segments:
                     return segments
 
@@ -435,6 +445,8 @@ class TranscriptFetcher:
             cmd = [
                 self.yt_dlp_binary,
                 "--skip-download",
+                "--no-playlist",
+                "--no-progress",
                 "--write-sub",
                 "--write-auto-sub",
                 "--sub-lang",
@@ -443,6 +455,7 @@ class TranscriptFetcher:
                 "vtt",
                 "-o",
                 out_template,
+                "--",
                 canonical_url,
             ]
 

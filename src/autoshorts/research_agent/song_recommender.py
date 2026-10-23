@@ -100,6 +100,7 @@ def _build_music_result(
         return res.to_dict()
     return res
 
+
 CURATED_VIRAL_BGM: list[dict[str, Any]] = [
     {
         "track_id": "drift_phonk",

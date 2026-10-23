@@ -128,7 +128,9 @@ def test_poll_queued_jobs_picks_up_queued_jobs(test_env: dict):
 
     # Create 3 queued jobs, but executor max_workers is 2
     for i in range(1, 4):
-        j = Job(id=f"job_q{i}", source_url=f"https://youtube.com/watch?v=q{i}", status=JobStatus.QUEUED)
+        j = Job(
+            id=f"job_q{i}", source_url=f"https://youtube.com/watch?v=q{i}", status=JobStatus.QUEUED
+        )
         state_mgr.save_job(j)
 
     dispatched = executor.poll_queued_jobs()
@@ -159,7 +161,7 @@ def test_api_parallel_status_and_process_queue(tmp_path: Path):
     state_mgr.save_job(j2)
 
     app = create_app(pipeline=mock_pipeline, state_manager=state_mgr, run_scheduler_worker=False)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost:8765") as client:
         # Check parallel-status
         res = client.get("/api/jobs/parallel-status")
         assert res.status_code == 200
@@ -188,24 +190,31 @@ def test_api_submit_and_retry_uses_parallel_runner(tmp_path: Path):
     mock_pipeline.state_manager = state_mgr
 
     # Pipeline submit_links returns Job objects
-    created_job = Job(id="job_sub_1", source_url="https://youtube.com/watch?v=sub1", status=JobStatus.QUEUED)
+    created_job = Job(
+        id="job_sub_1", source_url="https://youtube.com/watch?v=sub1", status=JobStatus.QUEUED
+    )
     mock_pipeline.submit_links.return_value = [created_job]
     mock_pipeline.process_job.side_effect = lambda j, **kwargs: j
 
     app = create_app(pipeline=mock_pipeline, state_manager=state_mgr, run_scheduler_worker=False)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost:8765") as client:
         # 1. Submit job
-        res = client.post("/api/jobs/submit", json={
-            "links": "https://youtube.com/watch?v=sub1",
-            "style_preset": "rapid",
-            "dopamine": "extreme",
-            "background": "subway",
-        })
+        res = client.post(
+            "/api/jobs/submit",
+            json={
+                "links": "https://youtube.com/watch?v=sub1",
+                "style_preset": "rapid",
+                "dopamine": "extreme",
+                "background": "subway",
+            },
+        )
         assert res.status_code == 200
         assert res.json()["success"] is True
 
         # 2. Retry single failed job
-        failed_job = Job(id="job_fail_1", source_url="https://youtube.com/watch?v=fail1", status=JobStatus.FAILED)
+        failed_job = Job(
+            id="job_fail_1", source_url="https://youtube.com/watch?v=fail1", status=JobStatus.FAILED
+        )
         state_mgr.save_job(failed_job)
 
         res_retry = client.post(f"/api/jobs/{failed_job.id}/retry")
@@ -213,7 +222,9 @@ def test_api_submit_and_retry_uses_parallel_runner(tmp_path: Path):
         assert res_retry.json()["success"] is True
 
         # 3. Batch retry
-        failed_job2 = Job(id="job_fail_2", source_url="https://youtube.com/watch?v=fail2", status=JobStatus.FAILED)
+        failed_job2 = Job(
+            id="job_fail_2", source_url="https://youtube.com/watch?v=fail2", status=JobStatus.FAILED
+        )
         state_mgr.save_job(failed_job2)
 
         res_batch = client.post("/api/jobs/batch-retry")

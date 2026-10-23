@@ -110,7 +110,7 @@ flowchart TD
     subgraph Production["2. Laya Rhythm & Audio/Visual Compositor"]
         D --> Rhy["Laya Rhythm Engine (Beat Snapping + Word Guards >= 50ms)"]
         Rhy --> E["Dead-Air Auto-Trimmer (JumpCuts + ZoomPunches)"]
-        E --> F["Smart Speaker Reframing + 7 Caption Presets"]
+        E --> F["Smart Speaker Reframing + 8 Caption Presets"]
         F --> G["Master Compositor (Dynamic Ducking + Rhythmic Release)"]
     end
 
@@ -210,12 +210,13 @@ The HUD ensures subtitle lines and key visual subjects remain centered and compl
 
 ---
 
-## 7 Studio Caption Presets & ⚡ Fast Re-Burn
+## 8 Studio Caption Presets & ⚡ Fast Re-Burn
 
-AutoShorts includes 7 high-retention SubStation Alpha (`.ass`) caption rendering presets:
+AutoShorts includes 8 high-retention SubStation Alpha (`.ass`) caption rendering presets:
 
 | Preset | Visual Style & Behavior | Typical Use Case |
 | :--- | :--- | :--- |
+| **`rapid`** | Montserrat ExtraBold at 84pt with neon yellow active words and spring-green emphasis, delivered as 1–2 word kinetic bursts. | Fast-paced shorts, hooks, high-energy dialogue |
 | **`neon`** *(Default)* | Vibrant yellow active karaoke pop (`#FFFF00`), dynamic scaling bounce (100% &rarr; 118% &rarr; 100%), micro-tilt angle pop (`\frz-2`), deep black outline, and keyword color accents. | High-retention clips, viral moments, gaming, fast dialogue |
 | **`hormozi`** | Ultra-bold punchy text (The Bold Font / Montserrat Black) with bright yellow active words, deep green keyword accents, and heavy black stroke. | Motivation, business, direct-response advice, personal branding |
 | **`mrbeast`** | Energetic pop font with dynamic orange, lime, and yellow highlights, playful active scale wobble, and thick drop shadows. | Challenges, surprising facts, viral entertainment |
@@ -240,7 +241,7 @@ Long-Form YouTube URL / Topic Prompt
   ├── [Ingestion & Discovery] (yt-dlp metadata probe / live link preview)
   ├── [Transcription & Alignment] (faster-whisper CPU int8 / edge-tts word events)
   ├── [SemIf Decision Engine] (Logit softmax scoring / Gemini video EDL planning)
-  ├── [Compositor Engine] (Pure FFmpeg 1080x1920: 5 layouts + 7 caption presets)
+  ├── [Compositor Engine] (Pure FFmpeg 1080x1920: 5 layouts + 8 caption presets)
   ├── [Interactive Review & Re-Burn] (9:16 Live phone previewer + safe-zone HUD)
   ├── [Daily Spread Scheduler] (50/day cap, 7/hr rolling limit, Pacific Time reset)
   ├── [Upload & Fallback Engine] (YouTube Data API v3 -> Playwright MS Edge Studio fallback)
@@ -262,7 +263,7 @@ Long-Form YouTube URL / Topic Prompt
    - Mid-flight failover catches `403 QuotaExceeded` and automatically deploys headless Microsoft Edge browser automation (`msedge`) to complete uploads with 0 quota cost.
 4. **Hardware Optimized for Consumer Windows PCs**:
    - 100% executable on consumer multi-core CPUs with integrated Intel UHD / Iris Xe Graphics.
-   - Bounded concurrency (`concurrency = 1`) to eliminate CPU thrashing and memory exhaustion.
+   - Bounded parallelism: parallel jobs default to `AUTOSHORTS_CONCURRENCY=3` (render semaphore in `pipeline.py` and `ParallelJobExecutor`), overridable via the environment variable, to balance throughput against CPU and memory use.
 
 ---
 
@@ -414,7 +415,7 @@ brew install python@3.12 uv ffmpeg
    ```
    - Automatically synchronizes your `.venv` virtual environment with `uv` (or `python3 -m venv`).
    - Detects Homebrew FFmpeg (`/opt/homebrew/bin/ffmpeg` on Apple Silicon or `/usr/local/bin/ffmpeg` on Intel).
-   - Auto-opens your default browser (Safari, Chrome, Arc, Firefox) to `http://localhost:8000`.
+   - Auto-opens your default browser (Safari, Chrome, Arc, Firefox) to `http://localhost:8765`.
    - Engages native macOS sleep prevention via `caffeinate -i -s` and IOKit power assertions during active video processing windows.
 
 3. **CLI Diagnostic & Testing Modes**:
@@ -451,7 +452,7 @@ AutoShorts Studio is certified for **Apple Safari 15+** on macOS:
 AutoShorts features an interactive **Settings Modal** accessible from the dashboard header (click **⚙️ Settings**):
 
 - **AI Engine / LLM Provider**:
-  - Switch between `local` (CPU GGUF via `llama-cpp-python`), `gemini` (Google Gemini 1.5 Flash / Pro), and `openrouter`.
+  - Switch between `local` (CPU GGUF via `llama-cpp-python`), `gemini` (Google Gemini, default model `gemini-3.5-flash-lite` from `config/config.yaml`), and `openrouter`.
   - Enter or update `GEMINI_API_KEY` and `OPENROUTER_API_KEY` with automatic secret masking in logs.
   - Set local model paths (default: `data/models/Qwen3-0.6B-Instruct-Q8_0.gguf`).
 - **Smart Clipping & Video Defaults (`job_defaults`)**:
@@ -459,7 +460,7 @@ AutoShorts features an interactive **Settings Modal** accessible from the dashbo
   - `auto_trim_silence`: Auto-detect dead-air pauses (`> 0.45s`) in speech transcripts and convert to tight `JumpCut` ranges (`true` by default).
   - Target clip duration bounds (`min_duration_seconds: 30`, `max_duration_seconds: 50`) and sliding window stride (`15s`).
 - **Caption Style & Layout Defaults (`branding`)**:
-  - Select default caption preset (`neon`, `hormozi`, `mrbeast`, `pill`, `minimal`, `cyberpunk`, `cinematic`).
+  - Select default caption preset (`neon`, `hormozi`, `mrbeast`, `pill`, `minimal`, `cyberpunk`, `cinematic`, `rapid`).
   - Set default layout mode (`split_50_50`, `split_70_30`, `full_blur_bg`, `full_center_crop`, `pip_gameplay`).
   - Set speaker reframing crop focus: `center`, `left`, `right`, or `dynamic_pan` (`crop_focus: "center"`).
 - **Upload & Privacy Defaults**:

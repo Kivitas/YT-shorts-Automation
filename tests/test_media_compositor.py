@@ -75,7 +75,10 @@ def test_probe_encoder_qsv_success():
     """Verify that h264_qsv is selected when the tiny test encode succeeds."""
     with (
         patch("autoshorts.media.encoder_probe.is_ffmpeg_available", return_value=True),
-        patch("autoshorts.media.encoder_probe.run_tiny_test_encode", return_value=True),
+        patch(
+            "autoshorts.media.encoder_probe.run_tiny_test_encode",
+            side_effect=lambda codec, *args, **kwargs: codec == "h264_qsv",
+        ),
     ):
         info = probe_encoder(preferred="auto", force_refresh=True)
         assert info.codec == "h264_qsv"
@@ -91,7 +94,7 @@ def test_probe_encoder_qsv_fails_falls_back_to_libx264():
         patch("autoshorts.media.encoder_probe.is_ffmpeg_available", return_value=True),
         patch(
             "autoshorts.media.encoder_probe.run_tiny_test_encode",
-            side_effect=[False, True],
+            side_effect=lambda codec, *args, **kwargs: codec == "libx264",
         ),
     ):
         info = probe_encoder(preferred="auto", force_refresh=True)
@@ -525,6 +528,7 @@ def test_compositor_single_source_full_blur_bg(tmp_path: Path):
         patch("subprocess.run", side_effect=mock_run),
         patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
         patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+        patch("autoshorts.media.compositor.has_video_stream", return_value=True),
     ):
         comp.compose(
             job_id="job_single_src",
@@ -983,7 +987,9 @@ def test_extract_thumbnail_auto_best_frame(tmp_path: Path):
         patch("subprocess.run", side_effect=mock_subprocess),
         patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
     ):
-        res = comp.extract_thumbnail(video_file, thumb_file, auto_best_frame=True, search_window_sec=2.5)
+        res = comp.extract_thumbnail(
+            video_file, thumb_file, auto_best_frame=True, search_window_sec=2.5
+        )
 
     assert res == thumb_file
     assert thumb_file.is_file()
@@ -1211,8 +1217,7 @@ def test_split_screen_separator_line_rendering():
         split_separator="drawbox",
     )
     assert (
-        "[pip_scaled]drawbox=x=0:y=0:w=iw:h=ih:color=0x00E5FF@0.9:t=4[pip_bordered]"
-        in fg_pip_sep
+        "[pip_scaled]drawbox=x=0:y=0:w=iw:h=ih:color=0x00E5FF@0.9:t=4[pip_bordered]" in fg_pip_sep
     )
     assert "[pip_bordered]overlay=" in fg_pip_sep
 
@@ -1261,7 +1266,7 @@ def test_preset_rapid_subtitle_integration(tmp_path: Path):
         if cmd and "ffmpeg" in str(cmd[0]):
             captured_cmd = list(cmd)
             target_tmp = cmd[-1]
-            if target_tmp != "-":
+            if target_tmp != "-" and str(target_tmp).startswith(str(tmp_path)):
                 Path(target_tmp).write_bytes(b"rendered rapid short")
         return mock_proc
 
@@ -1329,7 +1334,7 @@ def test_hardware_encoder_format_fallback(tmp_path: Path):
         mock_proc.returncode = 0
         if cmd and "ffmpeg" in str(cmd[0]):
             target_tmp = cmd[-1]
-            if target_tmp != "-":
+            if target_tmp != "-" and str(target_tmp).startswith(str(tmp_path)):
                 Path(target_tmp).write_bytes(b"rendered hw short")
         return mock_proc
 
@@ -1377,7 +1382,7 @@ def test_hardware_encoder_format_fallback(tmp_path: Path):
         # Fallback CPU command
         if cmd and "ffmpeg" in str(cmd[0]):
             target_tmp = cmd[-1]
-            if target_tmp != "-":
+            if target_tmp != "-" and str(target_tmp).startswith(str(tmp_path)):
                 Path(target_tmp).write_bytes(b"rendered cpu short")
         mock_proc.returncode = 0
         return mock_proc
@@ -1404,5 +1409,3 @@ def test_hardware_encoder_format_fallback(tmp_path: Path):
     assert len(ffmpeg_calls) == 2
     assert "h264_qsv" in ffmpeg_calls[0]
     assert "libx264" in ffmpeg_calls[1]
-
-

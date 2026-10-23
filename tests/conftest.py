@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from autoshorts.pipeline import ShortsPipeline
+
+
+@pytest.fixture(autouse=True)
+def _isolate_repo_asset_and_output_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Point writable repo folders (assets/, output/) at tmp_path so no test writes into the repo.
+
+    Each importing module binds the helper by name, so every binding is patched, not only
+    autoshorts.core.paths.
+    """
+    assets_dir = tmp_path / "isolated_assets"
+    output_dir = tmp_path / "isolated_output"
+
+    def _assets() -> Path:
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        return assets_dir
+
+    def _output() -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    monkeypatch.setattr("autoshorts.core.paths.get_assets_dir", _assets)
+    monkeypatch.setattr("autoshorts.core.paths.get_output_dir", _output)
+    monkeypatch.setattr("autoshorts.dashboard.app.get_assets_dir", _assets)
+    monkeypatch.setattr("autoshorts.dashboard.app.get_output_dir", _output)
+    monkeypatch.setattr("autoshorts.media.background_fetcher.get_assets_dir", _assets)
 
 
 @pytest.fixture(autouse=True)

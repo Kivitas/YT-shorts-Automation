@@ -37,7 +37,7 @@ fi
 # -----------------------------------------------------------------------------
 # Configuration Defaults
 # -----------------------------------------------------------------------------
-PORT="8000"
+PORT="8765"
 HOST="127.0.0.1"
 DO_CHECK=0
 DO_TEST=0
@@ -55,7 +55,7 @@ show_help() {
     printf "  Rapid Kinetic Captions (84pt pop) | Parallel Processing (3 Workers)\n"
     printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"
     printf "%bUsage:%b\n" "$C_WHITE" "$C_RESET"
-    printf "  ./start.sh                     Launch web dashboard at http://localhost:8000\n"
+    printf "  ./start.sh                     Launch web dashboard at http://localhost:8765\n"
     printf "  ./start.sh --port <port>       Launch dashboard on custom port (e.g. 8080)\n"
     printf "  ./start.sh -p <port>           Short alias for --port\n"
     printf "  ./start.sh --check             Run comprehensive pre-flight diagnostics and exit\n"
@@ -131,6 +131,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate PORT: it is interpolated into python -c strings below, so it must be a plain number.
+if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
+    printf "%b[ERROR] Invalid port '%s'. Use a number between 1 and 65535.%b\n" "$C_RED" "$PORT" "$C_RESET"
+    exit 1
+fi
+
 # -----------------------------------------------------------------------------
 # Detect Homebrew & Configure PATH on macOS & Unix
 # -----------------------------------------------------------------------------
@@ -168,7 +174,7 @@ fi
 SYSTEM_PYTHON=""
 for candidate in python3.12 python3.11 python3.13 python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
-        if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
+        if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >/dev/null 2>&1; then
             SYSTEM_PYTHON="$(command -v "$candidate")"
             break
         fi
@@ -206,17 +212,18 @@ if [[ ! -x "$PYTHON_EXE" ]]; then
     printf "%b[INFO]%b Virtual environment not found (.venv/bin/python missing).\n" "$C_YELLOW" "$C_RESET"
     if [[ -n "$UV_CMD" ]]; then
         printf "%b[INFO]%b Detected uv package manager (%s). Preparing environment...\n" "$C_CYAN" "$C_RESET" "$UV_CMD"
-        "$UV_CMD" venv --python 3.12 2>/dev/null || "$UV_CMD" venv 2>/dev/null || true
+        "$UV_CMD" venv --python 3.12 || "$UV_CMD" venv
         if [[ -x "$PYTHON_EXE" ]]; then
-            "$UV_CMD" pip install -e . 2>/dev/null || "$PYTHON_EXE" -m pip install -e . 2>/dev/null || true
+            printf "%b[INFO]%b Installing dependencies in editable mode (this can take a few minutes)...\n" "$C_CYAN" "$C_RESET"
+            "$UV_CMD" pip install -e . || "$PYTHON_EXE" -m pip install -e . || true
         fi
     elif [[ -n "$SYSTEM_PYTHON" ]]; then
         printf "%b[INFO]%b Initializing virtual environment using %s -m venv...\n" "$C_CYAN" "$C_RESET" "$SYSTEM_PYTHON"
         "$SYSTEM_PYTHON" -m venv .venv
         if [[ -x "$PYTHON_EXE" ]]; then
-            printf "%b[INFO]%b Installing dependencies in editable mode...\n" "$C_CYAN" "$C_RESET"
-            "$PYTHON_EXE" -m pip install --upgrade pip >/dev/null 2>&1 || true
-            "$PYTHON_EXE" -m pip install -e . 2>/dev/null || true
+            printf "%b[INFO]%b Installing dependencies in editable mode (this can take a few minutes)...\n" "$C_CYAN" "$C_RESET"
+            "$PYTHON_EXE" -m pip install --upgrade pip >/dev/null || true
+            "$PYTHON_EXE" -m pip install -e . || true
         fi
     else
         printf "%b[ERROR] Neither Python 3.11+ nor uv was found on your system PATH!%b\n" "$C_RED" "$C_RESET"
@@ -228,6 +235,14 @@ fi
 
 if [[ ! -x "$PYTHON_EXE" ]]; then
     printf "%b[ERROR] Failed to initialize .venv virtual environment.%b\n" "$C_RED" "$C_RESET"
+    exit 1
+fi
+
+# Dependencies must import before we go further; a silent install failure would otherwise
+# only surface later as a confusing crash inside the dashboard.
+if ! "$PYTHON_EXE" -c "import autoshorts, fastapi, uvicorn" >/dev/null 2>&1; then
+    printf "%b[ERROR] Core dependencies are missing from .venv.%b\n" "$C_RED" "$C_RESET"
+    printf "Fix the install by running: uv pip install -e .   (or: %s -m pip install -e .)\n" "$PYTHON_EXE"
     exit 1
 fi
 
@@ -424,7 +439,11 @@ printf "  Platform:             %s (%s)\n" "$(uname -s)" "$(uname -m)"
 printf "  Video Compositor:     %s\n" "$FFMPEG_STATUS"
 printf "  Parallel Engine:      Active (%s Workers via AUTOSHORTS_CONCURRENCY)\n" "$AUTOSHORTS_CONCURRENCY"
 printf "  Caption Presets:      Active (Rapid Kinetic 84pt, Neon, Bold, Minimal)\n"
-printf "  Sleep Prevention:     Active (caffeinate / IOKit)\n"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    printf "  Sleep Prevention:     Active (caffeinate -i)\n"
+else
+    printf "  Sleep Prevention:     Not available on this OS\n"
+fi
 printf "  Persistence:          Zero-Phantom-Data Mode (Atomic SQLite)\n"
 printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"
 printf "%b[INFO] Starting AutoShorts Studio Dashboard...%b\n" "$C_WHITE" "$C_RESET"
@@ -453,7 +472,12 @@ trap cleanup INT TERM
 RUN_FLAGS=("--host" "$HOST" "--port" "$PORT" "--no-browser")
 
 set +e
-"$PYTHON_EXE" run.py dashboard "${RUN_FLAGS[@]}"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    # Keep the Mac awake while jobs render; caffeinate ships with every macOS release.
+    caffeinate -i "$PYTHON_EXE" run.py dashboard "${RUN_FLAGS[@]}"
+else
+    "$PYTHON_EXE" run.py dashboard "${RUN_FLAGS[@]}"
+fi
 EXIT_CODE=$?
 set -e
 

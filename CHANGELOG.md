@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SafetyCleaner` imports `send2trash` lazily, so the pipeline, dashboard, and CLI no longer fail at import time when the package is absent.
 - Missing `os` import broke `pipeline` import; the SSE log-stream test no longer hangs the suite by iterating an infinite stream through `TestClient`.
 - `test_gemini_provider_missing_key` is isolated from a developer `.env` holding a real key.
+- Dashboard security hardening and `.env` value escaping.
+- Default dashboard port is `8765` in `start.sh` (matching `config/config.yaml` and the README); `--port` is validated as a number from 1 to 65535.
+- `SafetyCleaner` retries only file-lock errors (`PermissionError`, `EACCES`/`EBUSY`, Windows `winerror` 32/33); other `OSError`s are raised immediately.
+- Package version is `1.3.0` in `pyproject.toml` and `autoshorts.__version__`.
+- Documentation corrected: concurrency default (`AUTOSHORTS_CONCURRENCY=3`), 8 caption presets including `rapid`, and the Gemini default model.
+- `config/config.yaml` is untracked and git-ignored; `config/config.example.yaml` remains the tracked template.
 
 ---
 

@@ -233,19 +233,21 @@ def resolve_yt_dlp_binary(configured_binary: str = "yt-dlp") -> str:
     virtual environment Scripts/ (Windows) or bin/ (POSIX), or sys.executable directory.
     Falls back to configured_binary if not found.
     """
-    if shutil.which(configured_binary):
+    exe_name = "yt-dlp.exe" if os.name == "nt" else "yt-dlp"
+    is_bare_name = os.path.basename(configured_binary) == configured_binary
+
+    # A bare name prefers the copy in the active environment, which matches the pinned
+    # dependency. An outdated system yt-dlp earlier on PATH would otherwise win silently.
+    if not is_bare_name and shutil.which(configured_binary):
         return configured_binary
 
     candidates = [
-        Path(sys.prefix)
-        / ("Scripts" if os.name == "nt" else "bin")
-        / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp"),
-        Path(sys.executable).parent
-        / ("yt-dlp.exe" if os.name == "nt" else "yt-dlp"),
+        Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin") / exe_name,
+        Path(sys.executable).parent / exe_name,
     ]
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate.resolve())
 
+    # Not found in the environment: hand back the name so PATH lookup happens at call time.
     return configured_binary
-

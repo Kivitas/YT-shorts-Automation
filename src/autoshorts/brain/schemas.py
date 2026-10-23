@@ -35,7 +35,8 @@ class ViralReview(BaseModel):
     )
     critique: str = Field(default="", description="Reasoning and diagnostic feedback")
     patched_hook: str | None = Field(
-        default=None, description="Fast-patched high-retention hook variant if verdict is fast_patch"
+        default=None,
+        description="Fast-patched high-retention hook variant if verdict is fast_patch",
     )
     attempt: int = Field(default=1, ge=1, le=5, description="Evaluation iteration attempt")
     mode: Literal["mode_a", "mode_b"] = Field(
@@ -56,7 +57,9 @@ class ViralReview(BaseModel):
 class SEOMetadata(BaseModel):
     """Viral SEO package separating description hashtags from YouTube API search tags."""
 
-    primary_title: str = Field(..., max_length=100, description="Primary recommended video title (<100 chars)")
+    primary_title: str = Field(
+        ..., max_length=100, description="Primary recommended video title (<100 chars)"
+    )
     titles: list[str] = Field(
         default_factory=list, description="3 A/B title candidates (<100 chars each)"
     )
@@ -68,7 +71,9 @@ class SEOMetadata(BaseModel):
         default_factory=list,
         description="Clean keywords without # for YouTube API search tags (joined length <= 500 chars)",
     )
-    category_id: str = Field(default="28", description="YouTube category ID (default 28: Science & Technology)")
+    category_id: str = Field(
+        default="28", description="YouTube category ID (default 28: Science & Technology)"
+    )
 
     @field_validator("titles")
     @classmethod
@@ -119,13 +124,23 @@ class AudioPlan(BaseModel):
 
     bgm_track_id: str | None = Field(default=None, description="Catalog track identifier")
     bgm_title: str = Field(default="", description="Resolved BGM track title")
-    bgm_path: str | None = Field(default=None, description="Resolved absolute or relative path to music file")
+    bgm_path: str | None = Field(
+        default=None, description="Resolved absolute or relative path to music file"
+    )
     tempo_bpm: int = Field(default=120, ge=40, le=240, description="Music tempo in BPM")
-    target_bpm: int = Field(default=120, ge=40, le=240, description="Target BPM derived from speech WPS")
-    words_per_second: float = Field(default=0.0, ge=0.0, description="Calculated speech cadence (WPS)")
+    target_bpm: int = Field(
+        default=120, ge=40, le=240, description="Target BPM derived from speech WPS"
+    )
+    words_per_second: float = Field(
+        default=0.0, ge=0.0, description="Calculated speech cadence (WPS)"
+    )
     mood: str = Field(default="energetic", description="Matched musical mood")
-    volume: float = Field(default=0.18, ge=0.0, le=1.0, description="Sidechain ducking base music volume")
-    ducking_release_ms: int = Field(default=250, description="Sidechain compressor release duration in ms")
+    volume: float = Field(
+        default=0.18, ge=0.0, le=1.0, description="Sidechain ducking base music volume"
+    )
+    ducking_release_ms: int = Field(
+        default=250, description="Sidechain compressor release duration in ms"
+    )
     confidence: float = Field(default=0.85, ge=0.0, le=1.0, description="Rhythm confidence score")
 
 
@@ -160,11 +175,21 @@ class ResearchIntel(BaseModel):
 
     niche: str = Field(default="general", description="Target content niche")
     topic: str = Field(default="", description="Core subject matter or viral trend")
-    target_audience: str = Field(default="", description="Audience demographic & psychographic profile")
-    key_insights: list[str] = Field(default_factory=list, description="High-leverage talking points or facts")
-    viral_angles: list[str] = Field(default_factory=list, description="Hook angles and emotional triggers")
-    sources: list[str] = Field(default_factory=list, description="Reference video URLs or research sources")
-    trending_score: float = Field(default=0.0, ge=0.0, le=100.0, description="Viral trend velocity score")
+    target_audience: str = Field(
+        default="", description="Audience demographic & psychographic profile"
+    )
+    key_insights: list[str] = Field(
+        default_factory=list, description="High-leverage talking points or facts"
+    )
+    viral_angles: list[str] = Field(
+        default_factory=list, description="Hook angles and emotional triggers"
+    )
+    sources: list[str] = Field(
+        default_factory=list, description="Reference video URLs or research sources"
+    )
+    trending_score: float = Field(
+        default=0.0, ge=0.0, le=100.0, description="Viral trend velocity score"
+    )
     projected_views: int = Field(default=500_000, description="Projected 48-hour view horizon")
 
 

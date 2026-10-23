@@ -144,8 +144,7 @@ class LayaRhythmEngine:
 
         # Onset Detection Function: half-wave rectified temporal energy difference
         odf: list[float] = [
-            max(0.0, frames_energy[k] - frames_energy[k - 1])
-            for k in range(1, len(frames_energy))
+            max(0.0, frames_energy[k] - frames_energy[k - 1]) for k in range(1, len(frames_energy))
         ]
 
         odf_max = max(odf) if odf else 0.0
@@ -269,9 +268,7 @@ class LayaRhythmEngine:
             else (self._last_grid.confidence if self._last_grid else 1.0)
         )
         active_beats = (
-            list(beats)
-            if beats is not None
-            else (self._last_grid.beats if self._last_grid else [])
+            list(beats) if beats is not None else (self._last_grid.beats if self._last_grid else [])
         )
 
         if conf < self.confidence_floor or not active_beats:
@@ -332,9 +329,7 @@ class LayaRhythmEngine:
             else (self._last_grid.confidence if self._last_grid else 1.0)
         )
         active_beats = (
-            list(beats)
-            if beats is not None
-            else (self._last_grid.beats if self._last_grid else [])
+            list(beats) if beats is not None else (self._last_grid.beats if self._last_grid else [])
         )
         guard = self.speech_boundary_guard_sec
 

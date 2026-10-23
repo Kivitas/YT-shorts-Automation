@@ -84,9 +84,7 @@ def _prevent_system_sleep_darwin() -> bool:
                 _darwin_assertion_id,
             )
             return True
-        logger.warning(
-            "IOKit IOPMAssertionCreateWithName returned non-zero error code %d", ret
-        )
+        logger.warning("IOKit IOPMAssertionCreateWithName returned non-zero error code %d", ret)
     except Exception as exc:
         logger.debug("IOKit assertion unavailable or failed (%s); falling back to caffeinate", exc)
 
@@ -99,9 +97,7 @@ def _prevent_system_sleep_darwin() -> bool:
         )
         if proc.poll() is None:
             _darwin_caffeinate_proc = proc
-            logger.debug(
-                "macOS sleep prevention activated via caffeinate (PID: %s)", proc.pid
-            )
+            logger.debug("macOS sleep prevention activated via caffeinate (PID: %s)", proc.pid)
             return True
         logger.warning("caffeinate process exited immediately.")
         return False

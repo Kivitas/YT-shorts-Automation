@@ -9,6 +9,8 @@ with #Shorts guaranteed) across three proven psychological framing styles:
 
 from __future__ import annotations
 
+import re
+
 from autoshorts.uploader.description_builder import (
     DEFAULT_ATTRIBUTION_DISCLAIMER,
     DEFAULT_DESCRIPTION_TEMPLATE,
@@ -21,22 +23,27 @@ from autoshorts.uploader.description_builder import (
     format_timestamp_display,
     normalize_hashtags,
     sanitize_youtube_text,
+    truncate_on_word,
 )
 
 
 def _format_bounded_shorts_title(core_text: str, max_len: int = 99) -> str:
     """Ensure title is sanitized, includes #Shorts, and is strictly < 100 characters."""
-    cleaned = sanitize_youtube_text(core_text).strip()
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", sanitize_youtube_text(core_text)).strip()
     # Remove any trailing #shorts to avoid duplication before re-appending
     if cleaned.lower().endswith("#shorts"):
         cleaned = cleaned[: -len("#shorts")].rstrip()
+    if not cleaned:
+        cleaned = "Short"
 
     suffix = " #Shorts"
     limit = min(max_len, MAX_TITLE_LENGTH - 1)  # Strictly < 100 chars (max 99)
     max_core = limit - len(suffix)
 
     if len(cleaned) > max_core:
-        cleaned = cleaned[: max(1, max_core - 3)].rstrip(" -|:,.!?") + "..."
+        # Cut on a word boundary; the ellipsis counts toward the core budget.
+        head = truncate_on_word(cleaned, max(1, max_core - 3)).rstrip(" -|:,.!?")
+        cleaned = f"{head or cleaned[:1]}..."
 
     final = f"{cleaned}{suffix}".strip()
     return final[:limit]

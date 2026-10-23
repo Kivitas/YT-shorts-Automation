@@ -16,12 +16,13 @@ from typing import Any
 
 from autoshorts.core.config import SchedulerConfig, Settings, UploadConfig
 from autoshorts.core.contracts import Cleaner, Uploader
-from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
+from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError, UploadError
 from autoshorts.core.models import JobStatus, UploadResult, resolve_verification
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.power_management import allow_system_sleep, prevent_system_sleep
 from autoshorts.scheduler.slot_generator import SlotGenerator
+from autoshorts.uploader.errors import QuotaExceededError
 from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
 from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
@@ -426,20 +427,34 @@ class SpreadScheduler:
 
         # Collect job metadata for complete forwarding
         job_obj = self.state_manager.get_job(job_id)
-        category_id = getattr(job_obj, "category_id", None) or getattr(upload_cfg, "category_id", "24")
+        category_id = getattr(job_obj, "category_id", None) or getattr(
+            upload_cfg, "category_id", "24"
+        )
         altered_content = getattr(job_obj, "altered_content", None)
         if altered_content is None:
             altered_content = getattr(upload_cfg, "altered_content", False)
         publish_at = getattr(job_obj, "publish_at", None) or getattr(upload_cfg, "publish_at", None)
-        playlist_id = getattr(job_obj, "playlist_id", None) or getattr(upload_cfg, "playlist_id", None)
+        playlist_id = getattr(job_obj, "playlist_id", None) or getattr(
+            upload_cfg, "playlist_id", None
+        )
         auto_pin_comment = getattr(job_obj, "auto_pin_comment", None)
         if auto_pin_comment is None:
             auto_pin_comment = getattr(upload_cfg, "auto_pin_comment", False)
-        pin_comment_text = getattr(job_obj, "pin_comment_text", None) or getattr(upload_cfg, "pin_comment_text", None)
+        pin_comment_text = getattr(job_obj, "pin_comment_text", None) or getattr(
+            upload_cfg, "pin_comment_text", None
+        )
         thumbnail_path = None
-        if hasattr(job_obj, "thumbnail_path") and job_obj.thumbnail_path and Path(job_obj.thumbnail_path).is_file():
+        if (
+            hasattr(job_obj, "thumbnail_path")
+            and job_obj.thumbnail_path
+            and Path(job_obj.thumbnail_path).is_file()
+        ):
             thumbnail_path = Path(job_obj.thumbnail_path)
-        elif job_obj and job_obj.selected_clips and getattr(job_obj.selected_clips[0], "thumbnail_path", None):
+        elif (
+            job_obj
+            and job_obj.selected_clips
+            and getattr(job_obj.selected_clips[0], "thumbnail_path", None)
+        ):
             tp = Path(job_obj.selected_clips[0].thumbnail_path)
             if tp.is_file():
                 thumbnail_path = tp
@@ -467,6 +482,7 @@ class SpreadScheduler:
                 }
                 try:
                     import inspect
+
                     sig = inspect.signature(uploader_to_use.upload)
                     has_varkw = any(
                         p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
@@ -479,11 +495,7 @@ class SpreadScheduler:
 
                 result = uploader_to_use.upload(**kwargs)
             except Exception as up_err:
-                is_quota_err = isinstance(up_err, QuotaExhaustedError) or (
-                    "quota" in str(up_err).lower()
-                    or "quotaexceeded" in str(up_err).lower()
-                    or "403" in str(up_err)
-                )
+                is_quota_err = isinstance(up_err, (QuotaExceededError, QuotaExhaustedError))
                 if is_quota_err and fallback_mode == "studio" and not fell_back_to_studio:
                     logger.warning(
                         "Encountered quota exhaustion error (%s) for job %s. "
@@ -515,7 +527,16 @@ class SpreadScheduler:
             if job and job.status == JobStatus.UPLOADING:
                 self.state_manager.update_job_status(job_id, JobStatus.VERIFYING)
 
-            verified = uploader_to_use.verify(result.video_id)
+            # The video is already live: a verification error must never fail the slot, because a
+            # retry would upload the same video a second time.
+            try:
+                verified = uploader_to_use.verify(result.video_id)
+            except UploadError as verify_err:
+                logger.warning(
+                    "Verification raised after upload of %s: %s", result.video_id, verify_err
+                )
+                verified = False
+                result.verification_note = f"Upload succeeded but verification failed: {verify_err}"
 
             # Same verification contract as the immediate-upload path: a DOM-scraped Studio
             # result is "queried", never "confirmed".
@@ -529,9 +550,11 @@ class SpreadScheduler:
                     "Studio DOM. Confirm the video manually before treating it as published."
                 )
 
-            if verified and not fell_back_to_studio and getattr(
-                uploader_to_use, "quota_tracker", None
-            ) is None:
+            if (
+                verified
+                and not fell_back_to_studio
+                and getattr(uploader_to_use, "quota_tracker", None) is None
+            ):
                 self.quota_tracker.record_general(1)
 
             if fell_back_to_studio:

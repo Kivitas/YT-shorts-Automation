@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,44 @@ from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import get_output_dir
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _safe_stem(stem: str, max_len: int = 120) -> str:
+    """Make a filename stem safe on Windows and POSIX.
+
+    Replaces invalid characters, strips trailing dots/spaces (Windows silently drops them),
+    prefixes reserved device names (CON, NUL, COM1, ...) and never returns an empty string.
+    """
+    cleaned = _INVALID_FILENAME_CHARS.sub("_", stem).strip().rstrip(". ")
+    if not cleaned:
+        cleaned = "video"
+    if cleaned.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+        cleaned = f"_{cleaned}"
+    return cleaned[:max_len].rstrip(". ") or "video"
+
+
+def _unique_path(path: Path) -> Path:
+    """Return path, or 'name (2).ext', 'name (3).ext', ... if it already exists."""
+    if not path.exists():
+        return path
+    n = 2
+    while True:
+        candidate = path.with_name(f"{path.stem} ({n}){path.suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
 
 
 class LocalExportUploader:
@@ -43,15 +82,16 @@ class LocalExportUploader:
             raise FileNotFoundError(f"Source video file not found: {src_path}")
 
         video_id = f"local_{uuid4().hex[:11]}"
-        dest_filename = f"{src_path.stem}_{video_id}{src_path.suffix}"
-        dest_path = self.export_dir / dest_filename
+        safe_suffix = _INVALID_FILENAME_CHARS.sub("", src_path.suffix) or ".mp4"
+        dest_filename = f"{_safe_stem(src_path.stem)}_{video_id}{safe_suffix}"
+        dest_path = _unique_path(self.export_dir / dest_filename)
 
         # Copy video file
         shutil.copy2(src_path, dest_path)
         self._exported_files[video_id] = dest_path
 
-        # Write metadata sidecar JSON
-        meta_path = self.export_dir / f"{dest_path.stem}_meta.json"
+        # Write metadata sidecar JSON (never overwrite an existing sidecar)
+        meta_path = _unique_path(self.export_dir / f"{dest_path.stem}_meta.json")
         metadata = {
             "video_id": video_id,
             "title": title,
@@ -69,7 +109,7 @@ class LocalExportUploader:
 
         return UploadResult(
             video_id=video_id,
-            url=f"file:///{dest_path.as_posix()}",
+            url=dest_path.as_uri(),
             status="exported",
             # "Verified" here means the exported file is present on disk; there is no
             # YouTube upload to confirm. verification_kind keeps that distinction explicit.

@@ -172,20 +172,24 @@ class TestSubprocessSearchAndDownload:
     @patch("subprocess.run")
     def test_search_category_videos_success(self, mock_run: MagicMock) -> None:
         sample_stdout = (
-            json.dumps({
-                "id": "abc111",
-                "title": "Minecraft Parkour Gameplay No Copyright Free To Use",
-                "duration": 300,
-                "channel": "Parkour Creator",
-                "url": "https://youtube.com/watch?v=abc111",
-            })
+            json.dumps(
+                {
+                    "id": "abc111",
+                    "title": "Minecraft Parkour Gameplay No Copyright Free To Use",
+                    "duration": 300,
+                    "channel": "Parkour Creator",
+                    "url": "https://youtube.com/watch?v=abc111",
+                }
+            )
             + "\n"
-            + json.dumps({
-                "id": "abc222",
-                "title": "Minecraft Short Clip with Watermarked Content",
-                "duration": 20,
-                "channel": "Shorts",
-            })
+            + json.dumps(
+                {
+                    "id": "abc222",
+                    "title": "Minecraft Short Clip with Watermarked Content",
+                    "duration": 20,
+                    "channel": "Shorts",
+                }
+            )
         )
         mock_run.return_value = MagicMock(returncode=0, stdout=sample_stdout, stderr="")
 
@@ -202,7 +206,9 @@ class TestSubprocessSearchAndDownload:
         assert candidates == []
 
     @patch("subprocess.run")
-    def test_download_source_video_skips_if_exists(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_download_source_video_skips_if_exists(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
         existing_file = tmp_path / "existing.mp4"
         existing_file.write_bytes(b"dummy video data")
 
@@ -211,7 +217,9 @@ class TestSubprocessSearchAndDownload:
         mock_run.assert_not_called()
 
     @patch("subprocess.run")
-    def test_download_source_video_subprocess_invoked(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_download_source_video_subprocess_invoked(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
         target = tmp_path / "downloaded.mp4"
 
         def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
@@ -432,7 +440,18 @@ class TestCLICollectGameplay:
     def test_cli_parse_args(self) -> None:
         from scripts.collect_gameplay import parse_args
 
-        args = parse_args(["--categories", "minecraft", "subway", "--per-category", "3", "--segment-sec", "45", "--dry-run"])
+        args = parse_args(
+            [
+                "--categories",
+                "minecraft",
+                "subway",
+                "--per-category",
+                "3",
+                "--segment-sec",
+                "45",
+                "--dry-run",
+            ]
+        )
         assert args.categories == ["minecraft", "subway"]
         assert args.per_category == 3
         assert args.segment_sec == 45.0
@@ -440,7 +459,9 @@ class TestCLICollectGameplay:
         assert args.list is False
 
     @patch("scripts.collect_gameplay.get_categories_summary")
-    def test_cli_list_flag(self, mock_summary: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_cli_list_flag(
+        self, mock_summary: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         from scripts.collect_gameplay import main
 
         mock_summary.return_value = [

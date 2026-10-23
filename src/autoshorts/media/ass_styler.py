@@ -126,6 +126,18 @@ def hex_to_ass_color(color_str: str) -> str:
     return s
 
 
+def escape_ass_text(text: str) -> str:
+    """Make arbitrary speech text safe for an ASS Dialogue Text field.
+
+    '{' and '}' delimit override blocks and a backslash starts an override code such as
+    \\N or \\h, so an unmatched brace would swallow the rest of the line. They are replaced
+    with look-alike characters, and line breaks are flattened to spaces. Commas need no
+    escaping because Text is the last field of a Dialogue line.
+    """
+    cleaned = text.replace("\\", "＼").replace("{", "(").replace("}", ")")
+    return cleaned.replace("\r", " ").replace("\n", " ")
+
+
 def strip_emojis(text: str) -> str:
     """Remove Unicode emojis from text cleanly."""
     cleaned = EMOJI_REGEX.sub("", text)
@@ -643,7 +655,7 @@ def build_ass_script(
 
     # Hook title card in the first few seconds (Layer 1) - skip if hook_banner_style == "none"
     if hook_title and hb_style != "none":
-        raw_hook = hook_title.strip()
+        raw_hook = escape_ass_text(hook_title.strip())
         if text_transform == "uppercase":
             clean_hook = raw_hook.upper()
         elif text_transform == "title":
@@ -685,7 +697,7 @@ def build_ass_script(
             # Assemble full chunk line with active word styled
             rendered_words: list[str] = []
             for j, w in enumerate(chunk.words):
-                raw_w = w.word.strip()
+                raw_w = escape_ass_text(w.word.strip())
                 if text_transform == "uppercase":
                     w_text = raw_w.upper()
                 elif text_transform == "title":
@@ -754,7 +766,7 @@ def build_ass_script(
         watermark_start = max(0.0, total_duration_sec - 4.0)
         wm_start_str = format_ass_timestamp(watermark_start)
         wm_end_str = format_ass_timestamp(total_duration_sec)
-        clean_credit = onscreen_credit.strip()
+        clean_credit = escape_ass_text(onscreen_credit.strip())
         lines.append(
             f"Dialogue: 2,{wm_start_str},{wm_end_str},Watermark,,0,0,0,,"
             f"{{\\fad(300,200)}}Source: {clean_credit}"

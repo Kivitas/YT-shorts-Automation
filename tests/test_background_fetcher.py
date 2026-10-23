@@ -251,7 +251,7 @@ def api_client(tmp_path: Path):
     mock_pipe.state_manager = state_mgr
 
     app = create_app(pipeline=mock_pipe, state_manager=state_mgr)
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost:8765")
 
 
 def test_api_get_backgrounds(api_client: TestClient):

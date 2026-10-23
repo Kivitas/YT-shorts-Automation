@@ -77,6 +77,17 @@ def mask_secret(value: str | None) -> str:
 # -----------------------------------------------------------------------------
 
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Inside a double-quoted .env value, only \\ and \" are escapes (same as python-dotenv).
+_ENV_DQ_ESCAPE_RE = re.compile(r'\\(["\\])')
+
+
+def _format_env_line(key: str, value: str) -> str:
+    """Render KEY="value" with backslashes and double quotes escaped."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{key}="{escaped}"'
+
+
 def read_env_file(env_path: Path | str | None = None) -> dict[str, str]:
     """Read key-value pairs from .env file into a dictionary."""
     target = Path(env_path).resolve() if env_path else (PROJECT_ROOT / ".env")
@@ -93,9 +104,9 @@ def read_env_file(env_path: Path | str | None = None) -> dict[str, str]:
                 k, v = line.split("=", 1)
                 k = k.strip()
                 v = v.strip()
-                if (v.startswith('"') and v.endswith('"')) or (
-                    v.startswith("'") and v.endswith("'")
-                ):
+                if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+                    v = _ENV_DQ_ESCAPE_RE.sub(r"\1", v[1:-1])
+                elif len(v) >= 2 and v.startswith("'") and v.endswith("'"):
                     v = v[1:-1]
                 res[k] = v
     except Exception as e:
@@ -120,6 +131,13 @@ def update_env_file(
             logger.warning("Failed to read existing env file %s: %s", target, e)
             lines = []
 
+    # Reject anything that could start a new line in the .env file, before touching anything.
+    for k, v in updates.items():
+        if not _ENV_KEY_RE.match(k):
+            raise ValueError(f"Invalid environment variable name: {k!r}")
+        if v is not None and ("\n" in str(v) or "\r" in str(v)):
+            raise ValueError(f"Value for {k} must not contain newline characters.")
+
     # Clean updates: discard masked strings or empty updates
     clean_updates: dict[str, str] = {}
     for k, v in updates.items():
@@ -142,8 +160,7 @@ def update_env_file(
             k = k.strip()
             existing_keys.add(k)
             if k in clean_updates:
-                val = clean_updates[k]
-                new_lines.append(f'{k}="{val}"')
+                new_lines.append(_format_env_line(k, clean_updates[k]))
             else:
                 new_lines.append(line)
         else:
@@ -151,7 +168,7 @@ def update_env_file(
 
     for k, val in clean_updates.items():
         if k not in existing_keys:
-            new_lines.append(f'{k}="{val}"')
+            new_lines.append(_format_env_line(k, val))
 
     out_text = "\n".join(new_lines) + "\n"
     atomic_write(target, out_text)

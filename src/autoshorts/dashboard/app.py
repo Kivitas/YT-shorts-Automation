@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -21,11 +22,13 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from autoshorts import __version__
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import get_log_stream_handler
 from autoshorts.core.models import ClipSelection, EditDecisionList, Job, JobStatus
@@ -51,6 +54,72 @@ logger = logging.getLogger("autoshorts.dashboard")
 DASHBOARD_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = DASHBOARD_DIR / "templates"
 STATIC_DIR = DASHBOARD_DIR / "static"
+
+# Maximum size accepted by POST /api/backgrounds/upload (2 GiB).
+MAX_BACKGROUND_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+
+# Loopback-only access. The dashboard is a local tool, so only requests whose Host is a
+# loopback name and whose cross-site writes come from a loopback origin are accepted.
+_LOCAL_ORIGIN_PATTERN = r"http://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?"
+_LOCAL_ORIGIN_RE = re.compile(_LOCAL_ORIGIN_PATTERN)
+_LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "[::1]"})
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _host_name_if_valid(host_value: str) -> str | None:
+    """Return the hostname part of a Host header (port stripped), or None if malformed."""
+    value = host_value.strip().lower()
+    if value.startswith("["):
+        close = value.find("]")
+        if close == -1:
+            return None
+        name, rest = value[: close + 1], value[close + 1 :]
+        if rest and not rest.startswith(":"):
+            return None
+        port = rest[1:]
+    else:
+        name, _, port = value.partition(":")
+    if port and not (port.isdigit() and len(port) <= 5):
+        return None
+    return name
+
+
+class LocalOnlyGuardMiddleware:
+    """Reject DNS-rebinding requests (non-local Host) and cross-site writes (foreign Origin)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers: dict[bytes, bytes] = {}
+        for key, value in scope.get("headers", []):
+            headers.setdefault(key.lower(), value)
+
+        host = (headers.get(b"host") or b"").decode("latin-1")
+        name = _host_name_if_valid(host)
+        if name is None or name not in _LOCAL_HOSTNAMES:
+            await self._reject(scope, receive, send, "Host header is not a local address")
+            return
+
+        origin = headers.get(b"origin")
+        if (
+            origin is not None
+            and scope.get("method", "GET") not in _SAFE_METHODS
+            and not _LOCAL_ORIGIN_RE.fullmatch(origin.decode("latin-1"))
+        ):
+            await self._reject(scope, receive, send, "Cross-origin write request rejected")
+            return
+
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send, detail: str) -> None:
+        response = JSONResponse({"detail": detail}, status_code=403)
+        await response(scope, receive, send)
 
 
 # -----------------------------------------------------------------------------
@@ -564,7 +633,9 @@ def create_app(
     parallel_runner = ParallelJobExecutor(
         pipeline=pipe,
         state_manager=state_mgr,
-        max_workers=getattr(cfg.pipeline, "concurrency", None) if hasattr(cfg, "pipeline") else None,
+        max_workers=getattr(cfg.pipeline, "concurrency", None)
+        if hasattr(cfg, "pipeline")
+        else None,
     )
 
     @asynccontextmanager
@@ -621,19 +692,21 @@ def create_app(
 
     app = FastAPI(
         title="AutoShorts Dashboard",
-        version="1.0.0",
+        version=__version__,
         description="On-Device Video Clipping and Quota Pacing Orchestrator",
         lifespan=lifespan,
     )
 
-    # Allow CORS for development
+    # Only loopback origins may make cross-origin requests (no credentials).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origin_regex=_LOCAL_ORIGIN_PATTERN,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Added last so it runs outermost: Host and Origin are checked before CORS handling.
+    app.add_middleware(LocalOnlyGuardMiddleware)
 
     # Mount static assets if directory exists
     if STATIC_DIR.is_dir():
@@ -1642,13 +1715,27 @@ def create_app(
         target_dir.mkdir(parents=True, exist_ok=True)
         dest_path = target_dir / filename
 
+        total_bytes = 0
+        too_large = False
         try:
             with open(dest_path, "wb") as f:  # noqa: ASYNC230
                 while chunk := await file.read(1024 * 1024):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_BACKGROUND_UPLOAD_BYTES:
+                        too_large = True
+                        break
                     f.write(chunk)
         except Exception as e:
+            dest_path.unlink(missing_ok=True)
             logger.error("Failed to save uploaded background file: %s", e)
             raise HTTPException(status_code=500, detail=f"Failed to save file: {e}") from e
+
+        if too_large:
+            dest_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds the maximum upload size of {MAX_BACKGROUND_UPLOAD_BYTES} bytes",
+            )
 
         file_size = dest_path.stat().st_size
         duration = probe_media_duration(dest_path, default=0.0)

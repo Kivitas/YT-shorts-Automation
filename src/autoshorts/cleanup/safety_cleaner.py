@@ -8,6 +8,7 @@ and implements Windows file-lock retry with exponential backoff.
 
 from __future__ import annotations
 
+import errno
 import gc
 import logging
 import os
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - presence depends on the installed environment
     from send2trash import send2trash
+
     _SEND2TRASH_IMPORT_ERROR: str | None = None
 except ImportError as _send2trash_exc:  # pragma: no cover
     send2trash = None  # type: ignore[assignment]
@@ -373,7 +375,15 @@ class SafetyCleaner(Cleaner):
                         )
                     trash_fn(str(target))
                 return
-            except (PermissionError, OSError) as err:
+            except OSError as err:
+                # Only lock-like errors are retried; anything else (ENOENT, EINVAL, ...) is raised now.
+                is_lock = (
+                    isinstance(err, PermissionError)
+                    or err.errno in {errno.EACCES, errno.EBUSY, 32, 33}
+                    or getattr(err, "winerror", None) in {32, 33}
+                )
+                if not is_lock:
+                    raise
                 last_error = err
                 logger.warning(
                     "Windows file lock encountered on '%s' (delay=%.2fs): %s",

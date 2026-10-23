@@ -17,7 +17,8 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from autoshorts.core.exceptions import (
     MetadataFetchError,
     QuotaExhaustedError,
     TranscriptNotFoundError,
+    UploadError,
 )
 from autoshorts.core.models import (
     Job,
@@ -75,6 +77,7 @@ from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
 from autoshorts.transcript.fetcher import TranscriptFetcher
 from autoshorts.uploader.description_builder import build_short_description, build_short_title
+from autoshorts.uploader.errors import QuotaExceededError
 from autoshorts.uploader.local_exporter import LocalExportUploader
 from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
 from autoshorts.uploader.youtube_api import YouTubeApiUploader
@@ -171,9 +174,7 @@ def select_gameplay_background(
 
     # 3. If candidates found, rotate / randomize selection
     if candidates:
-        chosen = candidates[
-            (job_index or random.randint(0, len(candidates) - 1)) % len(candidates)
-        ]
+        chosen = candidates[(job_index or random.randint(0, len(candidates) - 1)) % len(candidates)]
         offset = round(random.uniform(0.0, 120.0), 2)
         logger.info(
             "Selected gameplay background for '%s' (%s, offset=%.1fs) from %d candidate(s).",
@@ -191,6 +192,23 @@ def select_gameplay_background(
         clean_cat,
     )
     return pick_background_asset(category=clean_cat, assets_dir=assets_dir, auto_fetch=False)
+
+
+def _is_nonempty_file(path: Path | None) -> bool:
+    """True when ``path`` names an existing, non-empty regular file."""
+    if path is None:
+        return False
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _upload_succeeded(result: Any) -> bool:
+    """An uploader result counts as a success only if it is not flagged and has a video id."""
+    if getattr(result, "success", True) is False:
+        return False
+    return bool(str(getattr(result, "video_id", "") or "").strip())
 
 
 class ShortsPipeline:
@@ -222,6 +240,7 @@ class ShortsPipeline:
             resolved_concurrency = concurrency
         self.concurrency = max(1, resolved_concurrency)
         self._render_lock = threading.Semaphore(self.concurrency)
+        self._render_tls = threading.local()
 
         # Quota tracker
         self.quota_tracker = quota_tracker or QuotaTracker(
@@ -387,59 +406,138 @@ class ShortsPipeline:
         if job.status in (JobStatus.COMPLETED, JobStatus.CLEANED):
             return job
 
-        with self._render_lock:
-            try:
-                # Stage 1: Metadata Fetch
-                if job.status == JobStatus.QUEUED:
-                    self._run_metadata_stage(job)
+        # Only the local, CPU/IO-heavy stages (yt-dlp cut, EDL, ASS, ffmpeg) take a render
+        # slot, one per stage. Metadata, transcript, SemIf and uploads run unthrottled, and
+        # no stage holds the slot while calling another stage, so the semaphore is never
+        # acquired twice on one thread.
+        stage = "queued"
+        try:
+            # Stage 1: Metadata Fetch
+            if job.status == JobStatus.QUEUED:
+                stage = "metadata"
+                self._run_metadata_stage(job)
 
-                # Stage 2: Transcript Fetch (with Whisper Fallback)
-                if job.status == JobStatus.METADATA_FETCHED:
-                    self._run_transcript_stage(job)
+            # Stage 2: Transcript Fetch (with Whisper Fallback)
+            if job.status == JobStatus.METADATA_FETCHED:
+                stage = "transcript"
+                self._run_transcript_stage(job)
 
-                # Stage 3: Window Slicing
-                if job.status == JobStatus.TRANSCRIBED:
-                    self._run_slicing_stage(job)
+            # Stage 3: Window Slicing
+            if job.status == JobStatus.TRANSCRIBED:
+                stage = "slicing"
+                self._run_slicing_stage(job)
 
-                # Stage 4: SemIf Evaluation & Non-overlapping Selection
-                if job.status == JobStatus.WINDOWS_SLICED:
-                    self._run_semif_stage(job, background_category=background_category)
+            # Stage 4: SemIf Evaluation & Non-overlapping Selection
+            if job.status == JobStatus.WINDOWS_SLICED:
+                stage = "semif"
+                self._run_semif_stage(job, background_category=background_category)
 
-                # Stage 5: Downloader Precision Cut
-                if job.status == JobStatus.SEMIF_EVALUATED:
+            # Stage 5: Downloader Precision Cut
+            if job.status == JobStatus.SEMIF_EVALUATED:
+                stage = "download"
+                with self._render_slot():
                     self._run_download_stage(job)
 
-                # Stage 6: Multimodal Edit Planning (EDL)
-                if job.status == JobStatus.DOWNLOADING_SECTION and job.edl is None:
+            # Stage 6: Multimodal Edit Planning (EDL)
+            if job.status == JobStatus.DOWNLOADING_SECTION and job.edl is None:
+                stage = "edit_planning"
+                with self._render_slot():
                     self._run_edl_stage(job)
 
-                # Stage 7: Subtitle (.ass) Generation
-                if job.status == JobStatus.DOWNLOADING_SECTION:
+            # Stage 7: Subtitle (.ass) Generation
+            if job.status == JobStatus.DOWNLOADING_SECTION:
+                stage = "subtitles"
+                with self._render_slot():
                     self._run_subtitles_stage(job)
 
-                # Stage 8: Compositing (split-screen + dopamine effects) & Preview
-                if job.status == JobStatus.SUBTITLES_GENERATED:
+            # Stage 8: Compositing (split-screen + dopamine effects) & Preview
+            if job.status == JobStatus.SUBTITLES_GENERATED:
+                stage = "compositing"
+                with self._render_slot():
                     self._run_compositing_stage(
                         job,
                         background_category=background_category,
                         dopamine_level=dopamine_level,
                     )
 
-                # Stage 9: Upload / Schedule / Review
-                if job.status == JobStatus.READY_FOR_REVIEW:
-                    if immediate_upload:
-                        self._run_immediate_upload(job)
-                    elif auto_upload or self.config.job_defaults.auto_approve:
-                        self._run_schedule_upload(job)
+            # Stage 9: Upload / Schedule / Review (network only, no render slot)
+            if job.status == JobStatus.READY_FOR_REVIEW:
+                stage = "upload"
+                if immediate_upload:
+                    self._run_immediate_upload(job)
+                elif auto_upload or self.config.job_defaults.auto_approve:
+                    self._run_schedule_upload(job)
 
-                return job
+            return job
 
-            except Exception as e:
-                logger.exception("Job %s failed during pipeline execution", job.id)
-                job.transition_to(JobStatus.FAILED)
-                job.error_message = str(e)
-                self.state_manager.save_job(job)
-                raise
+        except Exception as e:
+            logger.exception("Job %s failed during pipeline execution", job.id)
+            self._mark_failed(job, stage, e)
+            raise
+
+    @contextmanager
+    def _render_slot(self) -> Iterator[None]:
+        """Hold one render slot for CPU/IO-heavy local work.
+
+        ``threading.Semaphore`` is not reentrant, so a thread that already holds the slot
+        passes straight through instead of deadlocking on a nested acquire. The slot is
+        released by ``with`` even when the body raises.
+        """
+        if getattr(self._render_tls, "held", False):
+            yield
+            return
+        with self._render_lock:
+            self._render_tls.held = True
+            try:
+                yield
+            finally:
+                self._render_tls.held = False
+
+    def _mark_failed(self, job: Job, stage: str, err: BaseException) -> None:
+        """Mark a job FAILED while keeping its artifacts, and remember which stage failed.
+
+        Direct assignment is used so that a state-machine complaint can never hide the
+        original error. ``failed_stage`` is what ``retry_job`` uses to pick a resume point.
+        """
+        try:
+            job.record_diagnostic("pipeline", failed_stage=stage)
+            job.status = JobStatus.FAILED
+            job.error_message = str(err)
+            self.state_manager.save_job(job)
+        except Exception as save_err:  # pragma: no cover - best effort, original error wins
+            logger.warning("Job %s: could not persist failure state: %s", job.id, save_err)
+
+    def _resume_status_for(self, job: Job) -> JobStatus | None:
+        """Choose the earliest stage whose inputs still exist after a failure.
+
+        Returns None when nothing usable is left, so the job restarts from QUEUED. A missing
+        or empty artifact always moves the resume point back, so the stage is re-run instead
+        of crashing later.
+        """
+        bucket = job.diagnostics.get("pipeline") if isinstance(job.diagnostics, dict) else None
+        failed_stage = bucket.get("failed_stage") if isinstance(bucket, dict) else None
+        if not failed_stage or not job.selected_clips:
+            return None
+
+        if failed_stage == "download":
+            return JobStatus.SEMIF_EVALUATED
+
+        raw = Path(job.raw_video_path) if job.raw_video_path else None
+        if not _is_nonempty_file(raw):
+            return None
+
+        if failed_stage == "upload" and _is_nonempty_file(
+            Path(job.rendered_video_path) if job.rendered_video_path else None
+        ):
+            return JobStatus.READY_FOR_REVIEW
+        if failed_stage == "compositing" and job.edl is not None:
+            subs = Path(job.subtitles_path) if job.subtitles_path else None
+            if _is_nonempty_file(subs):
+                return JobStatus.SUBTITLES_GENERATED
+        if failed_stage in ("edit_planning", "subtitles", "compositing", "upload"):
+            # Subtitles and the render are cheap to redo; the chain skips EDL when it exists.
+            return JobStatus.DOWNLOADING_SECTION
+        return None
 
     def process_batch(
         self,
@@ -498,8 +596,17 @@ class ShortsPipeline:
             raise AutoShortsError(f"Job {job_id} not found for retry")
 
         if job.status == JobStatus.FAILED:
+            resume_status = self._resume_status_for(job)
             job.transition_to(JobStatus.QUEUED)
             job.error_message = None
+            if resume_status is not None:
+                # FAILED may only move to QUEUED, so the resume point is set directly,
+                # the same way the stage guards already re-enter mid-pipeline.
+                job.status = resume_status
+            job.record_diagnostic(
+                "pipeline",
+                resume_from=(resume_status or JobStatus.QUEUED).value,
+            )
             self.state_manager.save_job(job)
 
         return self.process_job(
@@ -810,6 +917,8 @@ class ShortsPipeline:
 
             sel = job.selected_clips[0]
             work_dir = get_work_dir() / job.id
+            # The work dir can be gone after cleanup, so create it before writing the cut.
+            work_dir.mkdir(parents=True, exist_ok=True)
             raw_cut_path = work_dir / f"{job.id}_raw.mp4"
 
             # Check if job points to a pre-existing local source clip (skip download!)
@@ -829,9 +938,8 @@ class ShortsPipeline:
 
                     action = "copied"
                     clip_dur = sel.candidate.duration
-                    if (
-                        sel.candidate.start > 0
-                        or (job.video_metadata and job.video_metadata.duration > clip_dur + 1.0)
+                    if sel.candidate.start > 0 or (
+                        job.video_metadata and job.video_metadata.duration > clip_dur + 1.0
                     ):
                         import subprocess
 
@@ -924,7 +1032,9 @@ class ShortsPipeline:
             except Exception:  # pragma: no cover - state write is best-effort here
                 pass
             self.state_manager.record_stage_complete(
-                stage_id, status="FAILED", artifacts={"error": str(e), "error_type": type(e).__name__}
+                stage_id,
+                status="FAILED",
+                artifacts={"error": str(e), "error_type": type(e).__name__},
             )
             raise DownloadError(f"Precision cut download failed for job {job.id}: {e}") from e
 
@@ -935,6 +1045,9 @@ class ShortsPipeline:
             clip_path = Path(job.raw_video_path) if job.raw_video_path else None
             if not clip_path or not clip_path.is_file():
                 job.edl = create_empty_edl()
+                self.state_manager.record_stage_complete(
+                    stage_id, status="FAILED", artifacts={"error": "raw clip missing"}
+                )
                 return
 
             edl = self.edit_planner.generate_edl(
@@ -968,8 +1081,7 @@ class ShortsPipeline:
                 else (edl_reason_attr if isinstance(edl_reason_attr, str) else None)
             )
             placeholder = (
-                getattr(edl, "is_placeholder", False) is True
-                or planner_source == "empty_fallback"
+                getattr(edl, "is_placeholder", False) is True or planner_source == "empty_fallback"
             )
             has_micro_edits = getattr(edl, "has_micro_edits", None) is True
             job.record_diagnostic(
@@ -1033,6 +1145,7 @@ class ShortsPipeline:
         try:
             sel = job.selected_clips[0]
             work_dir = get_work_dir() / job.id
+            work_dir.mkdir(parents=True, exist_ok=True)
             raw_cut_path = Path(job.raw_video_path) if job.raw_video_path else None
             ass_path = work_dir / f"{job.id}.ass"
             aligned_words_cache = work_dir / "aligned_words.json"
@@ -1233,6 +1346,41 @@ class ShortsPipeline:
             "render_path": str(final_path) if final_path else None,
         }
 
+    def _validate_compositing_inputs(self, job: Job) -> None:
+        """Fail early, with a clear message, when the compositor's inputs are unusable.
+
+        A missing or empty section cut is an error here. A missing subtitle file is simply
+        regenerated, since the subtitle stage is cheap and does not depend on the render.
+        """
+        raw = Path(job.raw_video_path) if job.raw_video_path else None
+        if not _is_nonempty_file(raw):
+            raise AutoShortsError(
+                f"Job {job.id}: downloaded section is missing or empty ({raw}); "
+                "re-run the download stage before compositing."
+            )
+
+        try:
+            from autoshorts.media.downloader import probe_video_stream_info
+
+            info: dict[str, Any] = dict(probe_video_stream_info(raw) or {})
+        except Exception as probe_err:  # probe is best effort; ffmpeg reports real errors
+            logger.debug("Job %s: stream probe unavailable: %s", job.id, probe_err)
+            info = {}
+        # The probe returns the same shape when ffprobe is missing, so only a probe that
+        # read a duration and still found no video stream is treated as a hard failure.
+        if info and not info.get("has_video") and float(info.get("duration") or 0.0) > 0.0:
+            raise AutoShortsError(
+                f"Job {job.id}: downloaded section has no video stream ({raw}); "
+                "re-run the download stage."
+            )
+
+        subs = Path(job.subtitles_path) if job.subtitles_path else None
+        if not _is_nonempty_file(subs):
+            logger.warning(
+                "Job %s: subtitles file missing; regenerating before compositing.", job.id
+            )
+            self._run_subtitles_stage(job)
+
     def _run_compositing_stage(
         self,
         job: Job,
@@ -1242,6 +1390,7 @@ class ShortsPipeline:
     ) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "compositing")
         try:
+            self._validate_compositing_inputs(job)
             if job.status not in (JobStatus.SUBTITLES_GENERATED, JobStatus.COMPOSITING):
                 job.status = JobStatus.SUBTITLES_GENERATED
             job.transition_to(JobStatus.COMPOSITING)
@@ -1501,7 +1650,15 @@ class ShortsPipeline:
                 rerender_state["raw_source_recovered"] = True
             elif job.selected_clips and (job.source_url or job.video_metadata):
                 logger.info("Job %s: Re-extracting missing raw cut video for re-render...", job_id)
-                self._run_download_stage(job)
+                try:
+                    with self._render_slot():
+                        # The download stage only starts from SEMIF_EVALUATED; a re-render
+                        # can begin from READY_FOR_REVIEW, COMPLETED or FAILED.
+                        job.status = JobStatus.SEMIF_EVALUATED
+                        self._run_download_stage(job)
+                except Exception as dl_err:
+                    self._mark_failed(job, "download", dl_err)
+                    raise
                 rerender_state["steps"].append("re_download")
                 raw_path = Path(job.raw_video_path) if job.raw_video_path else None
             else:
@@ -1536,24 +1693,24 @@ class ShortsPipeline:
         job.status = JobStatus.DOWNLOADING_SECTION
         self.state_manager.save_job(job)
 
-        with self._render_lock:
-            try:
+        re_stage = "subtitles"
+        try:
+            with self._render_slot():
                 # Re-run Stage 7: Subtitle (.ass) Generation (using cached aligned_words.json if present)
                 self._run_subtitles_stage(job, use_cached_words=True)
                 rerender_state["steps"].append("subtitles")
 
                 # Re-run Stage 8: Compositing
+                re_stage = "compositing"
                 self._run_compositing_stage(
                     job,
                     background_category=overrides.get("background_category"),
                     dopamine_level=overrides.get("dopamine_level"),
                 )
-            except Exception as re_err:
-                logger.exception("Job %s fast re-render failed", job.id)
-                job.status = JobStatus.FAILED
-                job.error_message = str(re_err)
-                self.state_manager.save_job(job)
-                raise
+        except Exception as re_err:
+            logger.exception("Job %s fast re-render failed", job.id)
+            self._mark_failed(job, re_stage, re_err)
+            raise
 
         rerender_state["steps"].append("compositing")
         job.record_diagnostic("rerender", **rerender_state)
@@ -1724,7 +1881,11 @@ class ShortsPipeline:
 
         # Resolve thumbnail
         thumbnail_path: Path | None = None
-        if hasattr(job, "thumbnail_path") and job.thumbnail_path and Path(job.thumbnail_path).is_file():
+        if (
+            hasattr(job, "thumbnail_path")
+            and job.thumbnail_path
+            and Path(job.thumbnail_path).is_file()
+        ):
             thumbnail_path = Path(job.thumbnail_path)
         elif job.selected_clips and getattr(job.selected_clips[0], "thumbnail_path", None):
             tp = Path(job.selected_clips[0].thumbnail_path)
@@ -1780,11 +1941,7 @@ class ShortsPipeline:
 
                 result = use_uploader.upload(**kwargs)
             except Exception as up_err:
-                is_quota_err = isinstance(up_err, QuotaExhaustedError) or (
-                    "quota" in str(up_err).lower()
-                    or "quotaexceeded" in str(up_err).lower()
-                    or "403" in str(up_err)
-                )
+                is_quota_err = isinstance(up_err, (QuotaExceededError, QuotaExhaustedError))
                 if is_quota_err and fallback_mode == "studio" and not fell_back_to_studio:
                     logger.warning(
                         "Job %s: Encountered quota exhaustion error (%s). Falling back to YouTube Studio automation.",
@@ -1810,6 +1967,14 @@ class ShortsPipeline:
                 else:
                     raise
 
+            # An unsuccessful result must not reach VERIFYING/COMPLETED. The rendered file is
+            # kept, so the job can be retried as an upload from READY_FOR_REVIEW.
+            if not _upload_succeeded(result):
+                raise UploadError(
+                    f"Uploader returned no successful upload for job {job.id} "
+                    f"(video_id={getattr(result, 'video_id', None)!r})."
+                )
+
             if fell_back_to_studio and isinstance(result.raw_response, dict):
                 result.raw_response["fallback"] = "studio_automation"
                 result.raw_response["fallback_reason"] = "quota_exhausted"
@@ -1821,7 +1986,16 @@ class ShortsPipeline:
             job.transition_to(JobStatus.VERIFYING)
             self.state_manager.save_job(job)
 
-            verified = use_uploader.verify(result.video_id)
+            # The video is already live at this point: a verification error must never fail the
+            # job, because a retry would upload the same video a second time.
+            try:
+                verified = use_uploader.verify(result.video_id)
+            except UploadError as verify_err:
+                logger.warning(
+                    "Verification raised after upload of %s: %s", result.video_id, verify_err
+                )
+                verified = False
+                result.verification_note = f"Upload succeeded but verification failed: {verify_err}"
 
             # `verified` must mean "positively confirmed", so a DOM-scraped Studio result
             # is recorded as studio_dom and stays unverified.
@@ -1871,9 +2045,7 @@ class ShortsPipeline:
                         result.verification_kind,
                     )
                 try:
-                    self.cleaner.cleanup_job(
-                        job.id, verified=result.verified, upload_result=result
-                    )
+                    self.cleaner.cleanup_job(job.id, verified=result.verified, upload_result=result)
                     job.transition_to(JobStatus.CLEANED)
                     self.state_manager.save_job(job)
                     logger.info("Job %s: Post-upload cleanup completed.", job.id)
@@ -1887,9 +2059,8 @@ class ShortsPipeline:
             self.state_manager.record_stage_complete(
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
-            job.status = JobStatus.FAILED
-            job.error_message = str(e)
-            self.state_manager.save_job(job)
+            # The rendered_video_path is left untouched so a retry can re-upload it.
+            self._mark_failed(job, "upload", e)
             raise
 
     def _run_schedule_upload(self, job: Job) -> None:
@@ -1927,7 +2098,11 @@ class ShortsPipeline:
         )
 
         thumbnail_path: Path | None = None
-        if hasattr(job, "thumbnail_path") and job.thumbnail_path and Path(job.thumbnail_path).is_file():
+        if (
+            hasattr(job, "thumbnail_path")
+            and job.thumbnail_path
+            and Path(job.thumbnail_path).is_file()
+        ):
             thumbnail_path = Path(job.thumbnail_path)
         elif job.selected_clips and getattr(job.selected_clips[0], "thumbnail_path", None):
             tp = Path(job.selected_clips[0].thumbnail_path)
@@ -1975,9 +2150,9 @@ class ShortsPipeline:
             sched_time = self.scheduler.enqueue(**sched_kwargs)
             job.scheduled_time = sched_time
             self.state_manager.save_job(job)
-            logger.info("Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat())
+            logger.info(
+                "Job %s: Enqueued into SpreadScheduler for %s", job.id, sched_time.isoformat()
+            )
         except Exception as s_err:
-            job.status = JobStatus.FAILED
-            job.error_message = str(s_err)
-            self.state_manager.save_job(job)
+            self._mark_failed(job, "upload", s_err)
             raise

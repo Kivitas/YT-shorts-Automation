@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -168,8 +169,7 @@ def _summarize_attempts(attempts: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for entry in attempts:
         outcome = entry.get("outcome", "unknown")
-        detail = str(entry.get("detail")
-                     or "").strip().replace("\n", " ")
+        detail = str(entry.get("detail") or "").strip().replace("\n", " ")
         if len(detail) > 240:
             detail = detail[:240] + "..."
         client = entry.get("player_client", "default")
@@ -177,36 +177,86 @@ def _summarize_attempts(attempts: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _timestamp_ms(seconds: float, *, round_up: bool) -> int:
+    """Convert seconds to integer milliseconds, rounding outward so a cut never loses content."""
+    value = round(float(seconds) * 1000.0, 6)  # absorb float noise such as 10.000000000002
+    return math.ceil(value) if round_up else math.floor(value)
+
+
+def _format_timestamp(total_ms: int, *, with_hours: bool) -> str:
+    """Render milliseconds as MM:SS(.mmm) or HH:MM:SS(.mmm); the fraction is omitted when zero."""
+    seconds, ms = divmod(total_ms, 1000)
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    base = f"{hours:02d}:{minutes:02d}:{sec:02d}" if with_hours else f"{minutes:02d}:{sec:02d}"
+    return f"{base}.{ms:03d}" if ms else base
+
+
 def format_section_arg(start_sec: float, end_sec: float) -> str:
     """Format start and end timestamps into yt-dlp --download-sections string.
 
     Produces '*MM:SS-MM:SS' format (or '*HH:MM:SS-HH:MM:SS' for videos over 1 hour).
+    Fractional seconds are kept to millisecond precision: the start is floored and the
+    end is ceiled, so the cut never drops content at either edge. yt-dlp parses the
+    fractional form with its standard duration parser.
 
     Examples:
         format_section_arg(0, 45) -> '*00:00-00:45'
         format_section_arg(65, 110) -> '*01:05-01:50'
+        format_section_arg(125.5, 170.2) -> '*02:05.500-02:50.200'
         format_section_arg(3665, 3710) -> '*01:01:05-01:01:50'
 
     Args:
-        start_sec: Section start timestamp in seconds.
+        start_sec: Section start timestamp in seconds (negative values clamp to 0).
         end_sec: Section end timestamp in seconds.
 
     Returns:
         Formatted argument string for yt-dlp --download-sections.
+
+    Raises:
+        ValueError: If the section is empty or inverted after clamping to millisecond precision.
     """
-    s_sec = max(0.0, float(start_sec))
-    e_sec = max(s_sec, float(end_sec))
+    s_ms = max(0, _timestamp_ms(start_sec, round_up=False))
+    e_ms = _timestamp_ms(end_sec, round_up=True)
+    if e_ms <= s_ms:
+        raise ValueError(
+            f"section end {end_sec!r}s must be after start {start_sec!r}s (non-empty range required)"
+        )
 
-    if s_sec >= 3600.0 or e_sec >= 3600.0:
-        h_s, rem_s = divmod(int(s_sec), 3600)
-        m_s, sec_s = divmod(rem_s, 60)
-        h_e, rem_e = divmod(int(e_sec), 3600)
-        m_e, sec_e = divmod(rem_e, 60)
-        return f"*{h_s:02d}:{m_s:02d}:{sec_s:02d}-{h_e:02d}:{m_e:02d}:{sec_e:02d}"
+    with_hours = s_ms >= 3_600_000 or e_ms >= 3_600_000
+    start_text = _format_timestamp(s_ms, with_hours=with_hours)
+    end_text = _format_timestamp(e_ms, with_hours=with_hours)
+    return f"*{start_text}-{end_text}"
 
-    m_s, sec_s = divmod(int(s_sec), 60)
-    m_e, sec_e = divmod(int(e_sec), 60)
-    return f"*{m_s:02d}:{sec_s:02d}-{m_e:02d}:{sec_e:02d}"
+
+# Failures that retrying cannot fix (private/removed/members-only/age-gated/geo-blocked
+# uploads and upcoming premieres). Matched against yt-dlp's stderr text.
+_PERMANENT_YTDLP_ERROR_RE = re.compile(
+    r"Private video|This video is private|has been removed|no longer available"
+    r"|account associated with this video has been terminated"
+    r"|Sign in to confirm your age|members[- ]only|Join this channel to get access"
+    r"|not available in your country|This live event will begin|Premieres in",
+    re.IGNORECASE,
+)
+
+
+def _is_non_retryable(exc: BaseException) -> bool:
+    """True when another attempt cannot succeed: missing binary or a permanent video state."""
+    if isinstance(exc, FileNotFoundError):
+        return True
+    return bool(_PERMANENT_YTDLP_ERROR_RE.search(str(exc)))
+
+
+def _select_downloaded_file(candidates: list[Path], prefix: str) -> Path | None:
+    """Pick yt-dlp's finished output from the files created under this job's temp prefix.
+
+    yt-dlp names the finished file exactly as the output template with the real extension
+    substituted (``<prefix><ext>``). Partial files (``.part``, ``.ytdl``) and intermediate
+    stream fragments (``<prefix><ext>.f137.mp4``) all add extra dot segments after the
+    prefix, so they never match. Returns None when no finished file exists.
+    """
+    finished = [p for p in candidates if p.is_file() and "." not in p.name[len(prefix) :]]
+    return finished[0] if finished else None
 
 
 def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
@@ -261,6 +311,8 @@ def run_command_with_cleanup(
                 terminate_process_tree(exc.pid)
             raise
 
+    # Close stdin so a child can never block waiting on an interactive prompt.
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -270,9 +322,9 @@ def run_command_with_cleanup(
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-        retcode = proc.poll() or 0
-        if retcode != 0:
-            terminate_process_tree(proc.pid)
+        # The child has exited and been reaped. Signalling its PID now could hit an
+        # unrelated process that reused the number, so nothing is killed on normal exit.
+        retcode = proc.returncode or 0
         return subprocess.CompletedProcess(cmd, retcode, stdout, stderr)
     except subprocess.TimeoutExpired:
         terminate_process_tree(proc.pid)
@@ -495,7 +547,10 @@ class Downloader:
         # Ensure parent directory exists (e.g. work/<video_id>/)
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        section_arg = format_section_arg(start_sec, end_sec)
+        try:
+            section_arg = format_section_arg(start_sec, end_sec)
+        except ValueError as exc:
+            raise DownloadError(f"Invalid section for {canonical_url}: {exc}") from exc
         unique_token = uuid4().hex[:8]
         temp_template = dest.parent / f".tmp_{unique_token}_%(ext)s"
 
@@ -503,6 +558,7 @@ class Downloader:
             self.yt_dlp_binary,
             "--no-playlist",
             "--no-warnings",
+            "--no-progress",
             "--download-sections",
             section_arg,
             "--force-keyframes-at-cuts",
@@ -516,10 +572,12 @@ class Downloader:
         if ffmpeg_bin:
             base_cmd.extend(["--ffmpeg-location", ffmpeg_bin])
 
-        base_cmd.extend([
-            "-o",
-            str(temp_template),
-        ])
+        base_cmd.extend(
+            [
+                "-o",
+                str(temp_template),
+            ]
+        )
 
         if self.cookies_from_browser:
             base_cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
@@ -555,7 +613,8 @@ class Downloader:
             if attempt > 1:
                 player_client = "android,web"
                 attempt_cmd.extend(["--extractor-args", f"youtube:player_client={player_client}"])
-            attempt_cmd.append(canonical_url)
+            # "--" stops option parsing so the URL can never be read as a flag.
+            attempt_cmd.extend(["--", canonical_url])
 
             try:
                 proc = run_command_with_cleanup(
@@ -563,25 +622,28 @@ class Downloader:
                     timeout=self.timeout_sec,
                 )
                 if proc.returncode == 0:
-                    # Locate the created temporary file
+                    # Locate this job's finished temporary file (never a partial one).
                     pattern = f".tmp_{unique_token}_*"
-                    matching = list(dest.parent.glob(pattern))
-                    if matching:
-                        downloaded_file = matching[0]
-                        # Atomically rename to requested destination
-                        os.replace(downloaded_file, dest)
-                    elif not dest.is_file():
+                    downloaded_file = _select_downloaded_file(
+                        list(dest.parent.glob(pattern)), f".tmp_{unique_token}_"
+                    )
+                    if downloaded_file is None:
+                        # Do not fall back to an existing destination: a leftover file from an
+                        # earlier job would otherwise pass as this download.
                         attempt_log.append(
                             {
                                 "attempt": attempt,
                                 "player_client": player_client,
                                 "outcome": "no_output_file",
-                                "detail": f"yt-dlp exited 0 but nothing matched {pattern}",
+                                "detail": f"yt-dlp exited 0 but no finished file matched {pattern}",
                             }
                         )
                         raise DownloadError(
                             f"yt-dlp exited with 0 but output file matching {pattern} was not found"
                         )
+                    # Atomically rename to requested destination, then drop any leftovers.
+                    os.replace(downloaded_file, dest)
+                    _cleanup_temps()
 
                     # A zero exit code is not proof of usability: verify the output is
                     # really a video+audio section before accepting it.
@@ -674,6 +736,13 @@ class Downloader:
                 )
                 _cleanup_temps()
                 dest.unlink(missing_ok=True)
+                if _is_non_retryable(exc):
+                    logger.error(
+                        "Stopping section retries for %s: failure is not retryable (%s)",
+                        vid,
+                        exc,
+                    )
+                    break
                 if attempt < total_attempts:
                     time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
 
@@ -698,7 +767,7 @@ class Downloader:
             )
         raise DownloadError(
             f"Failed to download section {section_arg} for {canonical_url} after "
-            f"{total_attempts} attempt(s).{hint}\nAttempt trace:\n{_summarize_attempts(attempt_log)}"
+            f"{attempt} attempt(s).{hint}\nAttempt trace:\n{_summarize_attempts(attempt_log)}"
         ) from last_error
 
     def download_audio_only(
@@ -740,11 +809,14 @@ class Downloader:
         if ffmpeg_bin:
             cmd.extend(["--ffmpeg-location", ffmpeg_bin])
 
-        cmd.extend([
-            "-o",
-            str(temp_template),
-            canonical_url,
-        ])
+        cmd.extend(
+            [
+                "-o",
+                str(temp_template),
+                "--",
+                canonical_url,
+            ]
+        )
 
         if self.cookies_from_browser:
             cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
@@ -759,17 +831,20 @@ class Downloader:
                     timeout=self.timeout_sec,
                 )
                 if proc.returncode == 0:
-                    matching = list(dest.parent.glob(f".tmp_audio_{unique_token}_*"))
-                    if matching:
-                        downloaded_file = matching[0]
-                        os.replace(downloaded_file, dest)
-                        logger.info("Successfully downloaded audio to %s", dest)
-                        return dest
-                    if dest.is_file():
-                        return dest
-                    raise DownloadError(
-                        "Audio file was not found after successful yt-dlp execution"
+                    downloaded_file = _select_downloaded_file(
+                        list(dest.parent.glob(f".tmp_audio_{unique_token}_*")),
+                        f".tmp_audio_{unique_token}_",
                     )
+                    if downloaded_file is None:
+                        # A pre-existing dest is not this job's output; never accept it.
+                        raise DownloadError(
+                            "Audio file was not found after successful yt-dlp execution"
+                        )
+                    os.replace(downloaded_file, dest)
+                    for leftover in dest.parent.glob(f".tmp_audio_{unique_token}_*"):
+                        leftover.unlink(missing_ok=True)
+                    logger.info("Successfully downloaded audio to %s", dest)
+                    return dest
 
                 err_msg = (proc.stderr or proc.stdout or "").strip()
                 raise DownloadError(
@@ -786,6 +861,8 @@ class Downloader:
                         f.unlink(missing_ok=True)
                     except OSError:
                         pass
+                if _is_non_retryable(exc):
+                    break
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
 

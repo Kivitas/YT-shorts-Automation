@@ -109,7 +109,11 @@ class MasterBrainOrchestrator:
                     service="llm",
                     message=message,
                     missing_key_name=key_name,
-                    details={"provider": getattr(getattr(self.config, "llm", None), "provider", "unknown")},
+                    details={
+                        "provider": getattr(
+                            getattr(self.config, "llm", None), "provider", "unknown"
+                        )
+                    },
                 )
 
     def get_plan(self, plan_id: str) -> ViralMasterPlan | None:
@@ -132,7 +136,9 @@ class MasterBrainOrchestrator:
         skip_preflight: bool = False,
     ) -> ViralMasterPlan:
         """Execute the 3-stage DAG workflow across specialist agents."""
-        norm_mode: Literal["mode_a", "mode_b"] = "mode_a" if mode in ("mode_a", "repurpose") else "mode_b"
+        norm_mode: Literal["mode_a", "mode_b"] = (
+            "mode_a" if mode in ("mode_a", "repurpose") else "mode_b"
+        )
         plan_id = str(uuid4())
 
         # Zero-Phantom-Data Preflight Check
@@ -283,7 +289,9 @@ class MasterBrainOrchestrator:
         current_candidate_idx = 0
 
         active_window = windows[current_candidate_idx]
-        active_transcript = transcripts[current_candidate_idx] if transcripts else (transcript_slice or "")
+        active_transcript = (
+            transcripts[current_candidate_idx] if transcripts else (transcript_slice or "")
+        )
         start_sec, end_sec = active_window
 
         # ---------------------------------------------------------------------
@@ -299,7 +307,9 @@ class MasterBrainOrchestrator:
             candidate_count=len(windows),
         )
 
-        if review.candidate_index != current_candidate_idx and review.candidate_index < len(windows):
+        if review.candidate_index != current_candidate_idx and review.candidate_index < len(
+            windows
+        ):
             current_candidate_idx = review.candidate_index
             start_sec, end_sec = windows[current_candidate_idx]
             if current_candidate_idx < len(transcripts):
@@ -377,7 +387,8 @@ class MasterBrainOrchestrator:
         # Update retention editor with calculated cadence from music scout
         if isinstance(res_audio, AudioPlan) and res_audio.words_per_second > 0:
             res_retention.adaptive_silence_thresh_db = (
-                -28.0 if res_audio.words_per_second > 3.0
+                -28.0
+                if res_audio.words_per_second > 3.0
                 else (-35.0 if res_audio.words_per_second < 2.2 else -32.0)
             )
 

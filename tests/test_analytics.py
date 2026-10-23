@@ -628,7 +628,7 @@ def test_dashboard_analytics_v2_endpoints(tmp_path: Path):
     cfg = Settings()
     pipe = ShortsPipeline(config=cfg, state_manager=sm)
     app = create_app(pipeline=pipe, state_manager=sm, config=cfg, run_scheduler_worker=False)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost:8765")
 
     # Empty state: auto-tune returns applied=False
     r_tune_empty = client.post("/api/analytics/auto-tune")
@@ -762,13 +762,16 @@ def test_analytics_real_velocity_metric_calculation(tmp_path: Path):
 
     # 1. First sync with published_at 10 hours ago and 2,000 views -> 200 views/hr
     from datetime import UTC, datetime, timedelta
+
     pub_dt = (datetime.now(UTC) - timedelta(hours=10)).isoformat()
 
     job = Job(
         id="job_vel_1",
         source_url="https://youtube.com/watch?v=vel_vid_1",
         status=JobStatus.COMPLETED,
-        upload_result=UploadResult(video_id="vel_vid_1", url="https://youtube.com/shorts/vel_vid_1"),
+        upload_result=UploadResult(
+            video_id="vel_vid_1", url="https://youtube.com/shorts/vel_vid_1"
+        ),
     )
     sm.save_job(job)
 
@@ -802,12 +805,15 @@ def test_analytics_real_velocity_metric_calculation(tmp_path: Path):
     existing_rec = sm.get_video_analytics("vel_vid_1")
     existing_rec["history"] = [{"timestamp": two_hours_ago, "views": 2000}]
     import json
-    sm.upsert_video_analytics({
-        "video_id": "vel_vid_1",
-        "history_json": json.dumps(existing_rec["history"]),
-        "views": 2000,
-        "fetched_at": two_hours_ago,
-    })
+
+    sm.upsert_video_analytics(
+        {
+            "video_id": "vel_vid_1",
+            "history_json": json.dumps(existing_rec["history"]),
+            "views": 2000,
+            "fetched_at": two_hours_ago,
+        }
+    )
 
     with patch.object(
         engine,
@@ -833,4 +839,3 @@ def test_analytics_real_velocity_metric_calculation(tmp_path: Path):
     # Velocity strictly derived from delta: 1000 views / 2 hours = ~500 views/hr
     rec_obj = VideoAnalyticsRecord.model_validate(rec2)
     assert 400.0 <= rec_obj.velocity_views_per_hour <= 600.0
-

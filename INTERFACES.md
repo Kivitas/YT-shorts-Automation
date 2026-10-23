@@ -13,7 +13,7 @@ This document specifies the contracts, protocols, shared models, and engineering
    - Zero CUDA assumption. `faster-whisper` runs `compute_type="int8"` on CPU.
    - `llama-cpp-python` runs CPU inference with bounded threads (`n_threads=4`).
    - Video compositing probes for `h264_qsv` (Intel QuickSync) and falls back to `libx264 -preset veryfast`.
-   - Concurrency is strictly bounded (`concurrency = 1`).
+   - Concurrency is bounded: parallel jobs default to `AUTOSHORTS_CONCURRENCY=3` (render semaphore in `pipeline.py` and `ParallelJobExecutor`), overridable via the environment variable.
 3. **Strict Tooling Exclusivity**:
    - Downloading: **Strictly `yt-dlp`** using `--download-sections`. No external or untrusted downloaders, no HTTP stream scraping. Multi-client resilient fallback (`default` &rarr; `android` &rarr; `web`).
    - Editing/Compositing: **Strictly `ffmpeg` and `ffprobe` subprocesses**. `MoviePy` is strictly prohibited.

@@ -16,11 +16,15 @@ Strictly uses FFmpeg and FFprobe subprocess calls (zero MoviePy):
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import os
 import random
+import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -43,135 +47,174 @@ from autoshorts.media.downloader import (
     run_command_with_cleanup,
     terminate_process_tree,
 )
-from autoshorts.media.encoder_probe import EncoderInfo
+from autoshorts.media.encoder_probe import (
+    ENCODER_PROBE_TIMEOUT_SEC,
+    EncoderInfo,
+    clear_hardware_encoder_cache,
+    detect_hardware_encoder,
+    get_ffmpeg_path,
+    get_ffprobe_path,
+)
 
 logger = logging.getLogger(__name__)
 
+# ffprobe JSON probes get the same cold-start budget as encoder probes.
+FFPROBE_TIMEOUT_SEC = ENCODER_PROBE_TIMEOUT_SEC
+_FFPROBE_FALLBACK_WARNED = False
 
-def get_ffmpeg_path() -> str:
-    """Resolve FFmpeg executable path.
 
-    Checks system PATH first; if not found, checks for bundled executable from
-    the imageio_ffmpeg package. Falls back to 'ffmpeg'.
+def _stderr_tail(text: str | bytes | None, limit: int = 2000) -> str:
+    """Return the last `limit` characters of FFmpeg stderr for readable error messages."""
+    if not text:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    stripped = text.strip()
+    return stripped[-limit:] if len(stripped) > limit else stripped
+
+
+def _warn_ffprobe_missing_once() -> None:
+    """Log once per process that stream and duration probes use the less reliable ffmpeg -i parse."""
+    global _FFPROBE_FALLBACK_WARNED
+    if _FFPROBE_FALLBACK_WARNED:
+        return
+    _FFPROBE_FALLBACK_WARNED = True
+    logger.warning(
+        "ffprobe is not installed (not on PATH and not next to the ffmpeg binary). "
+        "Media durations and stream checks fall back to parsing `ffmpeg -i` output, "
+        "which is less reliable. Install a full FFmpeg build that includes ffprobe."
+    )
+
+
+def _ffprobe_payload(target: Path) -> dict[str, Any] | None:
+    """Run ffprobe with JSON output for `target`.
+
+    Returns None when no ffprobe is available (the caller uses the logged ffmpeg fallback).
+    Returns {} when ffprobe runs but fails, e.g. on a corrupt file; that means "no streams".
     """
-    resolved = shutil.which("ffmpeg")
-    if resolved:
-        return resolved
-    try:
-        import imageio_ffmpeg
-
-        exe = imageio_ffmpeg.get_ffmpeg_exe()
-        if exe and Path(exe).is_file():
-            return str(exe)
-    except Exception:
-        pass
-    return "ffmpeg"
-
-
-def probe_media_duration(media_path: Path | str, default: float = 45.0) -> float:
-    """Query duration of a media file in seconds using ffprobe."""
-    target = Path(media_path).resolve()
-    if not target.is_file():
-        return default
-
-    ffprobe_bin = shutil.which("ffprobe")
-    if not ffprobe_bin:
-        return default
-
+    ffprobe_bin = get_ffprobe_path()
+    if ffprobe_bin is None:
+        return None
     cmd = [
         ffprobe_bin,
         "-v",
         "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
         str(target),
     ]
     try:
-        proc = run_command_with_cleanup(
+        proc = subprocess.run(
             cmd,
-            timeout=10.0,
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT_SEC,
+            check=False,
         )
-        if proc.returncode == 0 and proc.stdout.strip():
-            val = float(proc.stdout.strip())
-            return val if val > 0 else default
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        logger.debug("ffprobe duration probe failed for %s: %s", target, exc)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("ffprobe failed to run for %s: %s", target, exc)
+        return {}
+    if proc.returncode != 0 or not (proc.stdout or "").strip():
+        logger.debug("ffprobe rejected %s (exit %s)", target, proc.returncode)
+        return {}
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError as exc:
+        logger.debug("ffprobe returned invalid JSON for %s: %s", target, exc)
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
+
+def _ffprobe_streams(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    streams = payload.get("streams") or []
+    return [s for s in streams if isinstance(s, dict)]
+
+
+def _ffprobe_duration(payload: dict[str, Any]) -> float:
+    """Largest finite positive duration reported by the container or any stream."""
+    candidates: list[Any] = []
+    fmt = payload.get("format")
+    if isinstance(fmt, dict):
+        candidates.append(fmt.get("duration"))
+    candidates.extend(s.get("duration") for s in _ffprobe_streams(payload))
+    best = 0.0
+    for raw in candidates:
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(val) and val > best:
+            best = val
+    return best
+
+
+def _ffmpeg_fallback_info(target: Path) -> dict[str, Any]:
+    """ffmpeg -i based probe (used only when ffprobe is missing). Logs the fallback once."""
+    _warn_ffprobe_missing_once()
+    try:
+        return probe_video_stream_info(target)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+        logger.debug("ffmpeg stream probe fallback failed for %s: %s", target, exc)
+        return {}
+
+
+def probe_media_duration(media_path: Path | str, default: float = 45.0) -> float:
+    """Query duration of a media file in seconds.
+
+    Uses ffprobe JSON output when get_ffprobe_path() finds ffprobe. Otherwise falls back
+    (with a one-time warning) to parsing `ffmpeg -i` output via probe_video_stream_info.
+    Returns `default` only when no positive, finite duration can be read at all.
+    """
+    target = Path(media_path).resolve()
+    if not target.is_file():
+        return default
+
+    payload = _ffprobe_payload(target)
+    if payload is None:
+        dur = _ffmpeg_fallback_info(target).get("duration") or 0.0
+    else:
+        dur = _ffprobe_duration(payload)
+    try:
+        dur = float(dur)
+    except (TypeError, ValueError):
+        dur = 0.0
+    if math.isfinite(dur) and dur > 0:
+        return dur
+
+    logger.warning("Could not determine duration of %s; using default %.1fs", target, default)
     return default
 
 
 def has_audio_stream(media_path: Path | str) -> bool:
-    """Return True if media file contains at least one audio stream."""
+    """Return True if media file contains at least one audio stream.
+
+    With ffprobe present this reads the JSON stream list. Without it, the logged ffmpeg -i
+    fallback decides. A False result is authoritative: silent files are never assumed to
+    have audio.
+    """
     target = Path(media_path).resolve()
     if not target.is_file():
         return False
-
-    info = probe_video_stream_info(target)
-    if info.get("has_audio"):
-        return True
-
-    ffprobe_bin = shutil.which("ffprobe")
-    if not ffprobe_bin:
-        return True  # Optimistic assumption
-
-    cmd = [
-        ffprobe_bin,
-        "-v",
-        "error",
-        "-select_streams",
-        "a",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "csv=p=0",
-        str(target),
-    ]
-    try:
-        proc = run_command_with_cleanup(
-            cmd,
-            timeout=10.0,
-        )
-        return "audio" in proc.stdout.lower()
-    except (OSError, subprocess.SubprocessError):
-        return True
+    payload = _ffprobe_payload(target)
+    if payload is None:
+        return bool(_ffmpeg_fallback_info(target).get("has_audio"))
+    return any(s.get("codec_type") == "audio" for s in _ffprobe_streams(payload))
 
 
 def has_video_stream(media_path: Path | str) -> bool:
-    """Return True if media file contains at least one video stream."""
+    """Return True if media file contains at least one video stream.
+
+    Same contract as has_audio_stream: a corrupt or non-video file must not be accepted.
+    """
     target = Path(media_path).resolve()
     if not target.is_file():
         return False
-
-    info = probe_video_stream_info(target)
-    if info.get("has_video"):
-        return True
-
-    ffprobe_bin = shutil.which("ffprobe")
-    if not ffprobe_bin:
-        return True  # Optimistic fallback
-
-    cmd = [
-        ffprobe_bin,
-        "-v",
-        "error",
-        "-select_streams",
-        "v",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "csv=p=0",
-        str(target),
-    ]
-    try:
-        proc = run_command_with_cleanup(
-            cmd,
-            timeout=10.0,
-        )
-        return "video" in proc.stdout.lower()
-    except (OSError, subprocess.SubprocessError):
-        return True
+    payload = _ffprobe_payload(target)
+    if payload is None:
+        return bool(_ffmpeg_fallback_info(target).get("has_video"))
+    return any(s.get("codec_type") == "video" for s in _ffprobe_streams(payload))
 
 
 def extract_16khz_mono_wav(
@@ -219,7 +262,7 @@ def extract_16khz_mono_wav(
         )
         if proc.returncode != 0:
             raise RuntimeError(
-                f"FFmpeg 16kHz WAV extraction failed (code {proc.returncode}):\n{proc.stderr}"
+                f"FFmpeg 16kHz WAV extraction failed (code {proc.returncode}):\n{_stderr_tail(proc.stderr)}"
             )
         return dest
     except FileNotFoundError as exc:
@@ -316,27 +359,6 @@ class FasterWhisperTranscriber:
         return words
 
 
-HW_ENCODERS: list[tuple[str, list[str], str]] = [
-    ("h264_nvenc", ["-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", "24"], "NVIDIA NVENC H.264 Hardware Encoder"),
-    ("hevc_videotoolbox", ["-q:v", "65"], "Apple VideoToolbox HEVC Hardware Encoder"),
-    ("h264_videotoolbox", ["-q:v", "65"], "Apple VideoToolbox H.264 Hardware Encoder"),
-    ("h264_qsv", ["-global_quality", "25", "-look_ahead", "0"], "Intel QuickSync Video (h264_qsv)"),
-]
-
-CPU_FALLBACK_ENCODER = (
-    "libx264",
-    ["-preset", "veryfast", "-crf", "22", "-threads", "4"],
-    "libx264 software encoder fallback (CPU)",
-)
-
-_HW_PROBE_CACHE: dict[str, EncoderInfo] = {}
-
-
-def clear_hardware_encoder_cache() -> None:
-    """Clear cached hardware encoder probe results (useful for test isolation)."""
-    _HW_PROBE_CACHE.clear()
-
-
 def detect_encoder_pixel_format(
     codec: str,
     extra_args: list[str] | None = None,
@@ -405,103 +427,6 @@ def detect_encoder_pixel_format(
     return "yuv420p"
 
 
-def detect_hardware_encoder(
-    preferred: str = "auto",
-    ffmpeg_binary: str = "ffmpeg",
-    timeout_sec: float = 3.0,
-    force_refresh: bool = False,
-) -> EncoderInfo:
-    """Detect and verify fast FFmpeg video encoders with hardware acceleration.
-
-    Priority:
-    1. h264_nvenc (NVIDIA GPUs)
-    2. hevc_videotoolbox / h264_videotoolbox (Apple Silicon / macOS)
-    3. h264_qsv (Intel QuickSync)
-    4. libx264 (CPU fallback)
-    """
-    resolved_bin = get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
-    cache_key = f"{preferred}:{resolved_bin}"
-    if not force_refresh and cache_key in _HW_PROBE_CACHE:
-        return _HW_PROBE_CACHE[cache_key]
-
-    target_pref = (preferred or "auto").strip().lower()
-
-    if target_pref == "libx264":
-        info = EncoderInfo(
-            codec=CPU_FALLBACK_ENCODER[0],
-            extra_args=CPU_FALLBACK_ENCODER[1],
-            is_hardware_accelerated=False,
-            verified=True,
-            description=CPU_FALLBACK_ENCODER[2],
-        )
-        _HW_PROBE_CACHE[cache_key] = info
-        return info
-
-    def _test_encoder(codec: str, extra: list[str]) -> bool:
-        cmd = [
-            resolved_bin,
-            "-y",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=black:s=256x256:d=0.1",
-            "-c:v",
-            codec,
-            *extra,
-            "-f",
-            "null",
-            "-",
-        ]
-        try:
-            res = subprocess.run(cmd, capture_output=True, timeout=timeout_sec, check=False)
-            return res.returncode == 0
-        except Exception:
-            return False
-
-    # Specific preference check
-    if target_pref in {"h264_nvenc", "hevc_videotoolbox", "h264_videotoolbox", "h264_qsv"}:
-        for c, args, desc in HW_ENCODERS:
-            if c == target_pref:
-                if _test_encoder(c, args):
-                    info = EncoderInfo(
-                        codec=c,
-                        extra_args=args,
-                        is_hardware_accelerated=True,
-                        verified=True,
-                        description=desc,
-                    )
-                    _HW_PROBE_CACHE[cache_key] = info
-                    return info
-                break
-
-    # Auto priority check
-    for c, args, desc in HW_ENCODERS:
-        if _test_encoder(c, args):
-            logger.info("Hardware acceleration detected and verified: %s (%s)", c, desc)
-            info = EncoderInfo(
-                codec=c,
-                extra_args=args,
-                is_hardware_accelerated=True,
-                verified=True,
-                description=desc,
-            )
-            _HW_PROBE_CACHE[cache_key] = info
-            return info
-
-    # Fallback to libx264
-    info = EncoderInfo(
-        codec=CPU_FALLBACK_ENCODER[0],
-        extra_args=CPU_FALLBACK_ENCODER[1],
-        is_hardware_accelerated=False,
-        verified=True,
-        description=CPU_FALLBACK_ENCODER[2],
-    )
-    _HW_PROBE_CACHE[cache_key] = info
-    return info
-
-
 def score_frame_visual_quality(ppm_bytes: bytes) -> dict[str, float]:
     """Score frame visual quality from raw 24-bit RGB PPM image bytes.
 
@@ -562,7 +487,11 @@ def score_frame_visual_quality(ppm_bytes: bytes) -> dict[str, float]:
             r, g, b = pixel_data[idx], pixel_data[idx + 1], pixel_data[idx + 2]
             lum = (r * 77 + g * 150 + b * 29) >> 8
 
-            r_right, g_right, b_right = pixel_data[idx + 3], pixel_data[idx + 4], pixel_data[idx + 5]
+            r_right, g_right, b_right = (
+                pixel_data[idx + 3],
+                pixel_data[idx + 4],
+                pixel_data[idx + 5],
+            )
             lum_right = (r_right * 77 + g_right * 150 + b_right * 29) >> 8
 
             r_down = pixel_data[next_row_offset + x * 3]
@@ -649,6 +578,9 @@ def find_best_thumbnail_timestamp(
             "180x320",
             "-pix_fmt",
             "rgb24",
+            # image2pipe defaults to MJPEG; score_frame_visual_quality needs raw P6 PPM bytes.
+            "-c:v",
+            "ppm",
             "-f",
             "image2pipe",
             "-",
@@ -666,6 +598,32 @@ def find_best_thumbnail_timestamp(
             continue
 
     return best_ts
+
+
+def stage_subtitles_for_filter(sub_path: Path, dest: Path, job_id: str) -> Path | None:
+    """Return a copy of the ASS file whose path is safe inside a subtitles= filter argument.
+
+    escape_ffmpeg_filter_path wraps the path in single quotes and does not escape quotes,
+    so an apostrophe in the path (e.g. C:\\Users\\O'Brien\\...) breaks the filtergraph.
+    Returns None when the original path can be used as-is; otherwise copies the file to
+    the output directory (or the system temp dir) and returns the copy. The caller must
+    unlink the returned file.
+    """
+    if "'" not in str(sub_path):
+        return None
+
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", job_id)[:48] or "job"
+    for directory in (dest.parent, Path(tempfile.gettempdir())):
+        if "'" in str(directory) or not directory.is_dir():
+            continue
+        staged = directory / f".tmp_{safe_id}_subs.ass"
+        shutil.copyfile(sub_path, staged)
+        return staged
+
+    raise RuntimeError(
+        f"Subtitles path contains an apostrophe and no quote-free staging directory is "
+        f"available: {sub_path}"
+    )
 
 
 class FFmpegCompositor:
@@ -768,11 +726,17 @@ class FFmpegCompositor:
             target_lufs if target_lufs is not None else getattr(audio_cfg, "target_lufs", -14.0)
         )
         job = kwargs.get("job")
-        effective_bgm = bg_music_path or bgm_path or (getattr(job, "bgm_path", None) if job else None)
+        effective_bgm = (
+            bg_music_path or bgm_path or (getattr(job, "bgm_path", None) if job else None)
+        )
         effective_vol = (
             bg_music_volume
             if bg_music_volume is not None
-            else (bgm_volume if bgm_volume is not None else (getattr(job, "bgm_volume", None) if job else None))
+            else (
+                bgm_volume
+                if bgm_volume is not None
+                else (getattr(job, "bgm_volume", None) if job else None)
+            )
         )
         eff_bg_music_vol = (
             effective_vol
@@ -909,6 +873,13 @@ class FFmpegCompositor:
 
         fonts_dir = get_assets_dir() / "fonts"
         fonts_param = fonts_dir if fonts_dir.is_dir() else None
+        if fonts_param is not None and "'" in str(fonts_param):
+            logger.warning(
+                "Fonts dir %s contains an apostrophe and cannot be used in the subtitles filter; "
+                "rendering without fontsdir.",
+                fonts_param,
+            )
+            fonts_param = None
 
         # Resolve split separator style
         eff_split_sep = (
@@ -927,10 +898,11 @@ class FFmpegCompositor:
             if isinstance(r_meta, dict):
                 effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
 
-        # Build complex filtergraph
+        # Build complex filtergraph (subtitles path staged if it contains an apostrophe)
+        staged_sub = stage_subtitles_for_filter(sub_path, dest, job_id)
         filtergraph, out_v, out_a = build_complex_filtergraph(
             source_clip_has_audio=has_src_audio,
-            subtitles_path=sub_path,
+            subtitles_path=staged_sub or sub_path,
             duration_sec=target_duration,
             dopamine_preset=preset,
             edl=edl,
@@ -955,9 +927,7 @@ class FFmpegCompositor:
         )
 
         if effective_release is not None and "release=300" in filtergraph:
-            filtergraph = filtergraph.replace(
-                "release=300", f"release={int(effective_release)}"
-            )
+            filtergraph = filtergraph.replace("release=300", f"release={int(effective_release)}")
 
         cmd.extend(["-filter_complex", filtergraph])
         cmd.extend(["-map", out_v, "-map", out_a])
@@ -980,6 +950,8 @@ class FFmpegCompositor:
 
         # Hard cap at 60s and shortest stream
         cmd.extend(["-t", f"{target_duration:.3f}", "-shortest"])
+        # Move the moov atom to the front so the Short starts playing before full download
+        cmd.extend(["-movflags", "+faststart"])
 
         # Temporary atomic destination
         tmp_dest = dest.with_name(f".tmp_{job_id}_{dest.name}")
@@ -1024,7 +996,8 @@ class FFmpegCompositor:
                 if tmp_dest.is_file():
                     tmp_dest.unlink(missing_ok=True)
                 raise RuntimeError(
-                    f"FFmpeg compositing failed (exit code {proc.returncode}):\n{proc.stderr}"
+                    f"FFmpeg compositing failed (exit code {proc.returncode}):\n"
+                    f"{_stderr_tail(proc.stderr)}"
                 )
 
             # Atomic rename on success
@@ -1045,6 +1018,9 @@ class FFmpegCompositor:
             if tmp_dest.is_file():
                 tmp_dest.unlink(missing_ok=True)
             raise
+        finally:
+            if staged_sub is not None:
+                staged_sub.unlink(missing_ok=True)
 
     def generate_preview(
         self,
@@ -1078,7 +1054,7 @@ class FFmpegCompositor:
             wm = build_watermark_filter(
                 watermark_text=watermark_text,
                 position=watermark_position or "top_right",
-                opacity=watermark_opacity or 0.65,
+                opacity=watermark_opacity if watermark_opacity is not None else 0.65,
                 width=540,
                 height=960,
             )
@@ -1109,6 +1085,8 @@ class FFmpegCompositor:
             "aac",
             "-b:a",
             "96k",
+            "-movflags",
+            "+faststart",
             str(tmp_dest),
         ]
 
@@ -1121,11 +1099,18 @@ class FFmpegCompositor:
                 if tmp_dest.is_file():
                     tmp_dest.unlink(missing_ok=True)
                 raise RuntimeError(
-                    f"FFmpeg preview generation failed (code {proc.returncode}):\n{proc.stderr}"
+                    f"FFmpeg preview generation failed (code {proc.returncode}):\n"
+                    f"{_stderr_tail(proc.stderr)}"
                 )
 
             os.replace(tmp_dest, dest)
             return dest
+        except subprocess.TimeoutExpired as exc:
+            if tmp_dest.is_file():
+                tmp_dest.unlink(missing_ok=True)
+            raise TimeoutError(
+                f"FFmpeg preview for {src.name} exceeded timeout ({timeout_sec}s)"
+            ) from exc
         except Exception:
             if tmp_dest.is_file():
                 tmp_dest.unlink(missing_ok=True)
@@ -1198,7 +1183,8 @@ class FFmpegCompositor:
 
         if proc.returncode != 0:
             raise RuntimeError(
-                f"FFmpeg thumbnail extraction failed (code {proc.returncode}):\n{proc.stderr}"
+                f"FFmpeg thumbnail extraction failed (code {proc.returncode}):\n"
+                f"{_stderr_tail(proc.stderr)}"
             )
         return dest
 

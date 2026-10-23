@@ -120,7 +120,11 @@ class GeminiProvider(BaseLLMProvider):
         # 3. Any model containing '3.5-flash'
         # 4. Any model containing 'flash'
         # 5. First available model
-        lite_35 = [m for m in available if "3.5" in m.lower() and "flash" in m.lower() and "lite" in m.lower()]
+        lite_35 = [
+            m
+            for m in available
+            if "3.5" in m.lower() and "flash" in m.lower() and "lite" in m.lower()
+        ]
         if lite_35:
             selected = lite_35[0]
         else:

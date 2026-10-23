@@ -176,9 +176,11 @@ def test_default_format_spec_always_pairs_video_with_audio():
     for branch in DEFAULT_FORMAT_SPEC.split("/"):
         if not branch:
             continue
-        has_video = "video" in branch or branch.lstrip("best").startswith(
-            ("[", "best")
-        ) or branch.startswith("best[")
+        has_video = (
+            "video" in branch
+            or branch.lstrip("best").startswith(("[", "best"))
+            or branch.startswith("best[")
+        )
         if "bestvideo" in branch:
             assert "+bestaudio" in branch, f"unpaired video branch: {branch}"
         if "bestvideo" not in branch and "+" in branch:
@@ -258,6 +260,7 @@ def test_planner_marks_real_plan_source():
         ' "recommended_title": "A Title #Shorts", "recommended_hook": "Watch this",'
         ' "background_style_recommendation": "minecraft"}'
     )
+
     class _TranscriptOnlyProvider:
         """Provider exposing only complete(), i.e. no multimodal video analysis."""
 

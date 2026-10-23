@@ -152,9 +152,7 @@ class ClipSelection(BaseModel):
         default=None, description="Path to extracted or rendered thumbnail image"
     )
     bgm_path: str | None = Field(default=None, description="Explicit background music path")
-    bgm_volume: float | None = Field(
-        default=None, description="BGM volume multiplier (0.0 to 1.0)"
-    )
+    bgm_volume: float | None = Field(default=None, description="BGM volume multiplier (0.0 to 1.0)")
 
 
 SelectedClip = ClipSelection

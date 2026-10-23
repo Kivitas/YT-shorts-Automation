@@ -435,10 +435,7 @@ def test_compute_adaptive_silence_threshold_fast_vs_slow_cadence():
     from autoshorts.media.ass_styler import TimedWord
 
     # Fast speaker: 10 words in 2.5 seconds = 4.0 words/sec (> 3.0 WPS)
-    fast_words = [
-        TimedWord(word=f"word{i}", start=i * 0.25, end=i * 0.25 + 0.2)
-        for i in range(10)
-    ]
+    fast_words = [TimedWord(word=f"word{i}", start=i * 0.25, end=i * 0.25 + 0.2) for i in range(10)]
     fast_thresh = compute_adaptive_silence_threshold(fast_words, clip_duration=3.0)
     assert fast_thresh == 0.40
 
@@ -452,10 +449,7 @@ def test_compute_adaptive_silence_threshold_fast_vs_slow_cadence():
     assert slow_thresh == 0.60
 
     # Conversational speaker: 8 words in 3.6 seconds = 2.22 words/sec
-    conv_words = [
-        TimedWord(word=f"w{i}", start=i * 0.45, end=i * 0.45 + 0.35)
-        for i in range(8)
-    ]
+    conv_words = [TimedWord(word=f"w{i}", start=i * 0.45, end=i * 0.45 + 0.35) for i in range(8)]
     conv_thresh = compute_adaptive_silence_threshold(conv_words, clip_duration=4.0)
     assert 0.45 <= conv_thresh <= 0.55
 
@@ -483,11 +477,16 @@ def test_detect_dead_air_cuts_adaptive_threshold():
         t += 0.22
 
     # Adaptive mode detects the 0.44s pause because speaker is fast (threshold 0.40s)
-    adaptive_cuts = detect_dead_air_cuts(words=words, clip_duration=t + 1.0, min_gap_sec=None, adaptive=True)
+    adaptive_cuts = detect_dead_air_cuts(
+        words=words, clip_duration=t + 1.0, min_gap_sec=None, adaptive=True
+    )
     assert len(adaptive_cuts) >= 1
     assert any(c.cut_start >= pause_start - 0.1 for c in adaptive_cuts)
 
     # Static 0.48s mode ignores the 0.44s pause
-    static_cuts = detect_dead_air_cuts(words=words, clip_duration=t + 1.0, min_gap_sec=0.48, adaptive=False)
-    assert not any(c.cut_start >= pause_start - 0.1 and c.cut_end <= pause_start + 0.5 for c in static_cuts)
-
+    static_cuts = detect_dead_air_cuts(
+        words=words, clip_duration=t + 1.0, min_gap_sec=0.48, adaptive=False
+    )
+    assert not any(
+        c.cut_start >= pause_start - 0.1 and c.cut_end <= pause_start + 0.5 for c in static_cuts
+    )

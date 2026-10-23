@@ -40,6 +40,30 @@ DEFAULT_DESCRIPTION_TEMPLATE = (
 )
 
 
+def _cut_at_whitespace(text: str) -> str:
+    """Drop a trailing partial word, keeping at least the back half of the text."""
+    cut = max(text.rfind(" "), text.rfind("\n"))
+    if cut >= len(text) // 2:
+        return text[:cut]
+    return text
+
+
+def truncate_on_word(text: str, max_len: int) -> str:
+    """Cut text to at most max_len characters, preferring a word boundary.
+
+    Falls back to a hard cut only when no whitespace exists in the back half of the
+    allowed window (so a single very long token is still bounded).
+    """
+    if max_len <= 0:
+        return ""
+    if len(text) <= max_len:
+        return text
+    if text[max_len].isspace():
+        # The window ends exactly on a word boundary; keep the whole window.
+        return text[:max_len].rstrip()
+    return _cut_at_whitespace(text[:max_len]).rstrip()
+
+
 def sanitize_youtube_text(text: str) -> str:
     """Remove or sanitize characters forbidden by YouTube Data API (< and >).
 
@@ -146,17 +170,29 @@ class DescriptionBuilder:
         clean_channel = sanitize_youtube_text(channel)
         clean_title = sanitize_youtube_text(title)
 
-        rendered = raw_tpl.format(
-            hook=clean_hook,
-            channel=clean_channel,
-            title=clean_title,
-        ).strip()
+        try:
+            rendered = raw_tpl.format(
+                hook=clean_hook,
+                channel=clean_channel,
+                title=clean_title,
+            ).strip()
+        except (KeyError, IndexError, ValueError):
+            # A malformed user template must not crash the upload; use the default.
+            rendered = DEFAULT_TITLE_TEMPLATE.format(
+                hook=clean_hook, channel=clean_channel, title=clean_title
+            ).strip()
 
         # Ensure #Shorts is present
         if "#shorts" not in rendered.lower():
             rendered = f"{rendered} #Shorts"
 
         rendered = sanitize_youtube_text(rendered)
+        rendered = re.sub(r"[\x00-\x1f\x7f]+", " ", rendered).strip()
+        has_words = re.search(r"[^\W_]", re.sub(r"(?i)#shorts", "", rendered))
+        if not has_words:
+            # Empty hook/title fallback: never emit a blank or tag-only title.
+            base = clean_title or clean_channel or "Short"
+            rendered = f"{base} #Shorts"
 
         # Enforce 100-character ceiling
         if len(rendered) <= MAX_TITLE_LENGTH:
@@ -164,14 +200,17 @@ class DescriptionBuilder:
 
         # Truncation logic: preserve the suffix (e.g. ' | Channel #Shorts' or ' #Shorts')
         tag = "#Shorts"
-        suffix = f" | {clean_channel} {tag}"
+        suffix = f" | {clean_channel} {tag}" if clean_channel else f" {tag}"
         if len(suffix) >= MAX_TITLE_LENGTH - 10:
             suffix = f" {tag}"
 
         available_for_hook = max(10, MAX_TITLE_LENGTH - len(suffix) - 3)
-        truncated_hook = clean_hook[:available_for_hook].rstrip() + "..."
-        final_title = f"{truncated_hook}{suffix}"
+        head = truncate_on_word(clean_hook or clean_title or "Short", available_for_hook)
+        final_title = f"{head}...{suffix}"
 
+        if len(final_title) > MAX_TITLE_LENGTH:
+            # Degenerate suffix/window combination: keep the tag, cut the head.
+            final_title = f"{final_title[: MAX_TITLE_LENGTH - len(suffix) - 3]}...{suffix}"
         return final_title[:MAX_TITLE_LENGTH]
 
     def build_description(
@@ -266,16 +305,16 @@ class DescriptionBuilder:
 
             available_header_bytes = MAX_DESCRIPTION_BYTES - footer_bytes_len - 20
             if available_header_bytes > 50:
-                header_truncated = header_part.encode("utf-8")[:available_header_bytes].decode(
-                    "utf-8", "ignore"
+                header_truncated = _cut_at_whitespace(
+                    header_part.encode("utf-8")[:available_header_bytes].decode("utf-8", "ignore")
                 )
                 rendered = f"{header_truncated.rstrip()}...\n\n{footer_part}"
                 if len(rendered.encode("utf-8")) <= MAX_DESCRIPTION_BYTES:
                     return rendered
 
-        # Fallback raw byte truncation
+        # Fallback byte truncation (UTF-8 safe), cut at a word boundary when possible
         truncated = rendered_bytes[:MAX_DESCRIPTION_BYTES].decode("utf-8", "ignore")
-        return truncated
+        return _cut_at_whitespace(truncated).rstrip()
 
 
 def build_short_title(

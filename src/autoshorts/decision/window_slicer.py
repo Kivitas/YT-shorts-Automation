@@ -269,7 +269,9 @@ def cluster_heatmap_spikes(
                     {
                         "start": round(start_t, 2),
                         "end": round(end_t, 2),
-                        "peak_time": round((float(peak_pt.start_time) + float(peak_pt.end_time)) / 2.0, 2),
+                        "peak_time": round(
+                            (float(peak_pt.start_time) + float(peak_pt.end_time)) / 2.0, 2
+                        ),
                         "peak_value": round(float(peak_pt.value), 4),
                         "velocity": round(max(0.0, max_vel), 4),
                     }
@@ -945,4 +947,3 @@ __all__ = [
     "select_non_overlapping_candidates",
     "slice_transcript_windows",
 ]
-

@@ -149,13 +149,10 @@ def build_watermark_filter(
     if not watermark_text:
         return ""
 
-    # Safely escape for FFmpeg drawtext: backslash, colon, single quote, percent
-    escaped_text = (
-        watermark_text.replace("\\", "\\\\")
-        .replace(":", r"\:")
-        .replace("'", r"\'")
-        .replace("%", r"\%")
-    )
+    # Escape for the filtergraph and drawtext: backslash, colon, single quote.
+    # expansion=none (below) makes '%' literal, so it needs no escape. A "\%" escape was
+    # unreliable: it printed "Stray %" and its parity flipped when an apostrophe was present.
+    escaped_text = watermark_text.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
 
     pos = (position or "top_right").strip().lower()
     if pos == "top_left":
@@ -175,7 +172,7 @@ def build_watermark_filter(
     alpha_val = max(0.05, min(1.0, opacity))
 
     return (
-        f"drawtext=text='{escaped_text}':fontcolor=white@{alpha_val:.2f}:"
+        f"drawtext=text='{escaped_text}':expansion=none:fontcolor=white@{alpha_val:.2f}:"
         f"fontsize={fontsize}:x={x_expr}:y={y_expr}:shadowcolor=black@0.5:shadowx=2:shadowy=2"
     )
 
@@ -262,8 +259,12 @@ def build_visual_momentum_filter(
         st = max(0.0, cut.cut_start - whip_duration_sec)
         et = cut.cut_end + whip_duration_sec
         dur = max(0.01, whip_duration_sec)
-        shift_expr = f"(sin(3.14159*(t-{st:.2f})/{dur:.2f})*between(t,{st:.2f},{cut.cut_start:.2f}))"
-        shift_expr_post = f"(-sin(3.14159*(t-{cut.cut_end:.2f})/{dur:.2f})*between(t,{cut.cut_end:.2f},{et:.2f}))"
+        shift_expr = (
+            f"(sin(3.14159*(t-{st:.2f})/{dur:.2f})*between(t,{st:.2f},{cut.cut_start:.2f}))"
+        )
+        shift_expr_post = (
+            f"(-sin(3.14159*(t-{cut.cut_end:.2f})/{dur:.2f})*between(t,{cut.cut_end:.2f},{et:.2f}))"
+        )
         terms.append(f"({shift_expr}+{shift_expr_post})")
 
     impulse_expr = "+".join(terms)
@@ -300,15 +301,11 @@ def build_split_separator_filter(
     dur = max(1.0, duration_sec)
 
     if clean_style in ("drawbox", "neon"):
-        line_filter = (
-            f"[{input_label}]drawbox=x=0:y={seam_y - 2}:w=iw:h=4:color=0x00E5FF@0.9:t=fill[{output_label}]"
-        )
+        line_filter = f"[{input_label}]drawbox=x=0:y={seam_y - 2}:w=iw:h=4:color=0x00E5FF@0.9:t=fill[{output_label}]"
         return line_filter, output_label
 
     elif clean_style == "dark":
-        line_filter = (
-            f"[{input_label}]drawbox=x=0:y={seam_y - 2}:w=iw:h=4:color=black@0.85:t=fill[{output_label}]"
-        )
+        line_filter = f"[{input_label}]drawbox=x=0:y={seam_y - 2}:w=iw:h=4:color=black@0.85:t=fill[{output_label}]"
         return line_filter, output_label
 
     elif clean_style == "shadow":
@@ -588,10 +585,14 @@ def build_complex_filtergraph(
     current_a = "0:a" if source_clip_has_audio else None
 
     # Determine effective split separator style across layout and preset
-    eff_sep = split_separator if split_separator != "none" else (
-        dopamine_preset.split_separator_style
-        if getattr(dopamine_preset, "enable_split_separator", False)
-        else "none"
+    eff_sep = (
+        split_separator
+        if split_separator != "none"
+        else (
+            dopamine_preset.split_separator_style
+            if getattr(dopamine_preset, "enable_split_separator", False)
+            else "none"
+        )
     )
 
     # -------------------------------------------------------------------------
@@ -986,9 +987,7 @@ def build_complex_filtergraph(
         # Mix background music if available using sidechain compression
         if dopamine_preset.enable_music_ducking and music_input_index is not None:
             duck_release = (
-                int(rhythm_ducking_release)
-                if rhythm_ducking_release is not None
-                else 300
+                int(rhythm_ducking_release) if rhythm_ducking_release is not None else 300
             )
             filter_stages.append(
                 f"[{voice_label}]asplit=2[v_main][v_side]; "
@@ -1049,4 +1048,3 @@ __all__ = [
     "get_dopamine_preset",
     "pick_background_asset",
 ]
-

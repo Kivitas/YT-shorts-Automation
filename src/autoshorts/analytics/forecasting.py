@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 # Check tier availability safely without hard crashes
 _HAS_TIMESFM = importlib.util.find_spec("timesfm") is not None
 _HAS_NUMPY_SCIPY = (
-    importlib.util.find_spec("numpy") is not None
-    and importlib.util.find_spec("scipy") is not None
+    importlib.util.find_spec("numpy") is not None and importlib.util.find_spec("scipy") is not None
 )
 
 
@@ -242,11 +241,7 @@ class TimeSeriesForecastingEngine:
             return sorted(points, key=lambda x: x[0])
 
         # Handle list of numeric views (assumed 1h, 2h, 3h...)
-        if (
-            isinstance(telemetry, Sequence)
-            and telemetry
-            and isinstance(telemetry[0], (int, float))
-        ):
+        if isinstance(telemetry, Sequence) and telemetry and isinstance(telemetry[0], (int, float)):
             for idx, val in enumerate(telemetry, start=1):
                 points.append((float(idx), float(val)))
             return sorted(points, key=lambda x: x[0])

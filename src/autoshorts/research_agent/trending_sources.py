@@ -552,9 +552,7 @@ def _parse_video_items(
         channel = snippet.get("channelTitle", "YouTube Creator")
         channel_id = snippet.get("channelId", "")
         ch_url = (
-            f"https://www.youtube.com/channel/{channel_id}"
-            if channel_id
-            else "https://youtube.com"
+            f"https://www.youtube.com/channel/{channel_id}" if channel_id else "https://youtube.com"
         )
 
         views = int(stats.get("viewCount", 0))
@@ -598,9 +596,7 @@ def _parse_video_items(
                 viral_score=v_score,
                 score_breakdown=breakdown,
                 suggested_focus_prompt=f"Clip peak high-impact insight from {channel}.",
-                recommended_studio_profile="hormozi"
-                if "ai" in norm_niche
-                else "podcast_70_30",
+                recommended_studio_profile="hormozi" if "ai" in norm_niche else "podcast_70_30",
                 niche_category=norm_niche,
             )
         )

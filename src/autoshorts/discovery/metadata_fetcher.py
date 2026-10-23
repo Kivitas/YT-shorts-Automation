@@ -76,6 +76,32 @@ def fetch_sponsor_segments(video_id: str, timeout: float = 3.0) -> list[SponsorS
         return []
 
 
+def _parse_ytdlp_json(text: str) -> dict:
+    """Parse yt-dlp --dump-json output into one object.
+
+    yt-dlp emits one JSON document per entry, so a multi-entry result arrives as several
+    lines. The first object is used; a whole-document parse is tried first.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                candidate = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                return candidate
+        raise MetadataFetchError(f"Failed to decode yt-dlp output as JSON: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise MetadataFetchError("yt-dlp JSON output is not an object")
+    return data
+
+
 def _parse_heatmap(raw_heatmap: object) -> list[HeatmapPoint]:
     """Parse yt-dlp heatmap array into list[HeatmapPoint] clamping values to [0.0, 1.0]."""
     if not isinstance(raw_heatmap, list):
@@ -196,6 +222,7 @@ class MetadataFetcher:
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
+            "--",
             canonical_url,
         ]
 
@@ -222,10 +249,7 @@ class MetadataFetcher:
         if not stdout_text:
             raise MetadataFetchError("yt-dlp returned empty stdout JSON")
 
-        try:
-            data = json.loads(stdout_text)
-        except json.JSONDecodeError as e:
-            raise MetadataFetchError(f"Failed to decode yt-dlp output as JSON: {e}") from e
+        data = _parse_ytdlp_json(stdout_text)
 
         # Inspect live_status and is_live to guard against live streams and upcoming premieres
         is_live = bool(data.get("is_live") or data.get("live_status") == "is_live")

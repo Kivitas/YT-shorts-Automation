@@ -194,9 +194,7 @@ class TestLayaRhythmEngine:
 
         # Raw float timestamp list support
         raw_floats = [0.95, 2.05, 3.40]
-        snapped_floats = engine.snap_zoom_punch_ins(
-            raw_floats, beats=active_beats, confidence=0.85
-        )
+        snapped_floats = engine.snap_zoom_punch_ins(raw_floats, beats=active_beats, confidence=0.85)
         assert snapped_floats[0] == 1.00  # 50ms away
         assert snapped_floats[1] == 2.00  # 50ms away
         assert snapped_floats[2] == 3.40  # 400ms away -> unchanged

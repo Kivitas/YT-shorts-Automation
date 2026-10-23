@@ -413,7 +413,9 @@ def test_classify_semantic_hook_categories():
     assert res_curiosity["score"] > 0.50
 
     # Contrarian statement
-    res_contrarian = classify_semantic_hook("Stop doing this exercise because you're doing it wrong!")
+    res_contrarian = classify_semantic_hook(
+        "Stop doing this exercise because you're doing it wrong!"
+    )
     assert res_contrarian["is_hook"] is True
     assert res_contrarian["primary_category"] == "contrarian"
     assert any("contrarian" in sig for sig in res_contrarian["detected_signals"])
@@ -444,12 +446,28 @@ def test_sentence_and_clause_boundary_snapping_clean():
     """Verify candidate windows strictly start on sentence or clause boundaries rather than mid-sentence."""
     transcript = [
         {"start": 0.0, "end": 4.0, "text": "This is an introductory thought."},
-        {"start": 4.1, "end": 7.0, "text": "and then we continued speaking"},  # Lowercase continuation
+        {
+            "start": 4.1,
+            "end": 7.0,
+            "text": "and then we continued speaking",
+        },  # Lowercase continuation
         {"start": 7.1, "end": 12.0, "text": "Wait until you see this shocking result!"},
-        {"start": 12.1, "end": 20.0, "text": "Most people think productivity requires 12 hours a day."},
-        {"start": 20.1, "end": 35.0, "text": "In reality, 4 hours of deep focus produces 10x more output."},
+        {
+            "start": 12.1,
+            "end": 20.0,
+            "text": "Most people think productivity requires 12 hours a day.",
+        },
+        {
+            "start": 20.1,
+            "end": 35.0,
+            "text": "In reality, 4 hours of deep focus produces 10x more output.",
+        },
         {"start": 35.1, "end": 42.0, "text": "This is the single greatest career secret."},
-        {"start": 42.1, "end": 50.0, "text": "Start applying it immediately and see the difference."},
+        {
+            "start": 42.1,
+            "end": 50.0,
+            "text": "Start applying it immediately and see the difference.",
+        },
     ]
 
     windows = slice_transcript_windows(
@@ -498,7 +516,9 @@ def test_narrative_completeness_evaluation_and_penalty():
     from autoshorts.decision.window_slicer import compute_narrative_completeness_score
 
     # 1. Complete resolution
-    complete_text = "Scientists discovered a simple hack that changes everything. It works every time."
+    complete_text = (
+        "Scientists discovered a simple hack that changes everything. It works every time."
+    )
     score_comp = compute_narrative_completeness_score(complete_text)
     assert score_comp == 1.0
 
@@ -522,4 +542,3 @@ def test_narrative_completeness_evaluation_and_penalty():
     fused_cutoff = _fuse_candidate_score(0.80, 0.50, 0.60, narrative_completeness=0.50)
     assert fused_cutoff < fused_complete
     assert (fused_complete - fused_cutoff) >= 0.05
-

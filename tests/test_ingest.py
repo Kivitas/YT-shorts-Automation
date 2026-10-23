@@ -222,7 +222,7 @@ def test_parse_links_input_cli_list():
     [
         (0.0, 45.0, "*00:00-00:45"),
         (65.0, 110.0, "*01:05-01:50"),
-        (125.5, 170.2, "*02:05-02:50"),
+        (125.5, 170.2, "*02:05.500-02:50.200"),
         (3665.0, 3710.0, "*01:01:05-01:01:50"),
     ],
 )
@@ -252,7 +252,9 @@ def test_downloader_section_args_and_atomic_execution(tmp_path: Path):
         actual_temp.write_bytes(b"dummy mp4 data")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    valid = SectionValidation(ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=45.0)
+    valid = SectionValidation(
+        ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=45.0
+    )
     dl = Downloader(cookies_from_browser="chrome")
     ytdlp_cmds: list[list[str]] = []
 
@@ -781,7 +783,9 @@ def test_downloader_multiclient_fallback_and_probe(tmp_path: Path):
         temp_file.write_bytes(b"mp4 content")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    valid = SectionValidation(ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=40.0)
+    valid = SectionValidation(
+        ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=40.0
+    )
     dl = YtDlpDownloader(max_retries=2, retry_delay_sec=0.01)
     with (
         patch("subprocess.run", side_effect=side_effect_run),

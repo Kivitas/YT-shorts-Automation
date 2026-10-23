@@ -52,7 +52,9 @@ def test_config_loading_with_model_null():
     assert isinstance(settings, Settings)
 
     # Rule: model must be configured or null default
-    assert settings.llm.model in (None, "gemini-3.5-flash-lite"), "LLM model must be null or default gemini-3.5-flash-lite"
+    assert settings.llm.model in (None, "gemini-3.5-flash-lite"), (
+        "LLM model must be null or default gemini-3.5-flash-lite"
+    )
     assert settings.edit_planner.model is None, "Edit planner model must be null by default"
 
     # Verify key default constraints

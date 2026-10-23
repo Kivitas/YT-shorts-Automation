@@ -455,11 +455,7 @@ def download_source_video(
             proc_fb = subprocess.run(
                 cmd_fallback, capture_output=True, text=True, timeout=timeout_sec
             )
-            if (
-                proc_fb.returncode == 0
-                and output_path.is_file()
-                and output_path.stat().st_size > 0
-            ):
+            if proc_fb.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0:
                 return output_path
 
             if output_path.is_file() and output_path.stat().st_size > 0:
@@ -608,7 +604,9 @@ def cut_video_segments(
                 os.replace(tmp_dest, dest_path)
                 success = True
             else:
-                logger.debug("Stream copy failed (rc=%d), falling back to re-encode", proc.returncode)
+                logger.debug(
+                    "Stream copy failed (rc=%d), falling back to re-encode", proc.returncode
+                )
         except subprocess.TimeoutExpired:
             logger.warning("FFmpeg stream copy timed out for segment %d", seg_idx)
             if tmp_dest.is_file():
@@ -774,9 +772,7 @@ def collect_category_gameplay(
                         "source_title": cand["title"],
                         "source_url": cand["url"],
                         "channel": cand["channel"],
-                        "duration": round(
-                            probe_video_duration(p, default=segment_duration_sec), 2
-                        ),
+                        "duration": round(probe_video_duration(p, default=segment_duration_sec), 2),
                         "license_note": (
                             "Royalty-free / Creative Commons gameplay. User is responsible for verifying "
                             "source license before commercial monetization."
@@ -932,7 +928,9 @@ def get_categories_summary(assets_dir: Path | None = None) -> list[dict[str, Any
         if manifest_exists:
             try:
                 data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                manifest_clips_count = len(data.get("clips", [])) if isinstance(data, dict) else len(data)
+                manifest_clips_count = (
+                    len(data.get("clips", [])) if isinstance(data, dict) else len(data)
+                )
             except Exception:
                 pass
 

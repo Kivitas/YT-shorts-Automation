@@ -380,7 +380,14 @@ def test_pipeline_manual_review_mode(test_env: dict[str, Any], monkeypatch: pyte
         video_url="https://youtube.com/watch?v=review1",
         duration=100.0,
     )
-    mock_downloader.download_section.return_value = work_dir / "cut.mp4"
+
+    def fake_download_section(url, start_sec, end_sec, output_path):
+        # The real downloader always writes the cut; compositing now checks that it exists.
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(b"cut video")
+        return Path(output_path)
+
+    mock_downloader.download_section.side_effect = fake_download_section
 
     mock_transcript_fetcher = MagicMock()
     mock_transcript_fetcher.fetch_or_signal.return_value = (
@@ -989,7 +996,7 @@ def test_pipeline_auto_trim_silence_smart_crop_and_candidates_endpoints(
 
     # 3. Test FastAPI endpoints for candidates, select-clip, and auto-trim-silence
     app = create_app(pipeline=pipe, state_manager=state_mgr, run_scheduler_worker=False)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost:8765")
 
     r_cands = client.get(f"/api/jobs/{job_id}/candidates")
     assert r_cands.status_code == 200
@@ -1285,7 +1292,9 @@ def test_pipeline_metadata_forwarding_in_handoff(test_env: dict[str, Any], tmp_p
     assert call_kwargs["pin_comment_text"] == "Check this out!"
 
 
-def test_pipeline_gameplay_background_selection_manifest_and_fallback(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+def test_pipeline_gameplay_background_selection_manifest_and_fallback(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     """Verify select_gameplay_background reads manifest if present, rotates/randomizes, and gracefully falls back with a clear log when empty."""
     import logging
 
@@ -1315,7 +1324,7 @@ def test_pipeline_gameplay_background_selection_manifest_and_fallback(tmp_path: 
         # Should gracefully fall back to procedural/lavfi (None, 0.0) when empty
         assert chosen_fb is None
         assert offset_fb == 0.0
-        assert any("No gameplay background video found" in record.message for record in caplog.records)
+        assert any(
+            "No gameplay background video found" in record.message for record in caplog.records
+        )
         assert any("Gracefully falling back" in record.message for record in caplog.records)
-
-

@@ -4,7 +4,6 @@ Skips gracefully with an informative message if FFmpeg/ffprobe is not found on P
 """
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -12,7 +11,7 @@ import pytest
 
 from autoshorts.media.ass_styler import write_ass_file
 from autoshorts.media.compositor import FFmpegCompositor
-from autoshorts.media.encoder_probe import is_ffmpeg_available, is_ffprobe_available
+from autoshorts.media.encoder_probe import get_ffmpeg_path, get_ffprobe_path, is_ffmpeg_available
 
 
 def test_synthetic_ffmpeg_skip_or_render(tmp_path: Path):
@@ -31,16 +30,14 @@ def test_synthetic_ffmpeg_skip_or_render(tmp_path: Path):
             "Skipping synthetic integration test. To run, install FFmpeg via winget install Gyan.FFmpeg."
         )
 
-    if not is_ffprobe_available():
+    ffprobe_bin = get_ffprobe_path()
+    if ffprobe_bin is None:
         pytest.skip(
-            "FFprobe executable not found on system PATH ('ffprobe -version' failed). "
-            "Skipping synthetic integration test. To run, install FFmpeg/ffprobe."
+            "ffprobe not found on PATH or next to the ffmpeg binary. "
+            "Skipping synthetic integration test. To run, install a full FFmpeg build with ffprobe."
         )
 
-    ffmpeg_bin = shutil.which("ffmpeg")
-    ffprobe_bin = shutil.which("ffprobe")
-    assert ffmpeg_bin is not None
-    assert ffprobe_bin is not None
+    ffmpeg_bin = get_ffmpeg_path()
 
     # 1. Generate synthetic source clip: 3 seconds of 1280x720 video with 1000Hz sine wave audio
     raw_source = tmp_path / "synthetic_raw.mp4"

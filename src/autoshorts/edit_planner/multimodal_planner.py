@@ -183,9 +183,7 @@ class MultimodalEditPlanner(EditPlanner):
 
         # If planner is disabled or no provider injected, return empty fallback
         if not self.config.enabled or self.provider is None:
-            reason = (
-                "planner disabled by config" if not self.config.enabled else "no LLM provider"
-            )
+            reason = "planner disabled by config" if not self.config.enabled else "no LLM provider"
             logger.info("Edit planner unavailable (%s); returning clean empty EDL", reason)
             self._record("empty_fallback", reason)
             return create_empty_edl(clip_duration=clip_duration, fallback_reason=reason)

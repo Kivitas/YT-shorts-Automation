@@ -143,11 +143,13 @@ def download_clip_with_ytdlp(
     except Exception:
         pass
 
-    cmd.extend([
-        "-o",
-        str(output_path),
-        url,
-    ])
+    cmd.extend(
+        [
+            "-o",
+            str(output_path),
+            url,
+        ]
+    )
 
     logger.info("Downloading background sample: %s -> %s", url, output_path.name)
     try:

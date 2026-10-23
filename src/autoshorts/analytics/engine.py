@@ -315,7 +315,11 @@ class AnalyticsEngine:
                 if "private video" in msg:
                     is_unavail = True
                     unavail_reason = "private"
-                elif "video unavailable" in msg or "removed by the uploader" in msg or "deleted" in msg:
+                elif (
+                    "video unavailable" in msg
+                    or "removed by the uploader" in msg
+                    or "deleted" in msg
+                ):
                     is_unavail = True
                     unavail_reason = "deleted"
                 else:
@@ -334,7 +338,11 @@ class AnalyticsEngine:
                             if "private video" in s_err:
                                 is_unavail = True
                                 unavail_reason = "private"
-                            elif "video unavailable" in s_err or "removed" in s_err or "deleted" in s_err:
+                            elif (
+                                "video unavailable" in s_err
+                                or "removed" in s_err
+                                or "deleted" in s_err
+                            ):
                                 is_unavail = True
                                 unavail_reason = "deleted"
                     except Exception as sub_err:

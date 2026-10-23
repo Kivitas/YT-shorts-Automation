@@ -38,7 +38,7 @@ if defined ESC (
 :: -----------------------------------------------------------------------------
 :: Configuration Defaults
 :: -----------------------------------------------------------------------------
-set "PORT=8000"
+set "PORT=8765"
 set "HOST=127.0.0.1"
 set "DO_CHECK=0"
 set "DO_TEST=0"
@@ -129,7 +129,7 @@ echo                 %C_BOLD%AutoShorts Studio Launcher%C_RESET%
 echo   Rapid Kinetic Captions (84pt pop) ^| Parallel Processing (3 Workers)
 echo %C_CYAN%=====================================================================%C_RESET%
 echo %C_WHITE%Usage:%C_RESET%
-echo   start.bat                     Launch web dashboard at http://localhost:8000
+echo   start.bat                     Launch web dashboard at http://localhost:8765
 echo   start.bat --port ^<port^>       Launch dashboard on custom port (e.g. 8080)
 echo   start.bat -p ^<port^>           Short alias for --port
 echo   start.bat --check             Run comprehensive pre-flight diagnostics and exit

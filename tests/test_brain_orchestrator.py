@@ -123,7 +123,9 @@ async def test_music_scout_wps_and_rhythm_matching() -> None:
 
     # Fast speech (150 words in 30s -> 5.0 WPS -> target BPM 140)
     fast_text = "word " * 150
-    audio_fast = await agent.scout(script_or_transcript=fast_text, duration_seconds=30.0, niche="gaming")
+    audio_fast = await agent.scout(
+        script_or_transcript=fast_text, duration_seconds=30.0, niche="gaming"
+    )
     assert audio_fast.words_per_second >= 3.0
     assert audio_fast.target_bpm == 140
     assert audio_fast.mood == "high_octane_phonk"
@@ -131,7 +133,9 @@ async def test_music_scout_wps_and_rhythm_matching() -> None:
 
     # Slow speech (40 words in 30s -> 1.33 WPS -> target BPM 100)
     slow_text = "word " * 40
-    audio_slow = await agent.scout(script_or_transcript=slow_text, duration_seconds=30.0, niche="science")
+    audio_slow = await agent.scout(
+        script_or_transcript=slow_text, duration_seconds=30.0, niche="science"
+    )
     assert audio_slow.words_per_second < 2.2
     assert audio_slow.target_bpm == 100
     assert audio_slow.mood == "contemplative_ambient"
@@ -379,7 +383,7 @@ async def test_bounded_swarm_concurrency() -> None:
 @pytest.fixture
 def test_client() -> TestClient:
     app = create_app(run_scheduler_worker=False)
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost:8765")
 
 
 def test_dashboard_critic_evaluate_route(test_client: TestClient) -> None:
