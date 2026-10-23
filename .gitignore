@@ -63,10 +63,12 @@ assets/sfx/*
 .vscode/
 *.swp
 *.swo
+.omc/
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Local Windows Scripts (created locally to avoid SmartScreen prompts)
+# Local Windows Scripts (allow start.bat to be tracked)
 *.bat
+!start.bat
 

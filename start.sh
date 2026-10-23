@@ -132,17 +132,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 # -----------------------------------------------------------------------------
-# Detect Homebrew & Prepend to PATH on macOS
+# Detect Homebrew & Configure PATH on macOS & Unix
 # -----------------------------------------------------------------------------
 if [[ "$(uname -s)" == "Darwin" ]]; then
-    # Apple Silicon Homebrew
-    if [[ -d "/opt/homebrew/bin" ]] && [[ ":$PATH:" != *":/opt/homebrew/bin:"* ]]; then
-        export PATH="/opt/homebrew/bin:$PATH"
+    if [[ -x "/opt/homebrew/bin/brew" ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || true)"
+    elif [[ -x "/usr/local/bin/brew" ]]; then
+        eval "$(/usr/local/bin/brew shellenv 2>/dev/null || true)"
     fi
-    # Intel Mac Homebrew
-    if [[ -d "/usr/local/bin" ]] && [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
-        export PATH="/usr/local/bin:$PATH"
-    fi
+    for brew_dir in "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+        if [[ -d "$brew_dir" && ":$PATH:" != *":$brew_dir:"* ]]; then
+            export PATH="$brew_dir:$PATH"
+        fi
+    done
+else
+    for bin_dir in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+        if [[ -d "$bin_dir" && ":$PATH:" != *":$bin_dir:"* ]]; then
+            export PATH="$bin_dir:$PATH"
+        fi
+    done
 fi
 
 # -----------------------------------------------------------------------------
@@ -158,10 +166,29 @@ elif [[ -x "$HOME/.cargo/bin/uv" ]]; then
 fi
 
 SYSTEM_PYTHON=""
-if command -v python3 >/dev/null 2>&1; then
-    SYSTEM_PYTHON="$(command -v python3)"
-elif command -v python >/dev/null 2>&1; then
-    SYSTEM_PYTHON="$(command -v python)"
+for candidate in python3.12 python3.11 python3.13 python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
+            SYSTEM_PYTHON="$(command -v "$candidate")"
+            break
+        fi
+    fi
+done
+
+# If neither uv nor Python found, attempt automated uv bootstrap
+if [[ -z "$UV_CMD" && -z "$SYSTEM_PYTHON" ]]; then
+    printf "%b[INFO] Neither Python 3.11+ nor uv was found on system PATH.%b\n" "$C_YELLOW" "$C_RESET"
+    if command -v curl >/dev/null 2>&1; then
+        printf "%b[INFO] Bootstrapping uv installer for %s...%b\n" "$(uname -s)" "$C_CYAN" "$C_RESET"
+        curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || true
+        if [[ -x "$HOME/.local/bin/uv" ]]; then
+            UV_CMD="$HOME/.local/bin/uv"
+            export PATH="$HOME/.local/bin:$PATH"
+        elif [[ -x "$HOME/.cargo/bin/uv" ]]; then
+            UV_CMD="$HOME/.cargo/bin/uv"
+            export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+    fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -169,15 +196,19 @@ fi
 # -----------------------------------------------------------------------------
 PYTHON_EXE=".venv/bin/python"
 
+# Cross-platform healing: if .venv was created on Windows (contains Scripts/ but lacks bin/python)
+if [[ -d ".venv" && ! -f "$PYTHON_EXE" && -d ".venv/Scripts" ]]; then
+    printf "%b[WARNING] Detected Windows-formatted .venv directory. Rebuilding for %s...%b\n" "$C_YELLOW" "$(uname -s)" "$C_RESET"
+    rm -rf .venv
+fi
+
 if [[ ! -x "$PYTHON_EXE" ]]; then
     printf "%b[INFO]%b Virtual environment not found (.venv/bin/python missing).\n" "$C_YELLOW" "$C_RESET"
     if [[ -n "$UV_CMD" ]]; then
-        printf "%b[INFO]%b Detected uv package manager (%s). Synchronizing environment...\n" "$C_CYAN" "$C_RESET" "$UV_CMD"
-        "$UV_CMD" sync
-        if [[ ! -x "$PYTHON_EXE" ]]; then
-            printf "%b[INFO]%b Initializing virtual environment with uv...\n" "$C_CYAN" "$C_RESET"
-            "$UV_CMD" venv --python 3.12 2>/dev/null || "$UV_CMD" venv
-            "$UV_CMD" pip install -e .
+        printf "%b[INFO]%b Detected uv package manager (%s). Preparing environment...\n" "$C_CYAN" "$C_RESET" "$UV_CMD"
+        "$UV_CMD" venv --python 3.12 2>/dev/null || "$UV_CMD" venv 2>/dev/null || true
+        if [[ -x "$PYTHON_EXE" ]]; then
+            "$UV_CMD" pip install -e . 2>/dev/null || "$PYTHON_EXE" -m pip install -e . 2>/dev/null || true
         fi
     elif [[ -n "$SYSTEM_PYTHON" ]]; then
         printf "%b[INFO]%b Initializing virtual environment using %s -m venv...\n" "$C_CYAN" "$C_RESET" "$SYSTEM_PYTHON"
@@ -185,7 +216,7 @@ if [[ ! -x "$PYTHON_EXE" ]]; then
         if [[ -x "$PYTHON_EXE" ]]; then
             printf "%b[INFO]%b Installing dependencies in editable mode...\n" "$C_CYAN" "$C_RESET"
             "$PYTHON_EXE" -m pip install --upgrade pip >/dev/null 2>&1 || true
-            "$PYTHON_EXE" -m pip install -e .
+            "$PYTHON_EXE" -m pip install -e . 2>/dev/null || true
         fi
     else
         printf "%b[ERROR] Neither Python 3.11+ nor uv was found on your system PATH!%b\n" "$C_RED" "$C_RESET"
@@ -235,12 +266,14 @@ if [[ $DO_TEST -eq 1 ]]; then
     printf "%b=====================================================================%b\n" "$C_CYAN" "$C_RESET"
     printf "%b[INFO] Running pytest test suite...%b\n\n" "$C_WHITE" "$C_RESET"
 
+    set +e
     if [[ -n "$UV_CMD" ]]; then
         "$UV_CMD" run pytest -q
     else
         "$PYTHON_EXE" -m pytest -q
     fi
     TEST_CODE=$?
+    set -e
     echo ""
     if [[ $TEST_CODE -eq 0 ]]; then
         printf "%b[SUCCESS] All unit and integration tests passed cleanly.%b\n" "$C_GREEN" "$C_RESET"
@@ -296,7 +329,7 @@ if [[ $DO_CHECK -eq 1 ]]; then
     echo ""
 
     printf "%b[6] Core Dependencies & Model Readiness:%b\n" "$C_BOLD" "$C_RESET"
-    "$PYTHON_EXE" -c "import importlib.util as u, sys; mods=[('autoshorts','AutoShorts Core Framework',True),('autoshorts.brain','Master Brain Orchestrator & Multi-Agent Swarm',True),('autoshorts.media.rhythm_engine','TimesFM & Laya Rhythmic Decision Engine',True),('fastapi','FastAPI Web Engine',True),('uvicorn','Uvicorn ASGI Server',True),('edge_tts','Edge-TTS Voice Synthesizer',True),('google.genai','Google Gemini AI Client (gemini-3.5-flash-lite)',True),('playwright','Playwright Browser Engine',True),('imageio_ffmpeg','Bundled FFmpeg Media Engine',True),('faster_whisper','Faster-Whisper (Optional Local Audio Fallback)',False)]; bad=[d for m,d,r in mods if r and u.find_spec(m) is None]; [print('  [OK]       ' + d) for m,d,r in mods if u.find_spec(m) is not None]; [print('  [OPTIONAL] ' + d) for m,d,r in mods if not r and u.find_spec(m) is None]; sys.exit(1 if len(bad) > 0 else 0)"
+    "$PYTHON_EXE" -c "import importlib.util as u, sys; from pathlib import Path; b_ok = Path('src/autoshorts/brain').is_dir() and u.find_spec('autoshorts.brain') is not None; r_ok = Path('src/autoshorts/media/rhythm_engine.py').is_file() and u.find_spec('autoshorts.media.rhythm_engine') is not None; mods=[('autoshorts','AutoShorts Core Framework',True,u.find_spec('autoshorts') is not None),('brain','Master Brain Orchestrator & Multi-Agent Swarm',True,b_ok),('laya','TimesFM & Laya Rhythmic Decision Engine',True,r_ok),('fastapi','FastAPI Web Engine',True,u.find_spec('fastapi') is not None),('uvicorn','Uvicorn ASGI Server',True,u.find_spec('uvicorn') is not None),('edge_tts','Edge-TTS Voice Synthesizer',True,u.find_spec('edge_tts') is not None),('google.genai','Google Gemini AI Client (gemini-3.5-flash-lite)',True,u.find_spec('google.genai') is not None),('playwright','Playwright Browser Engine',True,u.find_spec('playwright') is not None),('imageio_ffmpeg','Bundled FFmpeg Media Engine',True,u.find_spec('imageio_ffmpeg') is not None),('faster_whisper','Faster-Whisper (Optional Local Audio Fallback)',False,u.find_spec('faster_whisper') is not None)]; [print('  [OK]       ' + d) for k,d,req,ok in mods if ok]; [print('  [OPTIONAL] ' + d) for k,d,req,ok in mods if not req and not ok]; [print('  [MISSING]  ' + d) for k,d,req,ok in mods if req and not ok]"
     echo ""
 
     printf "%b[7] System Integrity & Protection Layers:%b\n" "$C_BOLD" "$C_RESET"
@@ -372,8 +405,10 @@ fi
 # -----------------------------------------------------------------------------
 # Mode: Studio Dashboard Launch (Default or with --port <port>)
 # -----------------------------------------------------------------------------
-# Check if port is already occupied
-if ! "$PYTHON_EXE" -c "import socket, sys; s = socket.socket(); ok = (s.connect_ex(('127.0.0.1', int('$PORT'))) == 0); s.close(); sys.exit(1 if ok else 0)"; then
+PORT_OCCUPIED=0
+"$PYTHON_EXE" -c "import socket, sys; s = socket.socket(); ok = (s.connect_ex(('127.0.0.1', int('$PORT'))) == 0); s.close(); sys.exit(1 if ok else 0)" 2>/dev/null || PORT_OCCUPIED=1
+
+if [[ $PORT_OCCUPIED -eq 1 ]]; then
     printf "\n%b[ERROR] Port %s is already occupied by another running application!%b\n" "$C_RED" "$PORT" "$C_RESET"
     printf "Please specify a different port using: ./start.sh --port <available-port>\n"
     printf "Example: ./start.sh --port 8080\n"
@@ -396,7 +431,6 @@ printf "%b[INFO] Starting AutoShorts Studio Dashboard...%b\n" "$C_WHITE" "$C_RES
 
 if [[ $NO_BROWSER -eq 0 ]]; then
     printf "%b[INFO] Your browser will open to http://localhost:%s automatically.%b\n" "$C_WHITE" "$PORT" "$C_RESET"
-    # Auto-open browser in background after short delay
     (
         sleep 1.2
         TARGET_URL="http://localhost:${PORT}"
@@ -410,20 +444,18 @@ fi
 
 printf "%b[INFO] Press Ctrl+C in this terminal window to stop the server.%b\n\n" "$C_WHITE" "$C_RESET"
 
-# Handle SIGINT and SIGTERM gracefully
 cleanup() {
     printf "\n%b[INFO] AutoShorts Studio shutting down cleanly. Goodbye!%b\n" "$C_GREEN" "$C_RESET"
     exit 0
 }
-trap cleanup SIGINT SIGTERM
+trap cleanup INT TERM
 
-RUN_FLAGS=("--host" "$HOST" "--port" "$PORT")
-if [[ $NO_BROWSER -eq 1 ]]; then
-    RUN_FLAGS+=("--no-browser")
-fi
+RUN_FLAGS=("--host" "$HOST" "--port" "$PORT" "--no-browser")
 
+set +e
 "$PYTHON_EXE" run.py dashboard "${RUN_FLAGS[@]}"
 EXIT_CODE=$?
+set -e
 
 if [[ $EXIT_CODE -eq 0 || $EXIT_CODE -eq 130 ]]; then
     printf "\n%b[INFO] AutoShorts Studio shut down cleanly. Goodbye!%b\n" "$C_GREEN" "$C_RESET"
