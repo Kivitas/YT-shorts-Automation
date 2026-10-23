@@ -512,9 +512,11 @@ def test_compositor_single_source_full_blur_bg(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         nonlocal captured_cmd
-        captured_cmd = list(cmd)
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"rendered")
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp.endswith(".mp4"):
+                Path(target_tmp).write_bytes(b"rendered")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         return mock_proc
@@ -580,7 +582,8 @@ def test_compositor_atomic_render(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"dummy rendered mp4 bytes")
+        if target_tmp.endswith(".mp4"):
+            Path(target_tmp).write_bytes(b"dummy rendered mp4 bytes")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.stderr = ""
@@ -622,9 +625,11 @@ def test_compositor_60s_cap(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         nonlocal captured_cmd
-        captured_cmd = list(cmd)
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"dummy mp4")
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp.endswith(".mp4"):
+                Path(target_tmp).write_bytes(b"dummy mp4")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         return mock_proc
@@ -690,7 +695,8 @@ def test_generate_preview_atomic(tmp_path: Path):
         nonlocal captured_cmd
         captured_cmd = list(cmd)
         target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"preview mp4")
+        if target_tmp.endswith(".mp4"):
+            Path(target_tmp).write_bytes(b"preview mp4")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         return mock_proc
@@ -1009,9 +1015,11 @@ def test_explicit_bg_music_enables_ducking_on_medium_preset(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         nonlocal captured_cmd
-        captured_cmd = list(cmd)
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"rendered bytes")
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp.endswith(".mp4"):
+                Path(target_tmp).write_bytes(b"rendered bytes")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         return mock_proc
@@ -1065,9 +1073,11 @@ def test_explicit_bgm_path_alias_and_job_ducking(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         nonlocal captured_cmd
-        captured_cmd = list(cmd)
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"rendered bytes")
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp.endswith(".mp4"):
+                Path(target_tmp).write_bytes(b"rendered bytes")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         return mock_proc
@@ -1120,9 +1130,11 @@ def test_compose_source_clip_has_video_false(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         nonlocal captured_cmd
-        captured_cmd = list(cmd)
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"dummy output mp4")
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp.endswith(".mp4"):
+                Path(target_tmp).write_bytes(b"dummy output mp4")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         return mock_proc
@@ -1244,11 +1256,13 @@ def test_preset_rapid_subtitle_integration(tmp_path: Path):
 
     def mock_run(cmd, *args, **kwargs):
         nonlocal captured_cmd
-        captured_cmd = list(cmd)
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"rendered rapid short")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp != "-":
+                Path(target_tmp).write_bytes(b"rendered rapid short")
         return mock_proc
 
     with (
@@ -1311,10 +1325,12 @@ def test_hardware_encoder_format_fallback(tmp_path: Path):
 
     def mock_hw_run(cmd, *args, **kwargs):
         captured_cmds.append(list(cmd))
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"rendered hw short")
         mock_proc = MagicMock()
         mock_proc.returncode = 0
+        if cmd and "ffmpeg" in str(cmd[0]):
+            target_tmp = cmd[-1]
+            if target_tmp != "-":
+                Path(target_tmp).write_bytes(b"rendered hw short")
         return mock_proc
 
     comp = FFmpegCompositor()
@@ -1359,8 +1375,10 @@ def test_hardware_encoder_format_fallback(tmp_path: Path):
             mock_proc.stderr = "QSV device init failed"
             return mock_proc
         # Fallback CPU command
-        target_tmp = cmd[-1]
-        Path(target_tmp).write_bytes(b"rendered cpu short")
+        if cmd and "ffmpeg" in str(cmd[0]):
+            target_tmp = cmd[-1]
+            if target_tmp != "-":
+                Path(target_tmp).write_bytes(b"rendered cpu short")
         mock_proc.returncode = 0
         return mock_proc
 
