@@ -276,8 +276,21 @@ echo %C_YELLOW%[ACTION]%C_RESET% Created .env from .env.example. Open .env and p
 set "GEMINI_VAL="
 for /f "tokens=1,* delims==" %%A in ('findstr /b "GEMINI_API_KEY=" ".env"') do set "GEMINI_VAL=%%B"
 if not defined GEMINI_VAL echo %C_YELLOW%[NOTICE]%C_RESET% GEMINI_API_KEY is empty in .env. Add it for Gemini, or use the local model.
+:: A full FFmpeg build includes ffprobe (exact durations and stream checks). Install it once.
 where ffprobe >nul 2>&1
-if !ERRORLEVEL! neq 0 echo %C_YELLOW%[NOTICE]%C_RESET% ffprobe was not found, so media durations use a slower fallback. Install a full FFmpeg build that includes ffprobe.
+if !ERRORLEVEL! equ 0 goto ffmpeg_ready
+echo %C_CYAN%[INFO]%C_RESET% Full FFmpeg with ffprobe not found. Installing with winget - one time...
+where winget >nul 2>&1
+if !ERRORLEVEL! neq 0 goto ffmpeg_no_winget
+winget install --id Gyan.FFmpeg --exact --silent --accept-package-agreements --accept-source-agreements
+:: winget links its binaries here; add them to this session PATH so the rest of the launch sees ffprobe.
+set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
+where ffprobe >nul 2>&1
+if !ERRORLEVEL! neq 0 echo %C_YELLOW%[WARNING]%C_RESET% ffprobe is still not on PATH. Open a new terminal and run start.bat again.
+goto ffmpeg_ready
+:ffmpeg_no_winget
+echo %C_YELLOW%[NOTICE]%C_RESET% winget is not available. Install a full FFmpeg build from https://www.gyan.dev/ffmpeg/builds/ and run start.bat again.
+:ffmpeg_ready
 
 :: -----------------------------------------------------------------------------
 :: 4. Ensure Required Runtime Directories Exist

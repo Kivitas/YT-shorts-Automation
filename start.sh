@@ -300,9 +300,15 @@ if grep -qE '^GEMINI_API_KEY=[[:space:]]*$' .env; then
     printf "%b[NOTICE]%b GEMINI_API_KEY is empty in .env. Add it for Gemini, or use the local model.\n" "$C_YELLOW" "$C_RESET"
 fi
 
+# A full FFmpeg build includes ffprobe (exact durations and stream checks). Install it once.
 if ! command -v ffprobe >/dev/null 2>&1; then
-    printf "%b[NOTICE]%b ffprobe was not found, so media durations use a slower fallback.\n" "$C_YELLOW" "$C_RESET"
-    printf "         Install a full FFmpeg build (macOS: brew install ffmpeg; Linux: sudo apt install ffmpeg).\n"
+    if command -v brew >/dev/null 2>&1; then
+        printf "%b[INFO]%b Full FFmpeg (with ffprobe) not found. Installing with Homebrew - one time...\n" "$C_CYAN" "$C_RESET"
+        brew install ffmpeg || printf "%b[WARNING]%b Homebrew could not install ffmpeg; durations will use a slower fallback.\n" "$C_YELLOW" "$C_RESET"
+    else
+        printf "%b[NOTICE]%b Full FFmpeg (with ffprobe) not found and Homebrew is not installed.\n" "$C_YELLOW" "$C_RESET"
+        printf "         Install Homebrew from https://brew.sh, then run: brew install ffmpeg\n"
+    fi
 fi
 
 # -----------------------------------------------------------------------------
