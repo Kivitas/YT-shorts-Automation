@@ -102,8 +102,9 @@ class AnalyticsEngine:
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
-                    with open(self.token_path, "w", encoding="utf-8") as f:
-                        f.write(creds.to_json())
+                    from autoshorts.core.paths import atomic_write
+
+                    atomic_write(self.token_path, creds.to_json(), encoding="utf-8")
                 except Exception as e:
                     logger.warning(f"Could not refresh token.json: {e}")
                     return None

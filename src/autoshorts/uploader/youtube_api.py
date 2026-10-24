@@ -19,7 +19,7 @@ from autoshorts.core.config import Settings, UploadConfig
 from autoshorts.core.credential_guardian import classify_api_error
 from autoshorts.core.exceptions import QuotaExhaustedError
 from autoshorts.core.models import UploadResult
-from autoshorts.core.paths import get_data_dir
+from autoshorts.core.paths import atomic_write, get_data_dir
 from autoshorts.core.resilience import classify_network_or_outage_error
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.uploader.description_builder import truncate_on_word
@@ -246,8 +246,7 @@ class YouTubeApiUploader:
                 creds.refresh(Request())
                 # Persist refreshed token without logging credentials
                 self.token_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.token_path, "w", encoding="utf-8") as f:
-                    f.write(creds.to_json())
+                atomic_write(self.token_path, creds.to_json(), encoding="utf-8")
                 logger.info("Successfully refreshed and saved OAuth token.")
             except Exception as e:
                 report = classify_api_error("youtube_oauth", e)
@@ -666,8 +665,7 @@ class YouTubeApiUploader:
             if hasattr(service, "_http") and hasattr(service._http, "credentials"):
                 srv_creds = service._http.credentials
                 if srv_creds and srv_creds.valid and self.token_path.is_file():
-                    with open(self.token_path, "w", encoding="utf-8") as f:
-                        f.write(srv_creds.to_json())
+                    atomic_write(self.token_path, srv_creds.to_json(), encoding="utf-8")
         except Exception as cred_err:
             logger.debug("Non-fatal error persisting refreshed credentials: %s", cred_err)
 

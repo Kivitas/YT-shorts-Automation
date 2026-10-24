@@ -2088,10 +2088,11 @@ def create_app(
     async def start_youtube_oauth(background_tasks: BackgroundTasks) -> dict[str, Any]:
         """Start interactive Google OAuth flow in the background."""
         from autoshorts.core.paths import get_data_dir
+        from autoshorts.core.settings_manager import ensure_client_secret_file
 
         c_path = get_data_dir() / "client_secret.json"
         t_path = get_data_dir() / "token.json"
-        if not c_path.is_file():
+        if not ensure_client_secret_file(c_path):
             raise HTTPException(
                 status_code=400,
                 detail="Client secret file not found. Upload client_secret.json first.",

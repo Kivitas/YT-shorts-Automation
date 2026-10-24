@@ -339,6 +339,61 @@ def save_youtube_client_secret(
     }
 
 
+GOOGLE_OAUTH_CLIENT_ID_KEY = "GOOGLE_OAUTH_CLIENT_ID"
+GOOGLE_OAUTH_CLIENT_SECRET_KEY = "GOOGLE_OAUTH_CLIENT_SECRET"
+
+
+def get_google_oauth_client() -> tuple[str, str] | None:
+    """Return (client_id, client_secret) from .env or the environment, or None if incomplete."""
+    values = {
+        **read_env_file(None),
+        **{k: v for k, v in os.environ.items() if k.startswith("GOOGLE_")},
+    }
+    client_id = (values.get(GOOGLE_OAUTH_CLIENT_ID_KEY) or "").strip()
+    client_secret = (values.get(GOOGLE_OAUTH_CLIENT_SECRET_KEY) or "").strip()
+    if client_id and client_secret:
+        return client_id, client_secret
+    return None
+
+
+def save_google_oauth_client(client_id: str, client_secret: str) -> None:
+    """Store the OAuth client in .env, so the app never needs the JSON file uploaded again."""
+    update_env_file(
+        None,
+        {
+            GOOGLE_OAUTH_CLIENT_ID_KEY: client_id.strip(),
+            GOOGLE_OAUTH_CLIENT_SECRET_KEY: client_secret.strip(),
+        },
+    )
+
+
+def ensure_client_secret_file(client_secret_path: Path | str) -> bool:
+    """Make sure data/client_secret.json exists, building it from .env credentials when needed.
+
+    Returns True when a usable client file is present afterwards.
+    """
+    target = Path(client_secret_path).resolve()
+    if target.is_file() and target.stat().st_size > 0:
+        return True
+    creds = get_google_oauth_client()
+    if creds is None:
+        return False
+    client_id, client_secret = creds
+    payload = {
+        "installed": {
+            "client_id": client_id,
+            "project_id": "autoshorts",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": client_secret,
+            "redirect_uris": ["http://localhost"],
+        }
+    }
+    atomic_write(target, json.dumps(payload, indent=2), encoding="utf-8")
+    return True
+
+
 def run_youtube_oauth_flow(
     client_secret_path: Path | str,
     token_path: Path | str,
@@ -354,7 +409,7 @@ def run_youtube_oauth_flow(
             "https://www.googleapis.com/auth/youtube.readonly",
         ]
 
-    if not c_path.is_file():
+    if not ensure_client_secret_file(c_path):
         err_msg = f"Client secret file not found: {c_path}"
         update_youtube_oauth_state("error", err_msg, err_msg)
         raise FileNotFoundError(err_msg)
@@ -364,7 +419,11 @@ def run_youtube_oauth_flow(
         from google_auth_oauthlib.flow import InstalledAppFlow
 
         flow = InstalledAppFlow.from_client_secrets_file(str(c_path), scopes=scopes)
-        creds = flow.run_local_server(port=0, open_browser=True)
+        # access_type=offline + prompt=consent guarantees a refresh token, so later runs
+        # refresh silently instead of asking for the Google sign-in again.
+        creds = flow.run_local_server(
+            port=0, open_browser=True, access_type="offline", prompt="consent"
+        )
         atomic_write(t_path, creds.to_json())
         update_youtube_oauth_state(
             "authorized", "Successfully authorized YouTube Data API v3.", None
