@@ -306,3 +306,22 @@ def test_start_sh_launcher_properties():
     assert "caffeinate" in content, (
         "start.sh should acknowledge macOS sleep prevention / caffeinate"
     )
+
+
+def test_start_sh_does_not_wipe_windows_venv_under_git_bash():
+    """Git Bash (MINGW/MSYS/CYGWIN) must use .venv/Scripts/python.exe and never rm -rf .venv.
+
+    Regression: the POSIX-only heal ran `rm -rf .venv` on Git Bash because bin/python was
+    missing, and then could not find the Windows interpreter, so the launcher aborted.
+    """
+    content = Path("start.sh").read_text(encoding="utf-8")
+
+    assert "MINGW*|MSYS*|CYGWIN*" in content, "start.sh must detect Git Bash / MSYS shells"
+    assert '".venv/Scripts/python.exe"' in content, (
+        "start.sh must use the Windows interpreter path under Git Bash"
+    )
+    heal_block = content.split("Cross-platform healing", 1)[1].split("fi\n", 1)[0]
+    assert 'IS_WINDOWS_SHELL" -eq 0' in heal_block, (
+        "the rm -rf .venv heal must be skipped on Windows shells"
+    )
+    assert "rm -rf .venv" in heal_block

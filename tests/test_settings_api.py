@@ -883,3 +883,24 @@ def test_api_job_rerender(settings_client: dict[str, Any]):
         color_grading="vibrant",
         hook_text="HOOK FX",
     )
+
+
+def test_api_post_settings_noop_keeps_config_file_byte_identical(
+    settings_client: dict[str, Any],
+) -> None:
+    """A save that changes nothing must not rewrite config.yaml (yaml.safe_dump drops comments)."""
+    client: TestClient = settings_client["client"]
+    cfg_file: Path = settings_client["cfg_file"]
+    cfg_file.write_text("# hand-written note\n" + cfg_file.read_text(encoding="utf-8"), "utf-8")
+    before = cfg_file.read_bytes()
+
+    res = client.post("/api/settings", json={"llm": {"provider": "local"}})
+    assert res.status_code == 200
+    assert cfg_file.read_bytes() == before
+
+    # A real change still persists.
+    res = client.post("/api/settings", json={"llm": {"temperature": 0.3}})
+    assert res.status_code == 200
+    import yaml
+
+    assert yaml.safe_load(cfg_file.read_text(encoding="utf-8"))["llm"]["temperature"] == 0.3

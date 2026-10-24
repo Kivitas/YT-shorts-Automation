@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import random
+import re
 import struct
 import subprocess
 import wave
@@ -326,6 +327,77 @@ NICHE_TOPIC_TEMPLATES: dict[str, list[dict[str, Any]]] = {
 }
 
 
+YOUTUBE_TITLE_MAX_CHARS = 100
+
+
+def _clamp_title(title: str, max_len: int = YOUTUBE_TITLE_MAX_CHARS) -> str:
+    """Collapse whitespace and cut an over-long LLM title to YouTube's 100-character limit."""
+    cleaned = " ".join(title.split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    cut = cleaned[:max_len]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" -|:,.!?") or cleaned[:max_len]
+
+
+def _text_items(value: Any) -> list[str]:
+    """Return non-empty strings from a list, or from a comma/newline separated string."""
+    if isinstance(value, str):
+        parts = re.split(r"[,\n]", value)
+    elif isinstance(value, list | tuple):
+        parts = [str(x) for x in value]
+    else:
+        return []
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _normalize_hashtags(value: Any) -> list[str]:
+    """Return unique hashtags that start with '#' and contain no whitespace."""
+    tags: list[str] = []
+    seen: set[str] = set()
+    for raw in _text_items(value):
+        body = re.sub(r"\s+", "", raw.lstrip("#"))
+        if not body:
+            continue
+        tag = f"#{body}"
+        if tag.lower() not in seen:
+            seen.add(tag.lower())
+            tags.append(tag)
+    return tags
+
+
+def _normalize_llm_script(
+    data: dict[str, Any], chosen_topic: str, template: dict[str, Any]
+) -> FacelessScriptResult | None:
+    """Build a script result from LLM JSON, bounding every field; None if the core fields are unusable.
+
+    Missing or malformed optional fields fall back to the curated template instead of discarding
+    the whole LLM script.
+    """
+    raw_sentences = data.get("script_sentences")
+    if not isinstance(raw_sentences, list):
+        return None
+    sentences = [str(x).strip() for x in raw_sentences if str(x).strip()]
+    if not sentences:
+        return None
+    hook = str(data.get("hook") or "").strip() or str(template["hook"])
+    title = _clamp_title(str(data.get("title") or "")) or str(template["title"])
+    description = str(data.get("description") or "").strip() or str(template["description"])
+    hashtags = _normalize_hashtags(data.get("hashtags")) or list(template["hashtags"])
+    keywords = _text_items(data.get("search_keywords")) or list(template["search_keywords"])
+    return FacelessScriptResult(
+        topic=chosen_topic,
+        hook=hook,
+        script_sentences=sentences,
+        full_script=" ".join(sentences),
+        title=title,
+        description=description,
+        hashtags=hashtags,
+        search_keywords=keywords,
+    )
+
+
 def generate_faceless_script(
     niche: str,
     topic: str | None = None,
@@ -376,18 +448,9 @@ def generate_faceless_script(
                 s = s.split("\n", 1)[1].rsplit("```", 1)[0].strip()
             data = json.loads(s)
             if isinstance(data, dict) and "hook" in data and "script_sentences" in data:
-                sentences = [str(x) for x in data["script_sentences"]]
-                full_s = " ".join(sentences)
-                return FacelessScriptResult(
-                    topic=chosen_topic,
-                    hook=data.get("hook", chosen_template["hook"]),
-                    script_sentences=sentences,
-                    full_script=full_s,
-                    title=data.get("title", chosen_template["title"]),
-                    description=data.get("description", chosen_template["description"]),
-                    hashtags=data.get("hashtags", chosen_template["hashtags"]),
-                    search_keywords=data.get("search_keywords", chosen_template["search_keywords"]),
-                )
+                normalized = _normalize_llm_script(data, chosen_topic, chosen_template)
+                if normalized is not None:
+                    return normalized
         except Exception as e:
             logger.debug("LLM faceless script generation skipped (%s); using curated template.", e)
 

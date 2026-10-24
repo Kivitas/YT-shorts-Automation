@@ -26,6 +26,13 @@ from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.transcript.fetcher import NO_CAPTIONS, TranscriptSegment
 
 
+@pytest.fixture(autouse=True)
+def _skip_decode_check_for_stub_renders(monkeypatch):
+    """These tests stub the compositor with placeholder bytes, so the real decode check
+    would always reject them. Real decode behaviour is covered in tests/test_decode_check.py."""
+    monkeypatch.setattr("autoshorts.pipeline.count_decode_errors", lambda *a, **k: 0)
+
+
 @pytest.fixture
 def test_env(tmp_path: Path):
     """Set up temporary directories and isolated SQLite StateManager."""

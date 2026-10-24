@@ -41,12 +41,15 @@ class InfoResearcherAgent:
         norm_niche = (niche or "general").strip().lower()
         clean_topic = (topic or "").strip()
 
+        if not allow_network:
+            # The strategy brief always queries trending sources, so offline runs use the local fallback.
+            return self._build_resilient_fallback(norm_niche, clean_topic)
+
         try:
             brief = generate_viral_strategy_brief(
                 niche=norm_niche,
-                custom_topic=clean_topic or None,
+                custom_query=clean_topic or None,
                 config=self.config,
-                allow_network=allow_network,
             )
 
             sources: list[str] = []

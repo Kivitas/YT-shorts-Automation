@@ -31,6 +31,8 @@ dependencies = [
     "playwright>=1.49.0",
     "imageio-ffmpeg>=0.5.0",
     "edge-tts>=7.0.0",
+    "faster-whisper>=1.0.3",
+    "av>=15,<19",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +53,15 @@ dev = [
 ]
 all = [
     "autoshorts[local-llm,whisper,browser,dev]",
+]
+
+# Installed by a plain `uv sync`, so the launchers keep the test tools after syncing.
+[dependency-groups]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.6.9",
 ]
 
 [tool.hatch.build.targets.wheel]

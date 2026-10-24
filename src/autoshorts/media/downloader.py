@@ -259,6 +259,27 @@ def _select_downloaded_file(candidates: list[Path], prefix: str) -> Path | None:
     return finished[0] if finished else None
 
 
+_AUDIO_EXTENSIONS = frozenset({".opus", ".m4a", ".mp3", ".aac", ".ogg", ".wav", ".flac"})
+
+
+def _select_audio_file(candidates: list[Path], prefix: str) -> Path | None:
+    """Pick the finished audio file from yt-dlp's ``-x`` output under this job's temp prefix.
+
+    Audio extraction keeps the source container in the name (``<prefix>webm.opus``), so the
+    generic selector above would reject it. Only files with a real audio extension qualify;
+    ``.part``, ``.ytdl`` and stream fragments never end in one.
+    """
+    finished = [
+        p
+        for p in candidates
+        if p.is_file()
+        and p.suffix.lower() in _AUDIO_EXTENSIONS
+        and p.name.startswith(prefix)
+        and ".f" not in p.name[len(prefix) :]
+    ]
+    return finished[0] if finished else None
+
+
 def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
     """Cleanly terminate process and all child processes across Windows, macOS, and Linux."""
     if proc is None:
@@ -831,7 +852,7 @@ class Downloader:
                     timeout=self.timeout_sec,
                 )
                 if proc.returncode == 0:
-                    downloaded_file = _select_downloaded_file(
+                    downloaded_file = _select_audio_file(
                         list(dest.parent.glob(f".tmp_audio_{unique_token}_*")),
                         f".tmp_audio_{unique_token}_",
                     )

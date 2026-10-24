@@ -119,6 +119,22 @@ class SpreadScheduler:
             return self.config.upload
         return UploadConfig()
 
+    def _upload_mode(self) -> str:
+        """Return the active upload mode ('api', 'studio' or 'local')."""
+        return str(getattr(self.upload_config, "mode", "api"))
+
+    def _quota_fallback_mode(self) -> str:
+        """Return the quota-exhaustion fallback that applies to scheduler dispatch.
+
+        An explicit upload.quota_exhausted_fallback wins. Otherwise the documented
+        quota.exhaustion_fallback setting applies (it was previously ignored because
+        UploadConfig has no value for it and the getattr default 'studio' was used).
+        """
+        upload_cfg = self.upload_config
+        if "quota_exhausted_fallback" in getattr(upload_cfg, "model_fields_set", set()):
+            return str(upload_cfg.quota_exhausted_fallback)
+        return str(self.quota_tracker.fallback_mode)
+
     # -------------------------------------------------------------------------
     # Core Constraints Checks
     # -------------------------------------------------------------------------
@@ -356,13 +372,11 @@ class SpreadScheduler:
             logger.info("Rolling hourly rate limit (7/hr) reached. Deferring dispatch.")
             return None
 
-        if not self.quota_tracker.can_upload():
-            upload_cfg = self.upload_config
-            fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+        # Local export never spends the YouTube upload bucket, so it is not quota-gated.
+        if self._upload_mode() != "local" and not self.quota_tracker.can_upload():
+            fallback_mode = self._quota_fallback_mode()
             if fallback_mode != "studio":
-                logger.warning(
-                    f"Upload bucket budget unavailable. Fallback: {self.quota_tracker.fallback_mode}."
-                )
+                logger.warning(f"Upload bucket budget unavailable. Fallback: {fallback_mode}.")
                 return None
             logger.info(
                 "Upload bucket quota exhausted, but fallback is 'studio'. Proceeding with Studio dispatch."
@@ -396,7 +410,7 @@ class SpreadScheduler:
                 self.state_manager.update_job_status(job_id, JobStatus.UPLOADING)
 
         upload_cfg = self.upload_config
-        fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+        fallback_mode = self._quota_fallback_mode()
         default_privacy = (
             getattr(upload_cfg, "default_privacy_status", None)
             or getattr(upload_cfg, "privacy_status", None)
@@ -519,7 +533,9 @@ class SpreadScheduler:
                     raise
 
             # Record quota spend if API quota was consumed
-            if not fell_back_to_studio and getattr(uploader_to_use, "quota_tracker", None) is None:
+            # Only a YouTube API upload spends quota; local export and Studio automation do not.
+            api_quota_spent = is_yt_api and not fell_back_to_studio
+            if api_quota_spent and getattr(uploader_to_use, "quota_tracker", None) is None:
                 self.quota_tracker.record_upload(1)
 
             # Verify if applicable
@@ -552,7 +568,7 @@ class SpreadScheduler:
 
             if (
                 verified
-                and not fell_back_to_studio
+                and api_quota_spent
                 and getattr(uploader_to_use, "quota_tracker", None) is None
             ):
                 self.quota_tracker.record_general(1)
@@ -563,7 +579,7 @@ class SpreadScheduler:
                     result.raw_response["fallback_reason"] = "quota_exhausted"
 
             # Mark slot and job completed
-            quota_spent = 0 if fell_back_to_studio else 1
+            quota_spent = 1 if api_quota_spent else 0
             self.state_manager.update_scheduled_slot_status(
                 job_id=job_id,
                 status="COMPLETED",

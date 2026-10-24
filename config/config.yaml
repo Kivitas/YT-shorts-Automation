@@ -25,7 +25,7 @@ job_defaults:
   window_stride_seconds: 15
   focus_prompt: "Identify the most compelling, high-retention standalone insight or moment."
   background_category: "minecraft" # "minecraft", "subway", or "auto"
-  dopamine_level: "medium"         # "low", "medium", "high"
+  dopamine_level: "high"           # "low", "medium", "high"
   auto_approve: false              # Require human dashboard confirmation before upload
   skip_sponsors: true              # Filter out SponsorBlock sponsor/intro/outro segments automatically
   auto_trim_silence: true          # Auto-trim dead-air pauses (>0.45s) into tight jump-cuts
@@ -74,7 +74,7 @@ media:
   generate_lowres_preview: true    # Renders 540x960 fast preview for dashboard
 
 subtitles:
-  style_preset: "neon"             # "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic"
+  style_preset: "rapid"            # "rapid", "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic"
   font_name: "Montserrat ExtraBold"
   font_size: 76
   words_per_burst: 3
@@ -112,7 +112,7 @@ audio_mastering:
 upload:
   mode: "api"                      # "api" (Data API v3), "studio" (Playwright Edge), "local" (export only)
   default_privacy_status: "public" # "private", "unlisted", "public"
-  privacy_status: "unlisted"       # "private", "unlisted", "public"
+  privacy_status: "public"         # "private", "unlisted", "public"
   category_id: "24"                # 20: Gaming, 22: People & Blogs, 24: Entertainment, 27: Education, 28: Sci & Tech
   default_language: "en"           # Video language code
   altered_content: false           # Synthetic / Altered Media disclosure checkbox
@@ -129,15 +129,12 @@ upload:
 
     ---
     📌 ORIGINAL SOURCE ATTRIBUTION:
-    This video is an educational commentary clip excerpted from:
-    Video Title: "{title}"
-    Original Creator: {channel}
-    Original Video: {video_url}
+    This video is a clip from "{title}". All rights belong to {channel}. Original video: {video_url}
     Channel Link: {channel_url}
 
     All rights and intellectual property belong to {channel}. If you are the copyright owner and wish for this clip to be removed or modified, please contact the channel owner.
 
-    #Shorts #Podcasts #Education {hashtags}
+    #Podcasts #Education {hashtags}
 
 cleanup:
   enabled: true

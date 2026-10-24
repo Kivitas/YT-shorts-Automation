@@ -626,6 +626,27 @@ def stage_subtitles_for_filter(sub_path: Path, dest: Path, job_id: str) -> Path 
     )
 
 
+def count_decode_errors(media_path: Path | str, timeout_sec: float = 300.0) -> int:
+    """Fully decode a rendered file and return how many error lines FFmpeg reports (0 = clean)."""
+    proc = subprocess.run(
+        [get_ffmpeg_path(), "-v", "error", "-i", str(media_path), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+        check=False,
+    )
+    return len([line for line in proc.stderr.splitlines() if line.strip()])
+
+
+def _discard_partial_output(path: Path) -> None:
+    """Remove a partial render, ignoring failures so the original error is what surfaces."""
+    try:
+        if path.is_file():
+            path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Could not remove partial render %s: %s", path, exc)
+
+
 class FFmpegCompositor:
     """High-efficiency deterministic FFmpeg compositor for vertical 9:16 YouTube Shorts.
 
@@ -1009,14 +1030,13 @@ class FFmpegCompositor:
             return dest
 
         except subprocess.TimeoutExpired as exc:
-            if tmp_dest.is_file():
-                tmp_dest.unlink(missing_ok=True)
+            _discard_partial_output(tmp_dest)
             raise TimeoutError(
                 f"FFmpeg compositing for job {job_id} exceeded timeout ({timeout_sec}s)"
             ) from exc
         except Exception:
-            if tmp_dest.is_file():
-                tmp_dest.unlink(missing_ok=True)
+            # Cleanup must never hide the original failure (on Windows the file may be locked).
+            _discard_partial_output(tmp_dest)
             raise
         finally:
             if staged_sub is not None:

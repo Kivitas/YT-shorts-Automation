@@ -231,7 +231,7 @@ class YouTubeApiUploader:
         if self._service is not None:
             return self._service
 
-        Request, Credentials, InstalledAppFlow, build, _, _ = _get_google_libraries()
+        Request, Credentials, _installed_app_flow, build, _, _ = _get_google_libraries()
 
         creds = None
         if self.token_path.is_file():
@@ -260,19 +260,21 @@ class YouTubeApiUploader:
                 ) from e
 
         if not creds or not creds.valid:
+            # Never start the interactive browser flow from the uploader: the pipeline and
+            # scheduler run unattended and would block on it. Authorization happens only
+            # through the Settings flow (settings_manager), which the operator starts.
+            if creds is not None:
+                raise CredentialsError(
+                    "YouTube OAuth token is invalid and cannot be refreshed. "
+                    "Re-authorize via Settings."
+                )
             if not self.client_secret_path.is_file():
                 raise CredentialsError(
                     f"OAuth credentials missing. Place client_secret.json in '{self.client_secret_path}'."
                 )
-
-            logger.info("Starting one-time Desktop OAuth browser authorization flow...")
-            flow = InstalledAppFlow.from_client_secrets_file(str(self.client_secret_path), SCOPES)
-            creds = flow.run_local_server(port=0)
-
-            self.token_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-            logger.info("OAuth authorization successful; saved token.json.")
+            raise CredentialsError(
+                "No YouTube OAuth token found. Authorize via Settings to create token.json."
+            )
 
         self._service = build("youtube", "v3", credentials=creds, cache_discovery=False)
         return self._service

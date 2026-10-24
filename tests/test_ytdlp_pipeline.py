@@ -291,3 +291,19 @@ def test_resolve_falls_back_to_name_when_nothing_found(tmp_path, monkeypatch):
     monkeypatch.setattr(paths.shutil, "which", lambda *a, **k: None)
 
     assert paths.resolve_yt_dlp_binary("yt-dlp") == "yt-dlp"
+
+
+def test_select_audio_file_accepts_extracted_name_and_rejects_partials(tmp_path: Path):
+    """yt-dlp -x writes <prefix>webm.opus; partial downloads must never be picked."""
+    from autoshorts.media.downloader import _select_audio_file
+
+    prefix = ".tmp_audio_abc12345_"
+    (tmp_path / f"{prefix}webm.opus.part").write_bytes(b"partial")
+    (tmp_path / f"{prefix}webm.f251.webm").write_bytes(b"fragment")
+    finished = tmp_path / f"{prefix}webm.opus"
+    finished.write_bytes(b"audio")
+    picked = _select_audio_file(list(tmp_path.glob(f"{prefix}*")), prefix)
+    assert picked == finished
+
+    finished.unlink()
+    assert _select_audio_file(list(tmp_path.glob(f"{prefix}*")), prefix) is None

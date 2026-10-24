@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import struct
 import subprocess
 import wave
@@ -375,6 +376,9 @@ def _synthesize_procedural_wav(track_id: str, dest_path: Path, duration_sec: flo
         raise
 
 
+_SAFE_TRACK_ID = re.compile(r"[a-z0-9_-]{1,64}")
+
+
 def download_viral_bgm(
     track_id: str,
     custom_url: str | None = None,
@@ -384,6 +388,10 @@ def download_viral_bgm(
 
     Attempts yt-dlp audio download first; on failure, synthesis procedural audio.
     """
+    if not _SAFE_TRACK_ID.fullmatch(track_id or ""):
+        raise ValueError(
+            f"Invalid track id {track_id!r}: use lowercase letters, digits, '_' or '-'."
+        )
     music_dir = _resolve_music_dir(assets_dir)
     target_mp3 = music_dir / f"{track_id}.mp3"
     target_wav = music_dir / f"{track_id}.wav"

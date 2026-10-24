@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from autoshorts.core.config import ActiveWindowConfig
+from autoshorts.core.config import ActiveWindowConfig, SchedulerConfig, UploadConfig
 from autoshorts.core.models import Job, JobStatus, UploadResult
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
@@ -437,3 +437,126 @@ def test_scheduler_cleaner_failure_tolerated(state_mgr: StateManager):
     updated_job = state_mgr.get_job(job_id)
     assert updated_job is not None
     assert updated_job.status == JobStatus.COMPLETED
+
+
+# -----------------------------------------------------------------------------
+# Quota semantics for non-YouTube dispatch paths and exhaustion fallback
+# -----------------------------------------------------------------------------
+
+
+def test_local_export_does_not_spend_youtube_quota(state_mgr: StateManager, tmp_path: Path):
+    """Regression: a local export is not a YouTube API call and must spend no quota."""
+    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(state_mgr, clock=lambda: now)
+    video = tmp_path / "master.mp4"
+    video.write_bytes(b"\x00" * 64)
+    job_id = "job_local_no_quota"
+    state_mgr.save_job(Job(id=job_id, source_url="https://youtube.com/watch?v=local1"))
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=LocalExportUploader(export_dir=tmp_path / "export"),  # type: ignore[arg-type]
+        clock=lambda: now,
+    )
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path=str(video),
+        title="Local Export",
+        description="Desc",
+        target_time=now,
+    )
+
+    res = scheduler.upload_now(job_id)
+
+    assert res.status == "exported"
+    assert tracker.get_upload_spend() == 0
+    assert tracker.get_general_spend() == 0
+
+
+def test_exhausted_upload_bucket_honors_queue_next_day_fallback(
+    state_mgr: StateManager, tmp_path: Path
+):
+    """Regression: exhaustion_fallback=queue_next_day must hold the slot, not dispatch to Studio.
+
+    The scheduler previously read a non-existent upload.quota_exhausted_fallback (default
+    'studio') and dispatched anyway when the upload bucket was exhausted.
+    """
+    from autoshorts.core.config import QuotaConfig
+
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(
+        state_mgr,
+        clock=lambda: now,
+        quota_config=QuotaConfig(exhaustion_fallback="queue_next_day"),
+    )
+    tracker.record_upload(tracker.upload_bucket_daily)
+    assert tracker.can_upload() is False
+
+    fake = FakeUploader()
+    job_id = "job_exhausted_hold"
+    state_mgr.save_job(Job(id=job_id, source_url="https://youtube.com/watch?v=hold1"))
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=fake,  # type: ignore[arg-type]
+        scheduler_config=SchedulerConfig(
+            active_window=ActiveWindowConfig(start_hour_utc=0, end_hour_utc=24),
+            upload=UploadConfig(mode="api"),
+        ),
+        clock=lambda: now,
+    )
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path=str(tmp_path / "master.mp4"),
+        title="Held",
+        description="Desc",
+        target_time=now,
+    )
+
+    assert scheduler.run_tick() is None
+    assert fake.upload_calls == []
+    assert [s["job_id"] for s in state_mgr.get_pending_scheduled_slots()] == [job_id]
+
+
+def test_local_mode_is_not_blocked_by_exhausted_youtube_quota(
+    state_mgr: StateManager, tmp_path: Path
+):
+    """Local export never touches the YouTube quota, so an exhausted bucket must not stop it."""
+    from autoshorts.core.config import QuotaConfig
+    from autoshorts.uploader.local_exporter import LocalExportUploader
+
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(
+        state_mgr,
+        clock=lambda: now,
+        quota_config=QuotaConfig(exhaustion_fallback="queue_next_day"),
+    )
+    tracker.record_upload(tracker.upload_bucket_daily)
+    video = tmp_path / "master.mp4"
+    video.write_bytes(b"\x00" * 64)
+    job_id = "job_local_exhausted"
+    state_mgr.save_job(Job(id=job_id, source_url="https://youtube.com/watch?v=localq"))
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=LocalExportUploader(export_dir=tmp_path / "export"),  # type: ignore[arg-type]
+        scheduler_config=SchedulerConfig(
+            active_window=ActiveWindowConfig(start_hour_utc=0, end_hour_utc=24),
+            upload=UploadConfig(mode="local"),
+        ),
+        clock=lambda: now,
+    )
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path=str(video),
+        title="Local Export",
+        description="Desc",
+        target_time=now,
+    )
+
+    res = scheduler.run_tick()
+
+    assert res is not None
+    assert res.status == "exported"

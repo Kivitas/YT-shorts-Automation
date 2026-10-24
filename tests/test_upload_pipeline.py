@@ -256,6 +256,33 @@ def test_missing_client_secret_gives_clear_error(tmp_path: Path):
     flow_cls.from_client_secrets_file.assert_not_called()
 
 
+def test_unusable_token_without_refresh_never_starts_interactive_flow(tmp_path: Path):
+    """A stored token that is invalid and has no refresh_token must not open a browser flow.
+
+    Regression: get_service() used to fall through to InstalledAppFlow.run_local_server()
+    when the token was invalid and client_secret.json existed, blocking unattended runs.
+    """
+    token_file = tmp_path / "token.json"
+    token_file.write_text('{"token": "old"}', encoding="utf-8")
+    client_secret = tmp_path / "client_secret.json"
+    client_secret.write_text("{}", encoding="utf-8")
+    creds = MagicMock()
+    creds.expired = True
+    creds.valid = False
+    creds.refresh_token = None
+    creds_cls = MagicMock()
+    creds_cls.from_authorized_user_file.return_value = creds
+    flow_cls = MagicMock()
+    with patch(
+        "autoshorts.uploader.youtube_api._get_google_libraries",
+        return_value=_google_libs(creds_cls, flow_cls),
+    ):
+        uploader = YouTubeApiUploader(token_path=token_file, client_secret_path=client_secret)
+        with pytest.raises(CredentialsError, match="Re-authorize"):
+            uploader.get_service()
+    flow_cls.from_client_secrets_file.assert_not_called()
+
+
 # -----------------------------------------------------------------------------
 # Thumbnails
 # -----------------------------------------------------------------------------

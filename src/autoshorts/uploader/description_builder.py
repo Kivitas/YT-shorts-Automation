@@ -36,7 +36,7 @@ DEFAULT_DESCRIPTION_TEMPLATE = (
     "Channel Link: {channel_url}\n\n"
     "All rights and intellectual property belong to {channel}. If you are the copyright owner "
     "and wish for this clip to be removed or modified, please contact the channel owner.\n\n"
-    "#Shorts #Podcasts #Education {hashtags}"
+    "#Podcasts #Education {hashtags}"
 )
 
 
@@ -315,6 +315,50 @@ class DescriptionBuilder:
         # Fallback byte truncation (UTF-8 safe), cut at a word boundary when possible
         truncated = rendered_bytes[:MAX_DESCRIPTION_BYTES].decode("utf-8", "ignore")
         return _cut_at_whitespace(truncated).rstrip()
+
+
+# Broad discovery tags that make a Short easier to surface; they are shown above the title.
+VIRAL_BASE_HASHTAGS = ("#Shorts", "#Viral", "#Trending", "#Explore", "#FYP")
+_HASHTAG_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "again",
+        "their",
+        "there",
+        "these",
+        "those",
+        "which",
+        "while",
+        "would",
+        "could",
+        "should",
+        "where",
+        "being",
+        "great",
+        "video",
+        "shorts",
+    }
+)
+MAX_HASHTAGS = 15
+
+
+def build_viral_hashtags(title: str, hook: str = "", max_tags: int = MAX_HASHTAGS) -> list[str]:
+    """Return a viral tag set: broad discovery tags plus keywords taken from the clip itself."""
+    import re
+
+    tags: list[str] = list(VIRAL_BASE_HASHTAGS)
+    words = re.findall(r"[A-Za-z]{5,}", f"{title} {hook}")
+    for word in words:
+        lowered = word.lower()
+        if lowered in _HASHTAG_STOPWORDS:
+            continue
+        tag = f"#{word.capitalize()}"
+        if tag.lower() not in {t.lower() for t in tags}:
+            tags.append(tag)
+        if len(tags) >= max_tags:
+            break
+    return tags[:max_tags]
 
 
 def build_short_title(

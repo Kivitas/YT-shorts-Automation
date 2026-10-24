@@ -75,3 +75,7 @@ Desktop.ini
 *.bat
 !start.bat
 
+
+# Remotion caption overlay (npm install output and render artifacts)
+remotion/node_modules/
+remotion/build/

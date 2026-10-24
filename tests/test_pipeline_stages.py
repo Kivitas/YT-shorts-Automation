@@ -440,3 +440,12 @@ def test_compositing_regenerates_missing_subtitles(
     assert regenerated == ["stage_subs"]
     assert result.status == JobStatus.READY_FOR_REVIEW
     env.pipe.compositor.compose.assert_called_once()
+
+
+def test_record_diagnostic_accepts_section_as_a_data_key():
+    """Downloader diagnostics carry a 'section' key; it must not clash with the section name."""
+    from autoshorts.core.models import Job
+
+    job = Job(source_url="https://www.youtube.com/watch?v=aqz-KE-bpKQ")
+    job.record_diagnostic("download", section="*00:01.000-00:50.000", mode="yt_dlp")
+    assert job.diagnostics["download"]["section"] == "*00:01.000-00:50.000"

@@ -200,16 +200,27 @@ fi
 # -----------------------------------------------------------------------------
 # Verify / Initialize Virtual Environment (.venv)
 # -----------------------------------------------------------------------------
-PYTHON_EXE=".venv/bin/python"
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS_SHELL=1 ;;
+    *) IS_WINDOWS_SHELL=0 ;;
+esac
 
-# Cross-platform healing: if .venv was created on Windows (contains Scripts/ but lacks bin/python)
-if [[ -d ".venv" && ! -f "$PYTHON_EXE" && -d ".venv/Scripts" ]]; then
+# Git Bash on Windows uses Scripts/python.exe; macOS/Linux use bin/python.
+if [[ "$IS_WINDOWS_SHELL" -eq 1 ]]; then
+    PYTHON_EXE=".venv/Scripts/python.exe"
+else
+    PYTHON_EXE=".venv/bin/python"
+fi
+
+# Cross-platform healing: on a POSIX shell, a .venv created on Windows (Scripts/, no bin/python)
+# is unusable, so rebuild it. Never do this on a Windows shell, where Scripts/ is the valid layout.
+if [[ "$IS_WINDOWS_SHELL" -eq 0 && -d ".venv" && ! -f "$PYTHON_EXE" && -d ".venv/Scripts" ]]; then
     printf "%b[WARNING] Detected Windows-formatted .venv directory. Rebuilding for %s...%b\n" "$C_YELLOW" "$(uname -s)" "$C_RESET"
     rm -rf .venv
 fi
 
 if [[ ! -x "$PYTHON_EXE" ]]; then
-    printf "%b[INFO]%b Virtual environment not found (.venv/bin/python missing).\n" "$C_YELLOW" "$C_RESET"
+    printf "%b[INFO]%b Virtual environment not found ($PYTHON_EXE missing).\n" "$C_YELLOW" "$C_RESET"
     if [[ -n "$UV_CMD" ]]; then
         printf "%b[INFO]%b Detected uv package manager (%s). Preparing environment...\n" "$C_CYAN" "$C_RESET" "$UV_CMD"
         "$UV_CMD" venv --python 3.12 || "$UV_CMD" venv
@@ -238,12 +249,60 @@ if [[ ! -x "$PYTHON_EXE" ]]; then
     exit 1
 fi
 
-# Dependencies must import before we go further; a silent install failure would otherwise
-# only surface later as a confusing crash inside the dashboard.
-if ! "$PYTHON_EXE" -c "import autoshorts, fastapi, uvicorn" >/dev/null 2>&1; then
-    printf "%b[ERROR] Core dependencies are missing from .venv.%b\n" "$C_RED" "$C_RESET"
-    printf "Fix the install by running: uv pip install -e .   (or: %s -m pip install -e .)\n" "$PYTHON_EXE"
-    exit 1
+# -----------------------------------------------------------------------------
+# Install / Repair Python Dependencies
+# -----------------------------------------------------------------------------
+PY_DEPS_CHECK="import autoshorts, fastapi, uvicorn, playwright, edge_tts, google.genai, yt_dlp, imageio_ffmpeg, faster_whisper"
+# 'uv sync' is a no-op when .venv already matches uv.lock, and keeps pinned versions correct
+# on machines installed before a pin changed.
+if [[ -n "$UV_CMD" ]]; then
+    "$UV_CMD" sync --quiet || true
+fi
+if ! "$PYTHON_EXE" -c "$PY_DEPS_CHECK" >/dev/null 2>&1; then
+    printf "%b[INFO]%b Installing Python dependencies (one time, this can take a few minutes)...\n" "$C_CYAN" "$C_RESET"
+    "$PYTHON_EXE" -m pip install -e . || true
+    if ! "$PYTHON_EXE" -c "$PY_DEPS_CHECK" >/dev/null 2>&1; then
+        printf "%b[ERROR] Python dependencies could not be installed.%b\n" "$C_RED" "$C_RESET"
+        printf "Check your network connection, then run: uv sync   (or: %s -m pip install -e .)\n" "$PYTHON_EXE"
+        exit 1
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Remotion Caption Renderer (optional: needs Node.js; ASS captions work without it)
+# -----------------------------------------------------------------------------
+REMOTION_DIR="$SCRIPT_DIR/remotion"
+REMOTION_BIN="$REMOTION_DIR/node_modules/.bin/remotion"
+if [[ -f "$REMOTION_DIR/package.json" && ! -x "$REMOTION_BIN" ]]; then
+    if command -v npm >/dev/null 2>&1; then
+        printf "%b[INFO]%b Installing the Remotion caption renderer (one time)...\n" "$C_CYAN" "$C_RESET"
+        if (cd "$REMOTION_DIR" && npm install --no-audit --no-fund); then
+            printf "%b[INFO]%b Downloading Remotion's headless browser (one time, about 100 MB)...\n" "$C_CYAN" "$C_RESET"
+            (cd "$REMOTION_DIR" && npx remotion browser ensure) \
+                || printf "%b[WARNING]%b Browser download failed; it will be retried on the first render.\n" "$C_YELLOW" "$C_RESET"
+        else
+            printf "%b[WARNING]%b Remotion install failed. Word captions fall back to the ASS engine.\n" "$C_YELLOW" "$C_RESET"
+        fi
+    else
+        printf "%b[NOTICE]%b Node.js is not installed, so the Remotion caption engine is unavailable.\n" "$C_YELLOW" "$C_RESET"
+        printf "         Install Node LTS (macOS: brew install node; or https://nodejs.org) and run ./start.sh again.\n"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# API Keys: .env is created from the template; you only paste your keys into it
+# -----------------------------------------------------------------------------
+if [[ ! -f .env ]]; then
+    cp .env.example .env
+    printf "%b[ACTION]%b Created .env from .env.example. Open .env and paste your API keys.\n" "$C_YELLOW" "$C_RESET"
+fi
+if grep -qE '^GEMINI_API_KEY=[[:space:]]*$' .env; then
+    printf "%b[NOTICE]%b GEMINI_API_KEY is empty in .env. Add it for Gemini, or use the local model.\n" "$C_YELLOW" "$C_RESET"
+fi
+
+if ! command -v ffprobe >/dev/null 2>&1; then
+    printf "%b[NOTICE]%b ffprobe was not found, so media durations use a slower fallback.\n" "$C_YELLOW" "$C_RESET"
+    printf "         Install a full FFmpeg build (macOS: brew install ffmpeg; Linux: sudo apt install ffmpeg).\n"
 fi
 
 # -----------------------------------------------------------------------------

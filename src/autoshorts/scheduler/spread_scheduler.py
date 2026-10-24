@@ -198,13 +198,11 @@ class SpreadScheduler(BaseSpreadScheduler):
             logger.info("Rolling hourly rate limit reached. Deferring dispatch.")
             return None
 
-        if not self.quota_tracker.can_upload():
-            upload_cfg = self.upload_config
-            fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+        # Local export never spends the YouTube upload bucket, so it is not quota-gated.
+        if self._upload_mode() != "local" and not self.quota_tracker.can_upload():
+            fallback_mode = self._quota_fallback_mode()
             if fallback_mode != "studio":
-                logger.warning(
-                    f"Upload bucket budget unavailable. Fallback: {self.quota_tracker.fallback_mode}."
-                )
+                logger.warning(f"Upload bucket budget unavailable. Fallback: {fallback_mode}.")
                 return None
             logger.info(
                 "Upload bucket quota exhausted, but fallback is 'studio'. Proceeding with Studio dispatch."

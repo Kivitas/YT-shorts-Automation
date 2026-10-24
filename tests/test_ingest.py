@@ -303,7 +303,8 @@ def test_downloader_download_audio_only(tmp_path: Path):
 
     def fake_subprocess_audio(cmd, **kwargs):
         o_idx = cmd.index("-o")
-        temp_out = Path(cmd[o_idx + 1].replace("%(ext)s", "mp3"))
+        # yt-dlp -x keeps the source container in the name: <prefix>webm.opus
+        temp_out = Path(cmd[o_idx + 1].replace("%(ext)s", "webm.opus"))
         temp_out.write_bytes(b"dummy audio data")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 

@@ -32,7 +32,6 @@ def _isolate_repo_asset_and_output_dirs(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr("autoshorts.core.paths.get_assets_dir", _assets)
     monkeypatch.setattr("autoshorts.core.paths.get_output_dir", _output)
     monkeypatch.setattr("autoshorts.dashboard.app.get_assets_dir", _assets)
-    monkeypatch.setattr("autoshorts.dashboard.app.get_output_dir", _output)
     monkeypatch.setattr("autoshorts.media.background_fetcher.get_assets_dir", _assets)
 
 

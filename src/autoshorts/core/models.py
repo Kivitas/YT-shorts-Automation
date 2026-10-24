@@ -44,13 +44,18 @@ VALID_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.DOWNLOADING_SECTION: {JobStatus.SUBTITLES_GENERATED, JobStatus.FAILED},
     JobStatus.SUBTITLES_GENERATED: {JobStatus.COMPOSITING, JobStatus.FAILED},
     JobStatus.COMPOSITING: {JobStatus.READY_FOR_REVIEW, JobStatus.SCHEDULED, JobStatus.FAILED},
-    JobStatus.READY_FOR_REVIEW: {JobStatus.SCHEDULED, JobStatus.UPLOADING, JobStatus.FAILED},
+    JobStatus.READY_FOR_REVIEW: {
+        JobStatus.SCHEDULED,
+        JobStatus.UPLOADING,
+        JobStatus.FAILED,
+        JobStatus.CLEANED,  # job files purged by the user before upload
+    },
     JobStatus.SCHEDULED: {JobStatus.UPLOADING, JobStatus.FAILED},
     JobStatus.UPLOADING: {JobStatus.VERIFYING, JobStatus.FAILED},
     JobStatus.VERIFYING: {JobStatus.COMPLETED, JobStatus.FAILED},
     JobStatus.COMPLETED: {JobStatus.CLEANED, JobStatus.FAILED},
     JobStatus.CLEANED: set(),
-    JobStatus.FAILED: {JobStatus.QUEUED},  # Allow retry
+    JobStatus.FAILED: {JobStatus.QUEUED, JobStatus.CLEANED},  # Allow retry or purge
 }
 
 
@@ -392,7 +397,7 @@ class Job(BaseModel):
     # Provenance helpers
     # ------------------------------------------------------------------
 
-    def record_diagnostic(self, section: str, **values: Any) -> None:
+    def record_diagnostic(self, section: str, /, **values: Any) -> None:
         """Merge diagnostic facts into this job under a named section."""
         bucket = self.diagnostics.setdefault(section, {})
         if isinstance(bucket, dict):

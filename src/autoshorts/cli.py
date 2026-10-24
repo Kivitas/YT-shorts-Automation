@@ -15,12 +15,12 @@ import logging
 import sys
 import time
 from collections.abc import Sequence
+from pathlib import Path
 
 from autoshorts.cleanup.safety_cleaner import SafetyCleaner
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import setup_logging
 from autoshorts.core.models import JobStatus
-from autoshorts.core.paths import get_output_dir
 from autoshorts.core.state_manager import StateManager
 from autoshorts.pipeline import ShortsPipeline
 from autoshorts.quota.quota_tracker import QuotaTracker
@@ -39,7 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=str, default=None, help="Path to custom config.yaml")
     parser.add_argument(
-        "--log-level", type=str, default="INFO", help="Logging level (DEBUG, INFO, WARNING)"
+        "--log-level",
+        type=str.upper,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (DEBUG, INFO, WARNING, ERROR)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
@@ -90,9 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dash_parser.add_argument(
         "--open-edge",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Launch browser in Microsoft Edge on Windows",
+        help="Launch browser in Microsoft Edge on Windows (use --no-open-edge to disable)",
     )
     dash_parser.add_argument(
         "--no-browser", action="store_true", help="Do not automatically launch browser tab"
@@ -198,7 +202,7 @@ def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: Sta
     tracker = QuotaTracker(state_manager=state_manager, config=config)
 
     if config.upload.mode == "local":
-        uploader = LocalExportUploader(export_dir=get_output_dir())
+        uploader = LocalExportUploader()
     elif config.upload.mode == "studio":
         try:
             from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
@@ -209,7 +213,7 @@ def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: Sta
                 "Playwright Studio uploader initialization failed: %s. Using LocalExportUploader fallback.",
                 e,
             )
-            uploader = LocalExportUploader(export_dir=get_output_dir())
+            uploader = LocalExportUploader()
     else:
         try:
             uploader = YouTubeApiUploader(
@@ -221,7 +225,7 @@ def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: Sta
                 "YouTube API uploader initialization deferred or failed: %s. Using LocalExportUploader fallback.",
                 e,
             )
-            uploader = LocalExportUploader(export_dir=get_output_dir())
+            uploader = LocalExportUploader()
 
     scheduler = SpreadScheduler(
         state_mgr=state_manager,
@@ -314,10 +318,11 @@ def cmd_clean(args: argparse.Namespace, config: Settings, state_manager: StateMa
             f"Job {args.job_id}: {'Would delete' if args.dry_run else 'Deleted'} {len(paths)} items."
         )
     else:
-        # Purge all completed or cleaned jobs
+        # Purge only completed or cleaned jobs. --force relaxes the upload-verification check
+        # inside the cleaner; it must never widen the set to in-progress or unreviewed jobs.
         jobs = state_manager.list_jobs(limit=500)
         for j in jobs:
-            if j.status in (JobStatus.COMPLETED, JobStatus.CLEANED) or args.force:
+            if j.status in (JobStatus.COMPLETED, JobStatus.CLEANED):
                 try:
                     p = cleaner.cleanup_job(
                         job_id=j.id,
@@ -344,9 +349,9 @@ def cmd_edge_login(args: argparse.Namespace, config: Settings, state_manager: St
     logger.info("Opening MS Edge login session (timeout=%ds)...", timeout)
     success = uploader.open_login_session(timeout_sec=float(timeout))
     if success:
-        print("\n✅ Sign-in detected successfully! Edge profile updated.")
+        print("\n[OK] Sign-in detected successfully! Edge profile updated.")
         return 0
-    print("\n❌ Sign-in session closed or timed out.")
+    print("\n[FAIL] Sign-in session closed or timed out.")
     return 1
 
 
@@ -358,6 +363,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Setup logging
     log_level = getattr(args, "log_level", "INFO").upper()
     setup_logging(level=log_level)
+
+    if args.config and not Path(args.config).is_file():
+        parser.error(f"config file not found: {args.config}")
 
     # Load configuration
     config = load_config(args.config)

@@ -44,6 +44,7 @@ from autoshorts.core.exceptions import (
     TranscriptNotFoundError,
     UploadError,
 )
+from autoshorts.core.job_lock import JobLockedError, job_lock
 from autoshorts.core.models import (
     Job,
     JobStatus,
@@ -68,15 +69,30 @@ from autoshorts.media.ass_styler import write_ass_file
 from autoshorts.media.compositor import (
     FasterWhisperTranscriber,
     FFmpegCompositor,
+    count_decode_errors,
     extract_16khz_mono_wav,
 )
 from autoshorts.media.dopamine_effects import pick_background_asset
 from autoshorts.media.downloader import Downloader as MediaDownloader
 from autoshorts.media.encoder_probe import get_ffmpeg_path
+from autoshorts.media.remotion_overlay import (
+    REMOTION_PROJECT_DIR,
+    RemotionRenderError,
+    RemotionUnavailableError,
+    build_caption_timeline,
+    is_remotion_ready,
+    overlay_captions,
+    render_caption_overlay,
+    write_caption_plan,
+)
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
 from autoshorts.transcript.fetcher import TranscriptFetcher
-from autoshorts.uploader.description_builder import build_short_description, build_short_title
+from autoshorts.uploader.description_builder import (
+    build_short_description,
+    build_short_title,
+    build_viral_hashtags,
+)
 from autoshorts.uploader.errors import QuotaExceededError
 from autoshorts.uploader.local_exporter import LocalExportUploader
 from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
@@ -286,7 +302,7 @@ class ShortsPipeline:
         if uploader is not None:
             self.uploader = uploader
         elif self.config.upload.mode == "local":
-            self.uploader = LocalExportUploader(export_dir=get_output_dir())
+            self.uploader = LocalExportUploader()
         elif self.config.upload.mode == "studio":
             self.uploader = PlaywrightStudioUploader(config=self.config)
         else:
@@ -300,7 +316,7 @@ class ShortsPipeline:
                     "YouTube API uploader initialization deferred or failed: %s. Using LocalExportUploader fallback.",
                     e,
                 )
-                self.uploader = LocalExportUploader(export_dir=get_output_dir())
+                self.uploader = LocalExportUploader()
 
         # Safety Cleaner
         self.cleaner = cleaner or SafetyCleaner(
@@ -394,7 +410,37 @@ class ShortsPipeline:
         style_preset: str | None = None,
         privacy_status: str | None = None,
     ) -> Job:
-        """Execute end-to-end processing pipeline for a single job with stage caching."""
+        """Run the pipeline for one job, unless another process is already working on it.
+
+        The CLI and the dashboard share one database, so a queued job can be picked up by both.
+        The per-job file lock makes the second process skip it instead of racing the first.
+        """
+        job = self._resolve_job(job_or_id)
+        try:
+            with job_lock(get_work_dir() / job.id, job.id):
+                return self._process_job_locked(
+                    job,
+                    auto_upload=auto_upload,
+                    immediate_upload=immediate_upload,
+                    background_category=background_category,
+                    dopamine_level=dopamine_level,
+                    style_preset=style_preset,
+                    privacy_status=privacy_status,
+                )
+        except JobLockedError as exc:
+            logger.info("Skipping job %s: %s", job.id, exc)
+            return self.state_manager.get_job(job.id) or job
+
+    def _process_job_locked(
+        self,
+        job_or_id: Job | str,
+        auto_upload: bool = False,
+        immediate_upload: bool = False,
+        background_category: str | None = None,
+        dopamine_level: str | None = None,
+        style_preset: str | None = None,
+        privacy_status: str | None = None,
+    ) -> Job:
         job = self._resolve_job(job_or_id)
 
         if style_preset is not None:
@@ -1241,9 +1287,26 @@ class ShortsPipeline:
                     getattr(self.config, "subtitles", None), "enable_emojis", True
                 )
 
+            ass_words: list[Any] = words
+            if self._caption_engine() == "remotion":
+                # Word captions move to the Remotion track; ASS keeps the hook banner and credit.
+                timed_words, timeline_dur = build_caption_timeline(
+                    words,
+                    hook_in_sec=hook_in,
+                    jump_cuts=jump_cuts,
+                    total_duration_sec=total_dur,
+                )
+                write_caption_plan(
+                    work_dir / f"{job.id}_captions.json",
+                    timed_words,
+                    duration_sec=timeline_dur or float(sel.candidate.duration or 1.0),
+                    style_preset=style_preset,
+                )
+                ass_words = []
+
             ass_kwargs: dict[str, Any] = {
                 "output_path": ass_path,
-                "words": words,
+                "words": ass_words,
                 "hook_title": hook,
                 "config": self.config.subtitles,
                 "onscreen_credit": channel_credit,
@@ -1381,6 +1444,32 @@ class ShortsPipeline:
             )
             self._run_subtitles_stage(job)
 
+    def _caption_engine(self) -> str:
+        subtitles_cfg = getattr(self.config, "subtitles", None)
+        return getattr(subtitles_cfg, "caption_engine", "ass") or "ass"
+
+    def _apply_remotion_captions(self, job: Job, base_path: Path) -> Path:
+        """Render the Remotion caption track and composite it onto the composed Short."""
+        plan_path = get_work_dir() / job.id / f"{job.id}_captions.json"
+        if not plan_path.is_file():
+            raise RemotionRenderError(
+                f"Caption plan missing for job {job.id}; rerun the subtitles stage."
+            )
+        if not is_remotion_ready(REMOTION_PROJECT_DIR):
+            raise RemotionUnavailableError(
+                "Caption engine is 'remotion' but the Remotion project is not installed. "
+                f"Run `npm install` in {REMOTION_PROJECT_DIR}, or set subtitles.caption_engine "
+                "to 'ass'."
+            )
+        track_path = plan_path.with_suffix(".webm")
+        render_caption_overlay(plan_path, track_path, project_dir=REMOTION_PROJECT_DIR)
+        captioned = base_path.with_name(f"{base_path.stem}_captioned{base_path.suffix}")
+        overlay_captions(base_path, track_path, captioned, ffmpeg_path=get_ffmpeg_path())
+        job.record_diagnostic(
+            "compositing", caption_engine="remotion", caption_track=str(track_path)
+        )
+        return captioned
+
     def _run_compositing_stage(
         self,
         job: Job,
@@ -1481,11 +1570,35 @@ class ShortsPipeline:
 
             # Run FFmpeg master compositing
             composed_res = self.compositor.compose(**comp_kwargs)
+            # A master that does not decode must never reach review: re-render once, then stop.
+            for attempt in range(2):
+                check_path = (
+                    Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
+                )
+                if not check_path.is_file():
+                    break
+                decode_errors = count_decode_errors(check_path)
+                if decode_errors == 0:
+                    break
+                logger.warning(
+                    "Job %s: composited master failed decode check (%d error lines), attempt %d/2",
+                    job.id,
+                    decode_errors,
+                    attempt + 1,
+                )
+                if attempt == 1:
+                    raise AutoShortsError(
+                        f"Composited master for job {job.id} does not decode cleanly "
+                        f"({decode_errors} error lines). Rerun the job; the output was not sent to review."
+                    )
+                composed_res = self.compositor.compose(**comp_kwargs)
             final_path = (
                 Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
             )
             if not final_path.is_file() and master_path.is_file():
                 final_path = master_path
+            if self._caption_engine() == "remotion":
+                final_path = self._apply_remotion_captions(job, final_path)
             job.rendered_video_path = str(final_path)
 
             # Optional auto-thumbnail extraction
@@ -1817,6 +1930,7 @@ class ShortsPipeline:
             hook=sel.hook_text or sel.title or "Watch this high retention excerpt!",
             start=sel.candidate.start,
             end=sel.candidate.end,
+            hashtags=build_viral_hashtags(meta.title, sel.hook_text or sel.title or ""),
             template=self.config.upload.description_template,
         )
 
@@ -1831,7 +1945,13 @@ class ShortsPipeline:
 
         stage_id = self.state_manager.record_stage_start(job.id, "immediate_upload")
         upload_cfg = getattr(self.config, "upload", None)
-        fallback_mode = getattr(upload_cfg, "quota_exhausted_fallback", "studio")
+        # Same rule as the scheduler: an explicit upload.quota_exhausted_fallback wins,
+        # otherwise the documented quota.exhaustion_fallback applies.
+        fallback_mode = (
+            str(upload_cfg.quota_exhausted_fallback)
+            if "quota_exhausted_fallback" in getattr(upload_cfg, "model_fields_set", set())
+            else str(self.quota_tracker.fallback_mode)
+        )
         privacy = (
             getattr(job, "privacy_status", None)
             or getattr(self.config.upload, "default_privacy_status", None)

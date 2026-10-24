@@ -319,8 +319,19 @@ def test_create_faceless_short_job(tmp_path: Path):
 
 
 @pytest.fixture
-def test_client(tmp_path: Path):
-    """Create a FastAPI test client with mocked state and pipeline."""
+def test_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Create a FastAPI test client with mocked state and pipeline.
+
+    These tests cover the unconfigured-key behaviour, so the YouTube key is removed for the
+    duration of the test even when the developer has one in .env.
+    """
+    from autoshorts.core.config import Settings
+
+    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    monkeypatch.setattr(Settings, "get_youtube_api_key_str", lambda self: None)
+    monkeypatch.setattr(
+        "autoshorts.core.settings_manager.get_data_dir", lambda: tmp_path / "isolated_data"
+    )
     cfg = load_config()
     db_path = tmp_path / "test_autoshorts.db"
     state_mgr = StateManager(db_path=db_path)
@@ -936,3 +947,85 @@ def test_structured_return_mode():
     assert "quota" in res_dict["message"].lower()
     assert res_dict["videos"] == []
     assert res_dict["count"] == 0
+
+
+# -----------------------------------------------------------------------------
+# LLM faceless script output is bounded and normalized (regression)
+# -----------------------------------------------------------------------------
+
+
+def _llm_config_returning(payload: dict) -> MagicMock:
+    """Return a settings stub whose patched provider answers with the given JSON payload."""
+    import json as _json
+
+    provider = MagicMock()
+    provider.complete.return_value = _json.dumps(payload)
+    return provider
+
+
+def test_faceless_llm_title_is_clamped_to_youtube_limit():
+    from unittest.mock import patch
+
+    long_title = "Battery Myths Everyone Believes " * 6  # well over 100 characters
+    provider = _llm_config_returning(
+        {
+            "hook": "Your phone is lying to you about battery life tonight.",
+            "script_sentences": ["Sentence one.", "Sentence two."],
+            "title": long_title,
+            "description": "Short description.",
+            "hashtags": ["#shorts", "tech hacks", "#Shorts"],
+            "search_keywords": ["phone battery"],
+        }
+    )
+    cfg = MagicMock()
+    with patch("autoshorts.core.providers.get_provider", return_value=provider):
+        res = generate_faceless_script(niche="ai_tech", topic="Battery", config=cfg)
+
+    assert len(res.title) <= 100
+    assert res.title and not res.title.endswith(" ")
+    assert res.script_sentences == ["Sentence one.", "Sentence two."]
+    assert res.full_script == "Sentence one. Sentence two."
+
+
+def test_faceless_llm_hashtags_and_keywords_are_normalized():
+    from unittest.mock import patch
+
+    provider = _llm_config_returning(
+        {
+            "hook": "Hook text here.",
+            "script_sentences": ["One.", "Two."],
+            "title": "Normal title #Shorts",
+            "description": "Desc.",
+            "hashtags": "shorts, Tech Hacks,#shorts",
+            "search_keywords": ["a", "b"],
+        }
+    )
+    with patch("autoshorts.core.providers.get_provider", return_value=provider):
+        res = generate_faceless_script(niche="ai_tech", topic="T", config=MagicMock())
+
+    assert res.hashtags == ["#shorts", "#TechHacks"]
+    assert all(tag.startswith("#") and " " not in tag for tag in res.hashtags)
+    assert res.search_keywords == ["a", "b"]
+
+
+def test_faceless_llm_malformed_optional_fields_keep_llm_script():
+    """A non-list hashtags value used to raise inside the model and drop the whole LLM script."""
+    from unittest.mock import patch
+
+    provider = _llm_config_returning(
+        {
+            "hook": "LLM hook survives.",
+            "script_sentences": ["Kept sentence."],
+            "title": None,
+            "description": "",
+            "hashtags": {"unexpected": "object"},
+            "search_keywords": None,
+        }
+    )
+    with patch("autoshorts.core.providers.get_provider", return_value=provider):
+        res = generate_faceless_script(niche="ai_tech", topic="Kept", config=MagicMock())
+
+    assert res.hook == "LLM hook survives."
+    assert res.script_sentences == ["Kept sentence."]
+    assert res.hashtags  # template fallback, never empty
+    assert res.title  # template fallback, never empty

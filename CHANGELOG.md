@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Launchers (`start.sh`, `start.bat`) install and repair all Python dependencies, install the Remotion renderer and its headless browser when Node.js is present, and create `.env` from `.env.example`. Users only paste their API keys.
+- Remotion caption engine (`subtitles.caption_engine: remotion`): word captions are rendered from a React composition in `remotion/` and composited onto the Short with FFmpeg. Default remains `ass`. Run `npm install` in `remotion/` before enabling it.
+
+### Added
 - **Section download validation (`SectionValidation`)**: every finished yt-dlp section is probed before it is accepted. Output must contain a video stream and (by default) an audio stream, so an audio-only or truncated merge result is now a distinct failure class (`missing_video`, `missing_audio`, `empty_file`, `unreadable`) instead of a silent success. `validate_section_output()` is exported for direct use.
 - **Download attempt traces**: `Downloader.download_section()` records every attempt (player client, outcome, detail) and surfaces it via `last_download_diagnostics` plus an optional `diagnostics` sink. Final failures now include a full attempt trace and an actionable hint.
 - **Edit-plan provenance**: `EditDecisionList.source` (`multimodal` | `transcript` | `empty_fallback` | `deterministic`) and `EditDecisionList.fallback_reason` record how a plan was produced, with `is_placeholder` / `has_micro_edits` helpers. Clamping no longer launders provenance.

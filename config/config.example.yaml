@@ -112,7 +112,7 @@ audio_mastering:
 upload:
   mode: "api"                      # "api" (Data API v3), "studio" (Playwright Edge), "local" (export only)
   default_privacy_status: "public" # "private", "unlisted", "public"
-  privacy_status: "unlisted"       # "private", "unlisted", "public"
+  privacy_status: "public"         # "private", "unlisted", "public"
   category_id: "24"                # 20: Gaming, 22: People & Blogs, 24: Entertainment, 27: Education, 28: Sci & Tech
   default_language: "en"           # Video language code
   altered_content: false           # Synthetic / Altered Media disclosure checkbox

@@ -189,3 +189,16 @@ def test_convenience_functions():
     )
     assert "My Title" in desc
     assert "This video is a clip from" in desc
+
+
+def test_viral_hashtags_are_unique_capped_and_lead_with_shorts():
+    from autoshorts.uploader.description_builder import MAX_HASHTAGS, build_viral_hashtags
+
+    tags = build_viral_hashtags(
+        "Why are you freaked out by my robot hand? Robot Robot hand Shorts", "Robot hand"
+    )
+    assert tags[0] == "#Shorts"
+    assert len(tags) <= MAX_HASHTAGS
+    lowered = [t.lower() for t in tags]
+    assert len(lowered) == len(set(lowered))
+    assert "#Viral" in tags and "#FYP" in tags

@@ -222,6 +222,64 @@ if not exist "!PYTHON_EXE!" (
 )
 
 :: -----------------------------------------------------------------------------
+:: 3b. Install / Repair Python Dependencies
+:: -----------------------------------------------------------------------------
+set "PY_DEPS_CHECK=import autoshorts, fastapi, uvicorn, playwright, edge_tts, google.genai, yt_dlp, imageio_ffmpeg, faster_whisper"
+:: 'uv sync' is a no-op when .venv already matches uv.lock, and keeps pinned versions correct
+:: on machines installed before a pin changed.
+if defined UV_CMD "%UV_CMD%" sync --quiet
+"!PYTHON_EXE!" -c "!PY_DEPS_CHECK!" >nul 2>&1
+if !ERRORLEVEL! equ 0 goto deps_ready
+echo %C_CYAN%[INFO]%C_RESET% Installing Python dependencies - one time, this can take a few minutes...
+"!PYTHON_EXE!" -m pip install -e .
+"!PYTHON_EXE!" -c "!PY_DEPS_CHECK!" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo %C_RED%[ERROR] Python dependencies could not be installed.%C_RESET%
+    echo Check your network connection, then run: uv sync
+    pause
+    exit /b 1
+)
+:deps_ready
+
+:: -----------------------------------------------------------------------------
+:: 3c. Remotion Caption Renderer (optional: needs Node.js; ASS captions work without it)
+:: -----------------------------------------------------------------------------
+set "REMOTION_BIN=%~dp0remotion\node_modules\.bin\remotion.cmd"
+if not exist "%~dp0remotion\package.json" goto remotion_done
+if exist "!REMOTION_BIN!" goto remotion_done
+where npm >nul 2>&1
+if !ERRORLEVEL! neq 0 goto remotion_no_node
+echo %C_CYAN%[INFO]%C_RESET% Installing the Remotion caption renderer - one time...
+pushd "%~dp0remotion"
+call npm install --no-audit --no-fund
+if !ERRORLEVEL! neq 0 (
+    popd
+    echo %C_YELLOW%[WARNING]%C_RESET% Remotion install failed. Word captions fall back to the ASS engine.
+    goto remotion_done
+)
+echo %C_CYAN%[INFO]%C_RESET% Downloading Remotion's headless browser - one time, about 100 MB...
+call npx remotion browser ensure
+popd
+goto remotion_done
+:remotion_no_node
+echo %C_YELLOW%[NOTICE]%C_RESET% Node.js is not installed, so the Remotion caption engine is unavailable.
+echo          Install Node LTS from https://nodejs.org and run start.bat again.
+:remotion_done
+
+:: -----------------------------------------------------------------------------
+:: 3d. API Keys: .env is created from the template; you only paste your keys into it
+:: -----------------------------------------------------------------------------
+if exist ".env" goto env_ready
+copy /y ".env.example" ".env" >nul
+echo %C_YELLOW%[ACTION]%C_RESET% Created .env from .env.example. Open .env and paste your API keys.
+:env_ready
+set "GEMINI_VAL="
+for /f "tokens=1,* delims==" %%A in ('findstr /b "GEMINI_API_KEY=" ".env"') do set "GEMINI_VAL=%%B"
+if not defined GEMINI_VAL echo %C_YELLOW%[NOTICE]%C_RESET% GEMINI_API_KEY is empty in .env. Add it for Gemini, or use the local model.
+where ffprobe >nul 2>&1
+if !ERRORLEVEL! neq 0 echo %C_YELLOW%[NOTICE]%C_RESET% ffprobe was not found, so media durations use a slower fallback. Install a full FFmpeg build that includes ffprobe.
+
+:: -----------------------------------------------------------------------------
 :: 4. Ensure Required Runtime Directories Exist
 :: -----------------------------------------------------------------------------
 if not exist "assets" mkdir "assets"

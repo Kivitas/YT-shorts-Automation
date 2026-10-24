@@ -6,6 +6,7 @@ OAuth client credentials verification and authorization flow, and sanitized payl
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -560,6 +561,7 @@ def apply_settings_update(
                     raw_yaml = loaded
         except Exception as e:
             logger.warning("Failed to load config at %s: %s", target_config, e)
+    original_yaml = copy.deepcopy(raw_yaml)
 
     # 1. Process and update secrets in .env
     env_updates: dict[str, str] = {}
@@ -771,9 +773,11 @@ def apply_settings_update(
                 else:
                     raw_yaml["cleanup"][k] = cl_data[k]
 
-    # Save to config.yaml atomically
-    out_yaml = yaml.safe_dump(raw_yaml, sort_keys=False)
-    atomic_write(target_config, out_yaml)
+    # Rewrite config.yaml only when a value changed. yaml.safe_dump drops every comment,
+    # so a no-op save must leave the hand-written file byte-identical.
+    if raw_yaml != original_yaml or not target_config.is_file():
+        out_yaml = yaml.safe_dump(raw_yaml, sort_keys=False)
+        atomic_write(target_config, out_yaml)
 
     # Reload new settings
     new_settings = load_config(target_config)

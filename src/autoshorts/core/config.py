@@ -124,7 +124,7 @@ class UploadConfig(BaseModel):
         "Channel Link: {channel_url}\n\n"
         "All rights and intellectual property belong to {channel}. If you are the copyright owner "
         "and wish for this clip to be removed or modified, please contact the channel owner.\n\n"
-        "#Shorts #Podcasts #Education {hashtags}"
+        "#Podcasts #Education {hashtags}"
     )
 
     @model_validator(mode="before")
@@ -250,6 +250,13 @@ class SubtitlesConfig(BaseModel):
     hook_banner_style: str = "neon_box"
     enable_emojis: bool = True
     karaoke_pop_scale: int = 118
+    caption_engine: str = Field(
+        default="ass",
+        description=(
+            "How word captions are drawn: 'ass' (FFmpeg burn-in, default) or 'remotion' "
+            "(React caption overlay rendered by Remotion and composited with FFmpeg)."
+        ),
+    )
 
 
 class CleanupConfig(BaseModel):

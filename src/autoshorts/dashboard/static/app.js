@@ -805,6 +805,8 @@ async function loadJobTranscript(jobId) {
     }
     const data = await res.json();
     const words = data.words || [];
+    // Keep the timed originals so a save writes back start/end/probability, not just text.
+    loadedTranscriptWords = words;
 
     if (words.length === 0) {
       listEl.innerHTML = '<div class="transcript-placeholder">No aligned word tokens stored yet for this job.</div>';
@@ -825,6 +827,8 @@ async function loadJobTranscript(jobId) {
     listEl.innerHTML = `<div class="transcript-placeholder">Notice: Transcript endpoint not available (${escapeHtml(String(err))}).</div>`;
   }
 }
+
+let loadedTranscriptWords = [];
 
 function reloadJobTranscript() {
   const jobId = document.getElementById("edit-job-id").value;
@@ -847,8 +851,17 @@ async function saveJobTranscript() {
 
   const rawText = document.getElementById("edit-transcript-raw") ? document.getElementById("edit-transcript-raw").value : "";
   const wordSpans = document.querySelectorAll("#edit-transcript-word-list .transcript-word");
+  if (wordSpans.length === 0) {
+    // Nothing loaded: saving now would overwrite the stored timings with an empty list.
+    showToast("No transcript words loaded to save.");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💾 Save Transcript Corrections";
+    }
+    return;
+  }
   const words = Array.from(wordSpans).map((span, idx) => ({
-    idx: idx,
+    ...(loadedTranscriptWords[idx] || {}),
     word: span.textContent,
     emphasis: span.classList.contains("word-emphasis"),
   }));

@@ -25,14 +25,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from autoshorts import __version__
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.logging_setup import get_log_stream_handler
 from autoshorts.core.models import ClipSelection, EditDecisionList, Job, JobStatus
-from autoshorts.core.paths import get_assets_dir, get_output_dir
+from autoshorts.core.paths import get_assets_dir
 from autoshorts.core.settings_manager import (
     apply_settings_update,
     check_llm_provider_configured,
@@ -583,6 +583,20 @@ class AnalyticsSyncPayload(BaseModel):
     force: bool = Field(default=False, description="Force sync flag")
 
 
+_TRACK_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _is_valid_transcript_word(item: Any) -> bool:
+    """A word entry needs a string ``word`` and numeric ``start``/``end`` (bools rejected)."""
+    if not isinstance(item, dict) or not isinstance(item.get("word"), str):
+        return False
+    for key in ("start", "end"):
+        value = item.get(key)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return False
+    return True
+
+
 # -----------------------------------------------------------------------------
 # Browser Launcher Helper
 # -----------------------------------------------------------------------------
@@ -814,7 +828,7 @@ def create_app(
                 elif req.upload_mode == "local":
                     from autoshorts.uploader.local_exporter import LocalExportUploader
 
-                    pipe.uploader = LocalExportUploader(export_dir=get_output_dir())
+                    pipe.uploader = LocalExportUploader()
                 elif req.upload_mode in ("api", "youtube"):
                     from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
@@ -1084,7 +1098,7 @@ def create_app(
         aligned_cache = work_dir / "aligned_words.json"
 
         words = req.get("words")
-        if not isinstance(words, list):
+        if not isinstance(words, list) or not all(_is_valid_transcript_word(w) for w in words):
             raise HTTPException(
                 status_code=400, detail="'words' must be a list of word dictionaries"
             )
@@ -1399,6 +1413,12 @@ def create_app(
         job = state_mgr.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        # Re-running a finished or in-review job would reprocess its outputs; only FAILED is retryable.
+        if job.status != JobStatus.FAILED:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job {job_id} is {job.status.value}; only FAILED jobs can be retried",
+            )
 
         parallel_runner.submit_job(job_id)
         return {"success": True, "message": f"Job {job_id} scheduled for retry."}
@@ -1616,7 +1636,10 @@ def create_app(
     @app.post("/api/spark/import")
     async def import_spark(req: SparkImportRequest) -> dict[str, Any]:
         """Parse Gemini Spark output text into clip candidates."""
-        hints = parse_spark_import(req.text)
+        try:
+            hints = parse_spark_import(req.text)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         return {
             "success": True,
             "count": len(hints),
@@ -1964,7 +1987,7 @@ def create_app(
                 elif mode == "local":
                     from autoshorts.uploader.local_exporter import LocalExportUploader
 
-                    pipe.uploader = LocalExportUploader(export_dir=get_output_dir())
+                    pipe.uploader = LocalExportUploader()
                 elif mode in ("api", "youtube"):
                     from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
@@ -2488,7 +2511,23 @@ def create_app(
     @app.post("/api/research/music/download")
     async def download_viral_bgm_endpoint(payload: MusicDownloadPayload) -> dict[str, Any]:
         """Download or procedural-synthesize viral BGM into assets/music/."""
-        from autoshorts.research_agent.song_recommender import download_viral_bgm
+        from autoshorts.research_agent.song_recommender import (
+            CURATED_VIRAL_BGM,
+            download_viral_bgm,
+        )
+
+        # track_id becomes a file name, so restrict it to a safe charset (no path separators).
+        if not _TRACK_ID_RE.fullmatch(payload.track_id):
+            raise HTTPException(
+                status_code=400,
+                detail="track_id must be 1-64 characters: letters, digits, '-' or '_'",
+            )
+        catalog_ids = {str(t.get("track_id")) for t in CURATED_VIRAL_BGM}
+        if not payload.custom_url and payload.track_id not in catalog_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown track_id {payload.track_id!r}; pick a catalog track or pass custom_url",
+            )
 
         res = await asyncio.to_thread(
             download_viral_bgm,
@@ -2641,6 +2680,24 @@ def create_app(
         async_mode: bool = False,
     ) -> dict[str, Any]:
         """Create and render a complete faceless AI Short using edge-tts and FFmpeg."""
+        from autoshorts.research_agent.models import FacelessShortRequest
+        from autoshorts.research_agent.moneyprinter import create_faceless_short_job
+
+        # Validate the body first so bad input returns 400/422 instead of a 500.
+        try:
+            body = await request.json()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}") from e
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+        try:
+            req = FacelessShortRequest(**body)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=e.errors(include_url=False, include_context=False),
+            ) from e
+
         active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
         from unittest.mock import Mock
 
@@ -2654,12 +2711,6 @@ def create_app(
                     "requires_api_key": missing_key,
                     "message": err_msg,
                 }
-
-        from autoshorts.research_agent.models import FacelessShortRequest
-        from autoshorts.research_agent.moneyprinter import create_faceless_short_job
-
-        body = await request.json()
-        req = FacelessShortRequest(**body)
 
         if async_mode:
             background_tasks.add_task(create_faceless_short_job, req, pipe, state_mgr)
@@ -2735,12 +2786,9 @@ def create_app(
     def _resolve_job_work_dir(job_id: str) -> Path:
         from autoshorts.core.paths import get_work_dir
 
-        base_work = (
-            Path(pipe.config.app.work_dir)
-            if hasattr(pipe, "config") and hasattr(pipe.config, "app")
-            else get_work_dir()
-        )
-        return base_work / job_id
+        # Same location the transcript/rerender endpoints use. AppConfig has no work_dir
+        # field, so reading it from pipe.config raised AttributeError (HTTP 500).
+        return get_work_dir() / job_id
 
     def _get_job_words_list(job_id: str) -> tuple[list[dict[str, Any]], str]:
         job_work = _resolve_job_work_dir(job_id)
