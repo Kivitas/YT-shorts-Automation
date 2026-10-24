@@ -3170,6 +3170,36 @@ input:checked + .slider:before {
 .studio-editor-modal {
   max-width: 920px;
   width: 95%;
+  /* Keep the whole editor inside the window; the body scrolls, the header and tabs stay put. */
+  max-height: 92vh;
+  max-height: 92dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.studio-editor-modal .modal-header,
+.studio-editor-modal .studio-editor-tabs {
+  flex: 0 0 auto;
+}
+
+.studio-editor-modal .edit-job-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.studio-editor-modal .modal-footer {
+  flex: 0 0 auto;
+}
+
+.studio-editor-modal input,
+.studio-editor-modal select,
+.studio-editor-modal textarea {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .studio-editor-tabs {
@@ -3188,7 +3218,7 @@ input:checked + .slider:before {
 
 .trimmer-controls-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) auto;
   gap: 0.75rem;
   align-items: end;
 }
