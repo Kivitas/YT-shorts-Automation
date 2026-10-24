@@ -320,8 +320,7 @@ def test_start_sh_does_not_wipe_windows_venv_under_git_bash():
     assert '".venv/Scripts/python.exe"' in content, (
         "start.sh must use the Windows interpreter path under Git Bash"
     )
-    heal_block = content.split("Cross-platform healing", 1)[1].split("fi\n", 1)[0]
-    assert 'IS_WINDOWS_SHELL" -eq 0' in heal_block, (
-        "the rm -rf .venv heal must be skipped on Windows shells"
+    assert "rm -rf .venv" in content, "the POSIX heal of a Windows-made .venv must exist"
+    assert content.index('IS_GITBASH" -eq 0') < content.index("rm -rf .venv"), (
+        "the rm -rf .venv heal must be guarded so it never runs on Git Bash"
     )
-    assert "rm -rf .venv" in heal_block
