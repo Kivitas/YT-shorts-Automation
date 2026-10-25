@@ -688,13 +688,13 @@ def test_dashboard_auth_edge_login_endpoint(dashboard_client: dict[str, Any]):
     client: TestClient = dashboard_client["client"]
     with patch(
         "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session",
-        return_value=True,
-    ):
+    ) as opened:
         res = client.post("/api/auth/edge-login")
         assert res.status_code == 200
         data = res.json()
-        assert data["success"] is True
-        assert "sign-in session launched" in data["message"].lower()
+        assert data["success"] is False
+        assert "terminal" in data["message"].lower() or "not needed" in data["message"].lower()
+        opened.assert_not_called()
 
 
 def test_dashboard_spark_prompts_endpoint(dashboard_client: dict[str, Any]):
@@ -847,12 +847,15 @@ def test_dashboard_edge_login_post_trigger(dashboard_client: dict[str, Any]):
     client: TestClient = dashboard_client["client"]
     update_login_session_state(status="idle", message="", error=None, channel_name=None)
 
-    with patch("autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session"):
+    with patch(
+        "autoshorts.uploader.studio_playwright.PlaywrightStudioUploader.open_login_session"
+    ) as opened:
         res = client.post("/api/auth/edge-login")
         assert res.status_code == 200
-        data = res.json()
-        assert data["success"] is True
-        assert LOGIN_SESSION_STATE["status"] == "running"
+        assert res.json()["success"] is False
+        # The dashboard never opens a visible browser window.
+        opened.assert_not_called()
+        assert LOGIN_SESSION_STATE["status"] == "idle"
 
 
 def test_dashboard_edge_status_alias_endpoint(dashboard_client: dict[str, Any]):

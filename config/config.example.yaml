@@ -145,3 +145,7 @@ cleanup:
   keep_master_mp4: true            # Retain output/ master MP4, purge work/ intermediate files
   purge_intermediate_work: true
   dry_run: false
+integrations:
+  eachlabs:
+    enabled: false   # Hosted AI music/voice via each::labs. Needs EACHLABS_API_KEY in .env. Off by default.
+    timeout_seconds: 120

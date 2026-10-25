@@ -75,6 +75,7 @@ from autoshorts.media.compositor import (
 from autoshorts.media.dopamine_effects import pick_background_asset
 from autoshorts.media.downloader import Downloader as MediaDownloader
 from autoshorts.media.encoder_probe import get_ffmpeg_path
+from autoshorts.media.ffmpeg_tools import check_delivery
 from autoshorts.media.remotion_overlay import (
     REMOTION_PROJECT_DIR,
     RemotionRenderError,
@@ -1600,6 +1601,9 @@ class ShortsPipeline:
             if self._caption_engine() == "remotion":
                 final_path = self._apply_remotion_captions(job, final_path)
             job.rendered_video_path = str(final_path)
+            # Informational only: the ffmpeg-skill delivery check never changes the job status.
+            delivery = check_delivery(Path(final_path))
+            job.record_diagnostic("delivery", ok=delivery["ok"], issues=delivery["issues"])
 
             # Optional auto-thumbnail extraction
             if hasattr(self.compositor, "extract_thumbnail") and final_path.is_file():

@@ -1780,23 +1780,26 @@ def create_app(
 
     @app.post("/api/auth/edge-login")
     async def edge_login(background_tasks: BackgroundTasks) -> dict[str, Any]:
-        """Trigger interactive Microsoft Edge login session for YouTube Studio."""
-        from autoshorts.uploader.studio_playwright import (
-            PlaywrightStudioUploader,
-            update_login_session_state,
-        )
+        """Explain the Edge sign-in for YouTube Studio without opening a browser window.
 
-        update_login_session_state(
-            status="running",
-            message="Microsoft Edge opened. Please sign in to Google/YouTube Studio...",
-            error=None,
-            channel_name=None,
-        )
-        uploader = PlaywrightStudioUploader(config=cfg, headless=False)
-        background_tasks.add_task(uploader.open_login_session, 300.0)
+        The dashboard never opens a visible browser: the Studio sign-in needs a window only once,
+        so it is run from the terminal with `python run.py edge-login` when Studio mode is used.
+        """
+
+        if getattr(getattr(cfg, "upload", None), "mode", "api") != "studio":
+            return {
+                "success": False,
+                "message": (
+                    "Not needed: uploads use the YouTube API. The Edge sign-in is only for "
+                    "Studio upload mode."
+                ),
+            }
         return {
-            "success": True,
-            "message": "Microsoft Edge sign-in session launched. Please complete sign-in in the browser window.",
+            "success": False,
+            "message": (
+                "The Studio sign-in opens a visible Edge window, so it does not run from the "
+                "dashboard. Run `python run.py edge-login` in a terminal instead."
+            ),
         }
 
     @app.get("/api/auth/edge-login/status")

@@ -1,0 +1,3 @@
+# Third-party: ffmpeg-skill
+
+The `scripts/` directory (including `scripts/_common/`) and the `LICENSE` file in this folder are copied, unmodified, from the MIT-licensed **ffmpeg-skill** toolkit by **kajisho5** (Copyright (c) 2026 kajisho5). The full MIT licence text is in `LICENSE` beside this file. The scripts are standalone Python CLI tools that use only the standard library and call `ffmpeg`/`ffprobe`. Only the scripts and their helper package were copied; tests, demos, docs, examples, MCP, npm and brand assets were left out. The application calls them through `autoshorts.media.ffmpeg_tools`.

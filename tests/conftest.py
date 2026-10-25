@@ -61,3 +61,13 @@ def _mock_pipeline_network_for_tests(monkeypatch: pytest.MonkeyPatch):
         orig_init(self, *args, **kwargs)
 
     monkeypatch.setattr(ShortsPipeline, "__init__", wrapped_init)
+
+
+@pytest.fixture(autouse=True)
+def _hide_ffprobe_by_default(monkeypatch):
+    """Keep the suite independent of whether ffprobe is installed on this machine.
+
+    Tests that exercise the ffprobe path set their own value; everything else uses the
+    ffmpeg -i fallback, which is what the mocked subprocess outputs in those tests expect.
+    """
+    monkeypatch.setattr("autoshorts.media.compositor.get_ffprobe_path", lambda: None, raising=False)

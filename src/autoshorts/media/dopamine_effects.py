@@ -977,6 +977,8 @@ def build_complex_filtergraph(
                 f"{target_lufs:g}" if isinstance(target_lufs, (int, float)) else str(target_lufs)
             )
             voice_chain.append(f"loudnorm=I={lufs_val}:TP=-1.0:LRA=7")
+            # Single-pass loudnorm can still overshoot its true-peak target; cap peaks at -1 dBTP.
+            voice_chain.append("alimiter=limit=0.8913:attack=5:release=50")
 
         if voice_chain:
             filter_stages.append(f"[{current_a}]{','.join(voice_chain)}[voice]")

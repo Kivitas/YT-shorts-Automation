@@ -74,12 +74,10 @@ def clear_hardware_encoder_cache() -> None:
 def get_ffmpeg_path() -> str:
     """Resolve FFmpeg executable path.
 
-    Checks system PATH first; if not found, checks for bundled executable from
-    the imageio_ffmpeg package. Falls back to 'ffmpeg'.
+    Prefers the bundled imageio_ffmpeg build: it is the one the render paths are tested against.
+    A PATH ffmpeg (for example a winget full build) can lack fontconfig setup on Windows, and
+    text filters then crash. Falls back to ffmpeg on PATH, then to 'ffmpeg'.
     """
-    resolved = shutil.which("ffmpeg")
-    if resolved:
-        return resolved
     try:
         import imageio_ffmpeg
 
@@ -88,6 +86,9 @@ def get_ffmpeg_path() -> str:
             return str(exe)
     except Exception:
         pass
+    resolved = shutil.which("ffmpeg")
+    if resolved:
+        return resolved
     return "ffmpeg"
 
 

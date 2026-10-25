@@ -75,6 +75,7 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["third_party"]  # vendored ffmpeg-skill scripts, MIT (see third_party/ffmpeg_skill/THIRD_PARTY.md)
 
 [tool.ruff.lint]
 ignore = [
