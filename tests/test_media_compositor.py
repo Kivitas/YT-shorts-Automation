@@ -272,7 +272,7 @@ def test_complex_filtergraph_with_high_dopamine():
     assert "highpass=f=85,equalizer=f=3200" in fg
     assert "loudnorm=I=-14:TP=-1.0:LRA=7" in fg
     assert "sidechaincompress=" in fg
-    assert "alimiter=limit=-1.0dB" in fg
+    assert "alimiter=limit=0.8414:" in fg
     assert "[3:a]volume=0.4,adelay=4000|4000[sfx_audio]" in fg
     assert out_v == "[outv]"
     assert out_a == "[master_a]"
@@ -468,7 +468,7 @@ def test_voice_boost_and_audio_mastering():
     )
     assert "highpass=f=85,equalizer=f=3200" in fg_boost
     assert "loudnorm=I=-16:TP=-1.0:LRA=7" in fg_boost
-    assert "alimiter=limit=-1.0dB" in fg_boost
+    assert "alimiter=limit=0.8414:" in fg_boost
 
     # voice_boost=False
     fg_noboost, _, _ = build_complex_filtergraph(

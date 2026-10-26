@@ -24,6 +24,7 @@ from pathlib import Path
 
 from autoshorts.core.models import EditDecisionList, JumpCut, ZoomPunchIn
 from autoshorts.core.paths import escape_ffmpeg_filter_path, get_assets_dir
+from autoshorts.media.audio_master import build_loudnorm_filter
 
 logger = logging.getLogger(__name__)
 
@@ -973,12 +974,9 @@ def build_complex_filtergraph(
         if voice_boost:
             voice_chain.append("highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5")
         if dopamine_preset.enable_loudnorm:
-            lufs_val = (
-                f"{target_lufs:g}" if isinstance(target_lufs, (int, float)) else str(target_lufs)
-            )
-            voice_chain.append(f"loudnorm=I={lufs_val}:TP=-1.0:LRA=7")
-            # Single-pass loudnorm can still overshoot its true-peak target; cap peaks at -1 dBTP.
-            voice_chain.append("alimiter=limit=0.8913:attack=5:release=50")
+            # Single-pass loudnorm plus a -1 dBTP limiter. The two-pass form is applied to the
+            # finished file by audio_master.normalize_two_pass, not in this graph.
+            voice_chain.append(build_loudnorm_filter(None, float(target_lufs)))
 
         if voice_chain:
             filter_stages.append(f"[{current_a}]{','.join(voice_chain)}[voice]")
@@ -1019,7 +1017,9 @@ def build_complex_filtergraph(
         ):
             limiter_rel = min(1000, max(10, int(rhythm_ducking_release)))
             limiter_extra = f":release={limiter_rel}"
-        filter_stages.append(f"[{voice_label}]alimiter=limit=-1.0dB{limiter_extra}[master_a]")
+        filter_stages.append(
+            f"[{voice_label}]alimiter=limit=0.8414:level=disabled{limiter_extra}[master_a]"
+        )
         out_audio_label = "[master_a]"
     else:
         # Generate silent audio if source has no audio track

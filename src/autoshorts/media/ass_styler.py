@@ -447,7 +447,8 @@ def remap_words_for_jump_cuts(
             if c.cut_end <= w_start:
                 cum_shift += cut_dur
             elif c.cut_start < w_start < c.cut_end:
-                cum_shift += w_start - c.cut_start
+                # Kept part starts at cut_end, so the whole cut is removed before it.
+                cum_shift += cut_dur
                 w_start = c.cut_end
             elif c.cut_start < w_end < c.cut_end:
                 w_end = c.cut_start

@@ -66,6 +66,7 @@ from autoshorts.discovery.url_validator import ParsedLink, parse_links_input
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
 from autoshorts.media.ass_styler import write_ass_file
+from autoshorts.media.audio_master import normalize_two_pass
 from autoshorts.media.compositor import (
     FasterWhisperTranscriber,
     FFmpegCompositor,
@@ -1602,6 +1603,12 @@ class ShortsPipeline:
                 final_path = self._apply_remotion_captions(job, final_path)
             job.rendered_video_path = str(final_path)
             # Informational only: the ffmpeg-skill delivery check never changes the job status.
+            # Two-pass loudness on the finished file (video is copied, audio re-encoded).
+            # A failure here keeps the single-pass audio; it never fails the job.
+            try:
+                normalize_two_pass(Path(final_path), Path(final_path), float(target_lufs))
+            except Exception as loud_err:
+                logger.warning("Job %s: two-pass loudness skipped: %s", job.id, loud_err)
             delivery = check_delivery(Path(final_path))
             job.record_diagnostic("delivery", ok=delivery["ok"], issues=delivery["issues"])
 
