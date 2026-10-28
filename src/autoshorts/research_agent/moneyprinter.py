@@ -583,6 +583,33 @@ def _fallback_synthesize_audio(
         return output_audio_path, words, total_dur
 
 
+def _try_kokoro_tts(
+    text: str,
+    voice: str,
+    output_audio_path: Path,
+    output_words_path: Path,
+) -> tuple[Path, list[dict[str, Any]], float] | None:
+    """Kokoro fallback; returns None when unavailable or failing."""
+    try:
+        from autoshorts.media.kokoro_fallback import kokoro_available, synthesize_kokoro
+
+        if not kokoro_available():
+            return None
+        from autoshorts.media.compositor import FasterWhisperTranscriber
+
+        output_audio_path.parent.mkdir(parents=True, exist_ok=True)
+        output_words_path.parent.mkdir(parents=True, exist_ok=True)
+        wav = synthesize_kokoro(text, voice, output_audio_path.with_suffix(".wav"))
+        words = FasterWhisperTranscriber().align_words(wav)
+        output_words_path.write_text(json.dumps(words, indent=2), encoding="utf-8")
+        total_dur = words[-1]["end"] if words else 40.0
+        logger.info("TTS engine used: kokoro")
+        return wav, words, total_dur
+    except Exception as err:
+        logger.info("Kokoro fallback failed (%s); using offline fallback.", err)
+        return None
+
+
 def synthesize_neural_tts(
     text: str,
     voice: str,
@@ -603,7 +630,7 @@ def synthesize_neural_tts(
         if loop and loop.is_running():
             # Run in a dedicated thread to avoid blocking running event loop
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(
+                result = pool.submit(
                     lambda: asyncio.run(
                         _async_synthesize_edge_tts(
                             text, voice, output_audio_path, output_words_path
@@ -611,13 +638,17 @@ def synthesize_neural_tts(
                     )
                 ).result(timeout=45.0)
         else:
-            return asyncio.run(
+            result = asyncio.run(
                 _async_synthesize_edge_tts(text, voice, output_audio_path, output_words_path)
             )
+        logger.info("TTS engine used: edge-tts")
+        return result
     except Exception as tts_err:
-        logger.info(
-            "edge-tts live synthesis unavailable (%s); using offline audio fallback.", tts_err
-        )
+        logger.info("edge-tts live synthesis unavailable (%s); trying Kokoro.", tts_err)
+        kokoro_result = _try_kokoro_tts(text, voice, output_audio_path, output_words_path)
+        if kokoro_result is not None:
+            return kokoro_result
+        logger.info("TTS engine used: offline fallback")
         return _fallback_synthesize_audio(text, output_audio_path, output_words_path)
 
 

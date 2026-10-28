@@ -147,6 +147,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout", type=int, default=300, help="Login timeout in seconds (default 300)"
     )
 
+    # 7. longform command
+    longform_parser = subparsers.add_parser(
+        "longform", help="Render a long-form stick-figure video (1-4 minutes)"
+    )
+    longform_parser.add_argument(
+        "--topic",
+        required=True,
+        choices=["discipline", "money", "testosterone", "science", "self_improvement"],
+        help="Topic for the long-form video",
+    )
+    longform_parser.add_argument(
+        "--minutes", type=float, default=2.5, help="Target length in minutes (default 2.5)"
+    )
+    longform_parser.add_argument(
+        "--provider",
+        choices=["api", "local"],
+        default="api",
+        help="Script and voice provider (default api)",
+    )
+
     return parser
 
 
@@ -355,6 +375,24 @@ def cmd_edge_login(args: argparse.Namespace, config: Settings, state_manager: St
     return 1
 
 
+def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
+    """Render a long-form stick-figure video and print the result paths."""
+    # Imported here so the rest of the CLI still loads when Pillow is missing.
+    from autoshorts.longform.render import render_longform
+
+    try:
+        result = render_longform(args.topic, args.minutes, args.provider, config)
+    except (ValueError, RuntimeError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    print(f"Title: {result.title}")
+    print(f"Video: {result.video_path}")
+    print(f"Thumbnail: {result.thumbnail_path}")
+    print(f"Duration: {result.duration:.1f}s")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Master CLI entry point."""
     parser = build_parser()
@@ -387,6 +425,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_clean(args, config, state_manager)
     elif args.command == "edge-login":
         return cmd_edge_login(args, config, state_manager)
+    elif args.command == "longform":
+        return cmd_longform(args, config, state_manager)
 
     parser.print_help()
     return 0

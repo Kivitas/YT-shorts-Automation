@@ -228,6 +228,7 @@ def clamp_edl(edl: EditDecisionList, clip_duration: float) -> EditDecisionList:
         recommended_title=title,
         recommended_hook=hook,
         background_style_recommendation=bg_style,
+        edit_format=edl.edit_format,
         # Clamping must never launder the plan's provenance.
         source=edl.source,
         fallback_reason=edl.fallback_reason,

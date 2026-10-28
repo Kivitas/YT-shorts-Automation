@@ -496,6 +496,19 @@ class JobSubmitRequest(BaseModel):
 SubmitJobsRequest = JobSubmitRequest
 
 
+class StoryJobRequest(BaseModel):
+    mood: str | None = Field(default=None)
+    topic: str | None = Field(default=None)
+    provider: str | None = Field(default=None)
+
+
+class LongformRequest(BaseModel):
+    topic: str
+    minutes: float = 2.5
+    provider: str = "api"
+    publish: bool = False
+
+
 class LinkPreviewRequest(BaseModel):
     links_text: str = Field(..., description="Raw text containing one or more video URLs")
 
@@ -907,6 +920,136 @@ def create_app(
             "success": True,
             "count": len(jobs),
             "jobs": [j.model_dump() for j in jobs],
+        }
+
+    @app.post("/api/stories")
+    def create_story(req: StoryJobRequest) -> dict[str, Any]:
+        """Create a story short job (runs in a worker thread: plain def)."""
+        from autoshorts.research_agent.story_shorts import create_story_job
+
+        try:
+            job = create_story_job(
+                mood=req.mood,
+                topic=req.topic,
+                provider=req.provider,
+                pipe=pipe,
+                state_mgr=state_mgr,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+        tags = list(getattr(job, "custom_tags", None) or [])
+        mood = req.mood or next((t.split(":", 1)[1] for t in tags if t.startswith("mood:")), None)
+        provider = req.provider or next(
+            (t.split(":", 1)[1] for t in tags if t.startswith("provider:")), None
+        )
+        return {
+            "success": True,
+            "job_id": job.id,
+            "status": job.status.value,
+            "title": job.video_metadata.title if job.video_metadata else None,
+            "mood": mood,
+            "provider": provider,
+        }
+
+    @app.post("/api/longform")
+    def create_longform(req: LongformRequest) -> dict[str, Any]:
+        """Render a long-form stick-figure video (runs in a worker thread: plain def)."""
+        from autoshorts.longform.render import render_longform
+
+        try:
+            result = render_longform(req.topic, req.minutes, req.provider, cfg)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+        youtube_url = None
+        if req.publish:
+            from autoshorts.longform.publish import publish_longform
+
+            try:
+                youtube_url = publish_longform(result, config=cfg, state_manager=state_mgr)
+            except RuntimeError as e:
+                raise HTTPException(status_code=429, detail=str(e)) from e
+
+        return {
+            "success": True,
+            "title": result.title,
+            "video_path": str(result.video_path),
+            "thumbnail_path": str(result.thumbnail_path),
+            "duration": result.duration,
+            "hashtags": list(result.hashtags),
+            "description": result.description,
+            "youtube_url": youtube_url,
+        }
+
+    @app.get("/api/longform/quota")
+    def longform_quota() -> dict[str, Any]:
+        """Long-form uploads used and left today (cap 4 per Pacific-Time day)."""
+        from autoshorts.longform.publish import (
+            LONGFORM_DAILY_CAP,
+            longform_remaining_today,
+            longform_uploads_today,
+        )
+
+        return {
+            "cap": LONGFORM_DAILY_CAP,
+            "used_today": longform_uploads_today(),
+            "remaining_today": longform_remaining_today(),
+        }
+
+    @app.get("/api/longform")
+    def list_longform() -> dict[str, Any]:
+        """List rendered long-form MP4 files, newest first."""
+        from autoshorts.core.paths import get_output_dir
+
+        folder = get_output_dir() / "longform"
+        if not folder.is_dir():
+            return {"files": []}
+
+        entries = []
+        for path in folder.glob("*.mp4"):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            entries.append((stat.st_mtime, path.name, stat.st_size))
+        entries.sort(key=lambda item: item[0], reverse=True)
+
+        files = [
+            {
+                "name": name,
+                "size_bytes": size,
+                "modified": datetime.fromtimestamp(mtime, tz=UTC).isoformat(),
+            }
+            for mtime, name, size in entries[:50]
+        ]
+        return {"files": files}
+
+    @app.get("/api/jobs/{job_id}/format")
+    async def get_job_format(job_id: str) -> dict[str, Any]:
+        """Return the watching/ranking format decision recorded for a job."""
+        job = state_mgr.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        fmt = (job.diagnostics or {}).get("format")
+        if not isinstance(fmt, dict) or not fmt:
+            return {
+                "job_id": job_id,
+                "kind": None,
+                "confidence": None,
+                "rank_count": None,
+                "reasons": [],
+            }
+        return {
+            "job_id": job_id,
+            "kind": fmt.get("kind"),
+            "confidence": fmt.get("confidence"),
+            "rank_count": fmt.get("rank_count"),
+            "reasons": fmt.get("reasons") or [],
         }
 
     @app.post("/api/jobs/process-queue")

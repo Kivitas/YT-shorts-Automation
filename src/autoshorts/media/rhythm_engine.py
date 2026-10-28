@@ -434,6 +434,7 @@ class LayaRhythmEngine:
             recommended_title=edl.recommended_title,
             recommended_hook=edl.recommended_hook,
             background_style_recommendation=edl.background_style_recommendation,
+            edit_format=edl.edit_format,
         )
 
     def _create_synthetic_grid(

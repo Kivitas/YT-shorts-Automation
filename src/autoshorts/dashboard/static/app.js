@@ -1733,9 +1733,50 @@ function closeStageModal(e) {
 // Job Submission & Actions
 // -----------------------------------------------------------------------------
 
+// Split the ingestion textarea into single link units.
+// A line with " : " stays one unit (link + instructions); other lines split on commas/whitespace.
+function splitLinkUnits(text) {
+  const units = [];
+  text.split("\n").map(l => l.trim()).filter(Boolean).forEach(line => {
+    if (line.includes(" : ")) {
+      units.push(line);
+    } else {
+      line.split(/[\s,]+/).filter(Boolean).forEach(part => units.push(part));
+    }
+  });
+  return units;
+}
+
+// De-duplication key: YouTube video id when present, otherwise the raw unit string.
+function linkUnitKey(unit) {
+  const urlPart = unit.split(" : ")[0].trim();
+  const match = urlPart.match(/(?:v=|youtu\.be\/|shorts\/)([A-Za-z0-9_-]{11})/);
+  return match ? `yt:${match[1]}` : `raw:${unit}`;
+}
+
+function renderLinkResult(container, unit, accepted, text) {
+  const row = document.createElement("div");
+  const linkSpan = document.createElement("span");
+  linkSpan.textContent = unit;
+  const statusSpan = document.createElement("span");
+  statusSpan.style.color = accepted ? "#3fb950" : "#f85149";
+  statusSpan.textContent = `  ${accepted ? "accepted" : "refused"}: ${text}`;
+  row.appendChild(linkSpan);
+  row.appendChild(statusSpan);
+  container.appendChild(row);
+}
+
 async function submitJobs() {
-  const links = document.getElementById("links-input").value.trim();
-  if (!links) {
+  const units = [];
+  const seenKeys = new Set();
+  splitLinkUnits(document.getElementById("links-input").value).forEach(unit => {
+    const key = linkUnitKey(unit);
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      units.push(unit);
+    }
+  });
+  if (units.length === 0) {
     alert("Please enter at least one YouTube URL.");
     return;
   }
@@ -1793,7 +1834,7 @@ async function submitJobs() {
     : true;
 
   const payload = {
-    links: links,
+    links: "", // set per unit below
     provider: document.getElementById("provider-select").value,
     background: bgVal,
     dopamine: document.getElementById("dopamine-select").value,
@@ -1814,37 +1855,75 @@ async function submitJobs() {
   };
 
   const btn = document.getElementById("submit-btn");
+  const resultsBox = document.getElementById("links-results");
   btn.disabled = true;
   btn.textContent = "Submitting...";
+  if (resultsBox) {
+    resultsBox.innerHTML = "";
+    resultsBox.style.display = "block";
+  }
+
+  let acceptedCount = 0;
+  let refusedCount = 0;
 
   try {
-    let res = await fetch("/api/jobs/submit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.status === 404) {
-      res = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+    // One request per link unit, sent sequentially.
+    for (const unit of units) {
+      const body = JSON.stringify(Object.assign({}, payload, { links: unit }));
+      let accepted = false;
+      let text = "link failed validation";
+      try {
+        let res = await fetch("/api/jobs/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: body,
+        });
+        if (res.status === 404) {
+          res = await fetch("/api/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: body,
+          });
+        }
+        let data = {};
+        try { data = await res.json(); } catch (e) { data = {}; }
+
+        const okFlag = data.ok !== undefined ? data.ok : data.success;
+        const count = Number(data.count) || 0;
+        if (res.ok && okFlag && count >= 1) {
+          accepted = true;
+          const firstJob = Array.isArray(data.jobs) && data.jobs.length ? data.jobs[0] : null;
+          text = (firstJob && firstJob.id) ? firstJob.id : "queued";
+        } else {
+          const detail = data.detail;
+          if (typeof detail === "string" && detail) {
+            text = detail;
+          } else if (detail && typeof detail === "object") {
+            text = JSON.stringify(detail);
+          }
+        }
+      } catch (err) {
+        text = "network error: " + err;
+      }
+
+      if (accepted) acceptedCount++;
+      else refusedCount++;
+      if (resultsBox) {
+        renderLinkResult(resultsBox, unit, accepted, text);
+      }
     }
 
-    if (!res.ok) {
-      const err = await res.json();
-      alert("Submission error: " + (err.detail || "Unknown error"));
-      return;
+    // Clear the input only when every link was accepted, so refused lines can be fixed.
+    if (acceptedCount > 0 && refusedCount === 0) {
+      document.getElementById("links-input").value = "";
+      const previewContainer = document.getElementById("links-preview-container");
+      if (previewContainer) previewContainer.style.display = "none";
     }
 
-    document.getElementById("links-input").value = "";
-    const previewContainer = document.getElementById("links-preview-container");
-    if (previewContainer) previewContainer.style.display = "none";
-
-    refreshJobs();
-    showToast("Submitted jobs to pipeline!");
-  } catch (err) {
-    alert("Network error submitting jobs: " + err);
+    if (acceptedCount > 0) {
+      refreshJobs();
+      showToast("Submitted jobs to pipeline!");
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = "⚡ Start Pipeline";
@@ -1852,6 +1931,104 @@ async function submitJobs() {
 }
 
 const submitJobsForm = submitJobs;
+
+async function generateStoryDraft() {
+  const moodVal = document.getElementById("story-mood-select").value;
+  const topicVal = document.getElementById("story-topic-input").value.trim();
+  const provider = document.getElementById("story-provider-select").value;
+  const statusEl = document.getElementById("story-status");
+  const btn = document.getElementById("story-generate-btn");
+
+  const payload = {
+    mood: moodVal === "random" ? null : moodVal,
+    topic: topicVal || null,
+    provider: provider,
+  };
+
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = "Generating story draft...";
+
+  try {
+    const res = await fetch("/api/stories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+
+    if (res.ok && data.job_id) {
+      if (statusEl) statusEl.textContent = `draft job ${data.job_id}: ${data.title || "(untitled)"}`;
+      refreshJobs();
+      showToast("Story draft created!", "success");
+    } else {
+      const detail = typeof data.detail === "string" ? data.detail : (data.detail ? JSON.stringify(data.detail) : "Story draft failed");
+      if (statusEl) statusEl.textContent = detail;
+      refreshJobs();
+    }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "Network error: " + err;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function refreshLongformQuota() {
+  const el = document.getElementById("longform-quota");
+  if (!el) return;
+  try {
+    const res = await fetch("/api/longform/quota");
+    if (!res.ok) return;
+    const q = await res.json();
+    el.textContent = `${q.remaining_today} of ${q.cap} long-form uploads left today`;
+  } catch (e) {
+    // Quota text is informational only.
+  }
+}
+
+async function generateLongform() {
+  const topic = document.getElementById("longform-topic-select").value;
+  const minutes = parseFloat(document.getElementById("longform-minutes-input").value);
+  const provider = document.getElementById("longform-provider-select").value;
+  const statusEl = document.getElementById("longform-status");
+  const btn = document.getElementById("longform-generate-btn");
+
+  const publishToggle = document.getElementById("longform-publish-toggle");
+  const payload = {
+    topic: topic,
+    minutes: Number.isFinite(minutes) ? minutes : 2.5,
+    provider: provider,
+    publish: publishToggle ? publishToggle.checked : false,
+  };
+
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = "Rendering long-form video... this can take several minutes.";
+
+  try {
+    const res = await fetch("/api/longform", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+
+    if (res.ok && data.success) {
+      const duration = Number(data.duration || 0).toFixed(1);
+      const link = data.youtube_url ? ` | uploaded: ${data.youtube_url}` : "";
+      if (statusEl) statusEl.textContent = `video ready: ${data.title || "(untitled)"} (${duration}s)${link}`;
+      showToast("Long-form video ready!", "success");
+      refreshLongformQuota();
+    } else {
+      const detail = typeof data.detail === "string" ? data.detail : (data.detail ? JSON.stringify(data.detail) : "Long-form render failed");
+      if (statusEl) statusEl.textContent = detail;
+    }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "Network error: " + err;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 async function importSpark() {
   const text = document.getElementById("spark-input").value.trim();
@@ -4850,3 +5027,5 @@ async function cloneStyle(jobId, layout, caption, bg) {
   showToast(`🎯 Cloned style (${layout} + ${caption}) to Studio!`, "success");
   switchMainView("view-studio");
 }
+
+document.addEventListener("DOMContentLoaded", refreshLongformQuota);

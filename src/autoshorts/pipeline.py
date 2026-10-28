@@ -62,6 +62,7 @@ from autoshorts.decision.window_slicer import slice_transcript_windows
 generate_candidate_windows = getattr(
     _window_slicer, "generate_candidate_windows", slice_transcript_windows
 )
+from autoshorts.decider.format_classifier import classify_format
 from autoshorts.discovery.url_validator import ParsedLink, parse_links_input
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
@@ -77,6 +78,11 @@ from autoshorts.media.dopamine_effects import pick_background_asset
 from autoshorts.media.downloader import Downloader as MediaDownloader
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.media.ffmpeg_tools import check_delivery
+from autoshorts.media.ranking_overlay import (
+    build_ranking_ass,
+    merge_ass_documents,
+    ranking_timeline,
+)
 from autoshorts.media.remotion_overlay import (
     REMOTION_PROJECT_DIR,
     RemotionRenderError,
@@ -1105,6 +1111,24 @@ class ShortsPipeline:
             )
             job.edl = edl
 
+            # Route the edit: countdown clips get the ranking edit (no gameplay panel).
+            try:
+                fmt = classify_format(
+                    sel.candidate.text,
+                    float(edl.hook_out_sec - edl.hook_in_sec),
+                    getattr(sel.candidate, "words", None),
+                )
+                edl.edit_format = "ranking" if fmt.kind == "ranking" else "standard"
+                job.record_diagnostic(
+                    "format",
+                    kind=fmt.kind,
+                    confidence=fmt.confidence,
+                    rank_count=fmt.rank_count,
+                    reasons=fmt.reasons,
+                )
+            except Exception as fmt_err:  # pragma: no cover - never block editing
+                logger.debug("Format classification skipped: %s", fmt_err)
+
             # Attach recommended titles/hooks from EDL if provided
             if edl.recommended_title:
                 sel.title = edl.recommended_title
@@ -1472,6 +1496,32 @@ class ShortsPipeline:
         )
         return captioned
 
+    def _prepare_ranking_overlay(self, job: Job) -> Path | None:
+        """Return a subtitles file with rank cards for a ranking clip, or None for watching clips."""
+        edl = job.edl
+        if edl is None or getattr(edl, "edit_format", "standard") != "ranking":
+            return None
+        if not job.subtitles_path:
+            return None
+
+        fmt = job.diagnostics.get("format") if isinstance(job.diagnostics, dict) else None
+        rank_count = fmt.get("rank_count") if isinstance(fmt, dict) else None
+        rank_count = int(rank_count) if rank_count else 5
+        duration = float(edl.hook_out_sec - edl.hook_in_sec)
+        if duration <= 0 and job.video_metadata:
+            duration = float(job.video_metadata.duration)
+        if duration <= 0:
+            return None
+
+        base = Path(job.subtitles_path).read_text(encoding="utf-8")
+        overlay = build_ranking_ass(ranking_timeline(rank_count, duration))
+        work_dir = get_work_dir() / job.id
+        work_dir.mkdir(parents=True, exist_ok=True)
+        merged_path = work_dir / f"{job.id}_ranking.ass"
+        merged_path.write_text(merge_ass_documents(base, overlay), encoding="utf-8")
+        logger.info("Job %s: ranking edit with %d rank cards", job.id, rank_count)
+        return merged_path
+
     def _run_compositing_stage(
         self,
         job: Job,
@@ -1545,6 +1595,12 @@ class ShortsPipeline:
                 "output_path": master_path,
                 "dopamine_level": dopamine,
             }
+            ranking_subs = self._prepare_ranking_overlay(job)
+            if ranking_subs is not None:
+                # Ranking edit: no gameplay panel, captions plus the rank-card overlay.
+                comp_kwargs["background_path"] = None
+                comp_kwargs["subtitles_path"] = ranking_subs
+                layout_mode = "full_center_crop"
             extra_comp: dict[str, Any] = {
                 "layout_mode": layout_mode,
                 "color_grading": color_grading,

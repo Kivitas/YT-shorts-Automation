@@ -27,6 +27,35 @@ logger = logging.getLogger(__name__)
 # Explicit bound for navigation and file-attach waits so a stalled Studio page cannot hang the pipeline.
 _NAV_TIMEOUT_MS = 60_000
 
+_MAX_UPLOAD_ATTEMPTS = 2  # one retry, on Playwright TimeoutError only
+_IDLE_FALLBACK_SLEEP_S = 0.3
+
+
+def wait_for_idle(page: Any, ms: int = 800) -> None:
+    """Wait for the page to settle: networkidle bounded by ``ms``, else a short sleep.
+
+    Studio keeps background connections open, so networkidle often times out; that is
+    expected and not an error. All settle-timing in the upload flow lives here.
+    """
+    try:
+        page.wait_for_load_state("networkidle", timeout=ms)
+    except Exception:
+        time.sleep(_IDLE_FALLBACK_SLEEP_S)
+
+
+def _playwright_timeout_types() -> tuple[type[BaseException], ...]:
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        return (PlaywrightTimeoutError,)
+    except ImportError:
+        return ()
+
+
+class StudioStepError(UploadError, RuntimeError):
+    """Upload failed at a named Studio step (file select, details, visibility, publish)."""
+
+
 _LOGIN_STATE_LOCK = threading.Lock()
 LOGIN_SESSION_STATE: dict[str, Any] = {
     "status": "idle",
@@ -539,7 +568,53 @@ class PlaywrightStudioUploader:
             effective_privacy,
         )
 
+        timeout_types = _playwright_timeout_types()
+        for attempt in range(1, _MAX_UPLOAD_ATTEMPTS + 1):
+            logger.info("Studio upload attempt %d/%d", attempt, _MAX_UPLOAD_ATTEMPTS)
+            try:
+                return self._upload_attempt(
+                    target_path,
+                    title,
+                    description,
+                    effective_privacy,
+                    effective_tags,
+                    altered_content,
+                    related_video_url,
+                    publish_at,
+                )
+            except UploadError:
+                raise
+            except Exception as e:
+                step = getattr(e, "studio_step", "file select")
+                if (
+                    timeout_types
+                    and isinstance(e, timeout_types)
+                    and attempt < _MAX_UPLOAD_ATTEMPTS
+                ):
+                    logger.warning(
+                        "Studio upload timed out at step '%s' (attempt %d); retrying once: %s",
+                        step,
+                        attempt,
+                        e,
+                    )
+                    continue
+                raise StudioStepError(f"YouTube Studio upload failed at step '{step}': {e}") from e
+        raise UploadError("YouTube Studio upload failed: no attempt completed")  # pragma: no cover
+
+    def _upload_attempt(
+        self,
+        target_path: Path,
+        title: str,
+        description: str,
+        effective_privacy: str,
+        effective_tags: list[str],
+        altered_content: bool,
+        related_video_url: str | None,
+        publish_at: str | None,
+    ) -> UploadResult:
+        """Run one upload attempt; the browser context is closed on exit (success or failure)."""
         with self._launch_browser_session(headless=self.headless) as (_context, page):
+            step = "file select"
             try:
                 page.goto(
                     "https://studio.youtube.com",
@@ -575,6 +650,7 @@ class PlaywrightStudioUploader:
                 # Attach the file programmatically (no native OS file dialog), bounded wait.
                 file_input.set_input_files(str(target_path.resolve()), timeout=_NAV_TIMEOUT_MS)
 
+                step = "details"
                 # Ensure #Shorts is in title
                 shorts_title = (
                     title if ("#Shorts" in title or "#shorts" in title) else f"{title} #Shorts"
@@ -611,10 +687,7 @@ class PlaywrightStudioUploader:
                     ).first
                     if hasattr(toggle_btn, "is_visible") and toggle_btn.is_visible(timeout=2500):
                         toggle_btn.click()
-                        if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
-                            page.wait_for_timeout(400)
-                        else:
-                            time.sleep(0.4)
+                        wait_for_idle(page, 400)
 
                     if altered_content:
                         alt_radio = page.locator(
@@ -642,10 +715,7 @@ class PlaywrightStudioUploader:
                 next_btn = page.locator("#next-button").first
                 if next_btn.is_visible(timeout=8000):
                     next_btn.click()
-                    if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
-                        page.wait_for_timeout(800)
-                    else:
-                        time.sleep(0.8)
+                    wait_for_idle(page, 800)
 
                 # Related Video Link in Video elements step
                 if related_video_url:
@@ -681,11 +751,9 @@ class PlaywrightStudioUploader:
                 for _ in range(2):
                     if next_btn.is_visible(timeout=8000):
                         next_btn.click()
-                        if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
-                            page.wait_for_timeout(800)
-                        else:
-                            time.sleep(0.8)
+                        wait_for_idle(page, 800)
 
+                step = "visibility"
                 # Visibility selection or scheduled publishing
                 is_scheduled = False
                 if publish_at:
@@ -778,6 +846,7 @@ class PlaywrightStudioUploader:
                     else:
                         video_id = f"studio_{uuid4().hex[:11]}"
 
+                step = "publish"
                 # Complete upload wizard (clicks #done-button, which is labeled "Publish" when Public is selected)
                 done_btn = page.locator("#done-button, #save-button").first
                 try:
@@ -795,10 +864,7 @@ class PlaywrightStudioUploader:
                         done_btn.click()
                     else:
                         done_btn.click()
-                    if hasattr(page, "wait_for_timeout") and callable(page.wait_for_timeout):
-                        page.wait_for_timeout(1500)
-                    else:
-                        time.sleep(1.5)
+                    wait_for_idle(page, 1500)
                 except Exception as ex:
                     logger.warning("Error clicking done/publish button: %s", ex)
 
@@ -836,7 +902,11 @@ class PlaywrightStudioUploader:
                     },
                 )
 
-            except Exception:
+            except Exception as attempt_err:
+                try:
+                    attempt_err.studio_step = step  # type: ignore[attr-defined]
+                except Exception:
+                    pass
                 try:
                     log_dir = get_data_dir() / "logs"
                     log_dir.mkdir(parents=True, exist_ok=True)

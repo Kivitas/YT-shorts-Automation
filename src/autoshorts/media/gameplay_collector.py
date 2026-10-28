@@ -710,9 +710,10 @@ def collect_category_gameplay(
         dry_run,
     )
 
+    # Ask for a few extra results so failed downloads can be replaced.
     candidates = search_category_videos(
         query=search_query,
-        max_results=max_videos,
+        max_results=max_videos + 3,
         yt_dlp_binary=yt_dlp_binary,
         timeout_sec=45.0,
     )
@@ -755,7 +756,10 @@ def collect_category_gameplay(
     videos_processed = 0
     new_clips: list[dict[str, Any]] = []
 
-    for cand in candidates[:max_videos]:
+    for cand in candidates:
+        # Failed downloads do not count, so keep going until max_videos are collected.
+        if videos_processed >= max_videos:
+            break
         vid_id = cand["id"]
         first_segment = category_dir / f"{vid_id}_01.mp4"
 
@@ -786,14 +790,20 @@ def collect_category_gameplay(
         # Download source video to cache
         source_dest = cache_dir / f"{vid_id}_source.mp4"
         max_source_dur = float(max_segments_per_video * segment_duration_sec + 30.0)
-        dl_path = download_source_video(
-            url_or_id=cand["url"],
-            output_path=source_dest,
-            max_duration_sec=max_source_dur,
-            yt_dlp_binary=yt_dlp_binary,
-            ffmpeg_binary=ffmpeg_binary,
-            timeout_sec=timeout_sec,
-        )
+        dl_path = None
+        # One retry: a slow connection often times out once and then succeeds.
+        for attempt in range(2):
+            dl_path = download_source_video(
+                url_or_id=cand["url"],
+                output_path=source_dest,
+                max_duration_sec=max_source_dur,
+                yt_dlp_binary=yt_dlp_binary,
+                ffmpeg_binary=ffmpeg_binary,
+                timeout_sec=timeout_sec,
+            )
+            if dl_path and dl_path.is_file():
+                break
+            logger.info("Download attempt %d failed for %s", attempt + 1, vid_id)
 
         if not dl_path or not dl_path.is_file():
             logger.warning("Failed to download source video %s, skipping", vid_id)
