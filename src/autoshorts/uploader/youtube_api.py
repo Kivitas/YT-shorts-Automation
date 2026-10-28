@@ -512,6 +512,7 @@ class YouTubeApiUploader:
         video_path: Path | None = None,
         privacy_status: str | None = None,
         custom_tags: Sequence[str] | None = None,
+        is_short: bool = True,
         **kwargs: Any,
     ) -> UploadResult:
         """Upload a video MP4 using chunked resumable insert with advanced metadata & scheduling."""
@@ -527,7 +528,7 @@ class YouTubeApiUploader:
             )
 
         # Title: <=100 chars, no < or >, single trailing #Shorts, never empty
-        final_title = build_upload_title(title)
+        final_title = build_upload_title(title) if is_short else title.strip()
 
         service = self.get_service()
         _, _, _, _, _, MediaFileUpload = _get_google_libraries()
@@ -699,7 +700,11 @@ class YouTubeApiUploader:
 
         result = UploadResult(
             video_id=video_id,
-            url=f"https://youtube.com/shorts/{video_id}",
+            url=(
+                f"https://youtube.com/shorts/{video_id}"
+                if is_short
+                else f"https://youtube.com/watch?v={video_id}"
+            ),
             status="uploaded",
             verified=False,
             uploaded_at=datetime.now(UTC),

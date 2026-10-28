@@ -57,7 +57,7 @@ def _curated_script(spec: TopicSpec, provider: str) -> LongformScript:
         sections[0] = Section(sections[0].heading, f"{spec.curated_hook} {sections[0].narration}")
     return LongformScript(
         topic=spec.key,
-        title=title_for(spec.key, ""),
+        title=title_for(spec.key, CURATED_TITLE_SUBJECTS.get(spec.key, "")),
         hook=spec.curated_hook,
         sections=sections,
         provider=provider,
@@ -131,6 +131,16 @@ def _validate_llm(data: Any, spec: TopicSpec, minutes: float, provider: str) -> 
         provider=provider,
         hashtags=hashtags_for(spec.key),
     )
+
+
+# Short subject phrases for curated titles, so titles read like searchable video titles.
+CURATED_TITLE_SUBJECTS = {
+    "discipline": "build it in 5 daily steps",
+    "money": "a simple plan that works",
+    "testosterone": "what actually matters",
+    "science": "what it does to your mind",
+    "self_improvement": "the 5 steps that work",
+}
 
 
 def build_script(

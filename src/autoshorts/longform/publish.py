@@ -86,6 +86,7 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
             tags=list(result.hashtags),
             privacy_status=cfg.upload.default_privacy_status,
             category_id=cfg.upload.category_id,
+            is_short=False,
         )
         if not getattr(upload_result, "url", None):
             raise RuntimeError("YouTube upload did not return a video URL.")

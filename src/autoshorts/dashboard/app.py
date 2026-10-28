@@ -867,10 +867,15 @@ def create_app(
             if pipe and pipe.config:
                 pipe.config.subtitles.style_preset = req.style_preset
 
-        jobs = pipe.submit_links(
-            links_input=req.links,
-            custom_instructions=req.custom_instructions,
-        )
+        from autoshorts.core.exceptions import InvalidURLError
+
+        try:
+            jobs = pipe.submit_links(
+                links_input=req.links,
+                custom_instructions=req.custom_instructions,
+            )
+        except InvalidURLError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         # Forward any custom customization fields onto each Job
         for job in jobs:

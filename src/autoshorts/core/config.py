@@ -144,7 +144,7 @@ class SchedulerConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
-    daily_upload_cap: int = Field(default=25, ge=1, le=100)
+    daily_upload_cap: int = Field(default=40, ge=1, le=100)
     max_per_rolling_hour: int = Field(default=7, ge=1, le=20)
     min_gap_minutes: int = Field(default=5, ge=1)
     max_gap_minutes: int = Field(default=25, ge=2)

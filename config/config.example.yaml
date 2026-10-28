@@ -39,7 +39,7 @@ edit_planner:
 
 scheduler:
   enabled: true                    # Persistent upload pacing engine
-  daily_upload_cap: 25             # Hard maximum Shorts uploaded per quota day (25 Shorts per day)
+  daily_upload_cap: 40             # Hard maximum Shorts uploaded per quota day (40 Shorts per day)
   max_per_rolling_hour: 7          # Anti-burst ceiling: max 7 uploads in any 60-minute window
   min_gap_minutes: 5               # Minimum uniform random delay between uploads
   max_gap_minutes: 25              # Maximum uniform random delay between uploads
