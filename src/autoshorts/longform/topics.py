@@ -32,7 +32,7 @@ _DISCIPLINE = TopicSpec(
         "Mindset",
         "Self Improvement",
     ),
-    hashtags=("#discipline", "#selfimprovement", "#mindset", "#habits", "#motivation", "#focus"),
+    hashtags=("#discipline", "#selfimprovement", "#mindset", "#habits", "#motivation", "#focus", "#consistency"),
     safety_note=(
         "General self-improvement ideas only. This is not medical or mental health advice."
     ),
@@ -97,7 +97,7 @@ _MONEY = TopicSpec(
         "Personal Finance",
         "Financial Literacy",
     ),
-    hashtags=("#money", "#personalfinance", "#budgeting", "#saving", "#financialliteracy"),
+    hashtags=("#money", "#personalfinance", "#budgeting", "#saving", "#financialliteracy", "#investing", "#moneytips"),
     safety_note=(
         "General financial education only. This is not financial advice, no income or "
         "returns are guaranteed, and no specific investment is recommended. Consider "
@@ -165,7 +165,7 @@ _TESTOSTERONE = TopicSpec(
         "Fitness",
         "Mens Health",
     ),
-    hashtags=("#testosterone", "#health", "#fitness", "#sleep", "#menshealth", "#strength"),
+    hashtags=("#testosterone", "#health", "#fitness", "#sleep", "#menshealth", "#strength", "#gymmotivation"),
     safety_note=(
         "General lifestyle information only. This is not medical advice and no results are "
         "promised. If you are worried about your hormones, ask a doctor about blood tests."
@@ -231,7 +231,7 @@ _SCIENCE = TopicSpec(
         "Neuroscience",
         "Facts",
     ),
-    hashtags=("#science", "#brain", "#dopamine", "#psychology", "#neuroscience", "#facts"),
+    hashtags=("#science", "#brain", "#dopamine", "#psychology", "#neuroscience", "#facts", "#didyouknow"),
     safety_note=(
         "Simplified science for general interest. This is not medical advice and ideas are "
         "simplified."

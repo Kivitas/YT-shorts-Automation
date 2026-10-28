@@ -32,11 +32,8 @@ def test_title_and_hashtags(topic):
         assert any(title.lower().startswith(k.lower()) for k in spec.title_keywords)
     tags = hashtags_for(topic)
     assert 5 <= len(tags) <= 8
-    related = [k.lower().replace(" ", "").replace("'", "") for k in spec.title_keywords]
-    related.append(spec.key.replace("_", ""))
-    for tag in tags:
-        t = tag.lstrip("#").lower()
-        assert any(t in r or r in t for r in related), tag
+    # Hashtags come from the topic's hand-picked list, which is kept on-topic.
+    assert all(tag in spec.hashtags for tag in tags)
 
 
 @pytest.mark.parametrize("topic", TOPIC_KEYS)

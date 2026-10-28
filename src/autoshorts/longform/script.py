@@ -47,7 +47,8 @@ def description_for(script: LongformScript) -> str:
     lines = [script.hook.strip(), ""]
     for i, s in enumerate(script.sections, 1):
         lines.append(f"{i}. {s.heading}")
-    lines += ["", spec.safety_note, "", " ".join(script.hashtags or hashtags_for(script.topic))]
+    tags = ["#shorts", *(script.hashtags or hashtags_for(script.topic))[:7]]
+    lines += ["", spec.safety_note, "", " ".join(tags)]
     return "\n".join(lines).strip()
 
 
