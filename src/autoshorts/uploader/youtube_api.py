@@ -236,7 +236,9 @@ class YouTubeApiUploader:
         creds = None
         if self.token_path.is_file():
             try:
-                creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+                # Use the scopes the token was granted: refreshing with more scopes than were
+                # granted fails with invalid_scope.
+                creds = Credentials.from_authorized_user_file(str(self.token_path))
             except Exception as e:
                 logger.warning(f"Failed to read existing token file: {e}")
 

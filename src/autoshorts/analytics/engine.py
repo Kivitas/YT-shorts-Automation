@@ -98,7 +98,7 @@ class AnalyticsEngine:
             from google.auth.transport.requests import Request
             from google.oauth2.credentials import Credentials
 
-            creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+            creds = Credentials.from_authorized_user_file(str(self.token_path))
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
