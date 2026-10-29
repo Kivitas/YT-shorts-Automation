@@ -478,6 +478,8 @@ async def _async_synthesize_edge_tts(
     voice: str,
     output_audio_path: Path,
     output_words_path: Path,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Asynchronously synthesize neural voiceover using edge_tts Communicate."""
     import edge_tts
@@ -485,7 +487,7 @@ async def _async_synthesize_edge_tts(
     output_audio_path.parent.mkdir(parents=True, exist_ok=True)
     output_words_path.parent.mkdir(parents=True, exist_ok=True)
 
-    communicate = edge_tts.Communicate(text=text, voice=voice)
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch)
     words: list[dict[str, Any]] = []
     audio_buf = bytearray()
 
@@ -619,6 +621,8 @@ def synthesize_neural_tts(
     voice: str,
     output_audio_path: Path,
     output_words_path: Path,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Synthesize studio-quality voiceover via Microsoft Edge TTS with aligned words.
 
@@ -630,7 +634,9 @@ def synthesize_neural_tts(
         # wait_for cancels the stream when it hangs, so no late write can race the fallback.
         return asyncio.run(
             asyncio.wait_for(
-                _async_synthesize_edge_tts(text, voice, output_audio_path, output_words_path),
+                _async_synthesize_edge_tts(
+                    text, voice, output_audio_path, output_words_path, rate=rate, pitch=pitch
+                ),
                 timeout=_TTS_TIMEOUT_SEC,
             )
         )

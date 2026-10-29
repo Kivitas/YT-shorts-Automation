@@ -1,4 +1,4 @@
-"""Render a long-form stick-figure video: script -> TTS -> frames -> ffmpeg mp4."""
+"""Render a long-form cartoon video: script -> TTS -> frames -> ffmpeg mp4."""
 
 from __future__ import annotations
 
@@ -8,11 +8,16 @@ from pathlib import Path
 from uuid import uuid4
 
 from autoshorts.core.paths import get_output_dir, get_work_dir
-from autoshorts.longform.drawer import FPS, HEIGHT, WIDTH, render_scene_frames
+from autoshorts.longform.drawer import FPS, HEIGHT, WIDTH, render_scene_frames, scenes_for_topic
 from autoshorts.longform.script import build_script, description_for
 from autoshorts.longform.thumbnail import make_thumbnail
 from autoshorts.longform.tts import synthesize_sections
-from autoshorts.longform.types import MAX_VIDEO_SECONDS, LongformResult, SectionAudio
+from autoshorts.longform.types import (
+    MAX_VIDEO_SECONDS,
+    LongformResult,
+    LongformScript,
+    SectionAudio,
+)
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
@@ -46,8 +51,10 @@ def _concat_audio(sections: list[SectionAudio], work_dir: Path) -> Path:
     return out
 
 
-def _encode(sections: list[SectionAudio], title: str, audio: Path, out_path: Path) -> None:
-    frames = render_scene_frames(sections, title)
+def _encode(
+    sections: list[SectionAudio], title: str, audio: Path, out_path: Path, scenes: tuple[str, ...]
+) -> None:
+    frames = render_scene_frames(sections, title, scenes=scenes)
     cmd = [
         get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{WIDTH}x{HEIGHT}",
@@ -83,6 +90,15 @@ def render_longform(
     topic: str, minutes: float = 2.5, provider: str = "api", config=None
 ) -> LongformResult:
     script = build_script(topic, minutes, provider, config)
+    return render_script(script, config=config)
+
+
+def render_script(
+    script: LongformScript, config=None, extra_description: str = ""
+) -> LongformResult:
+    """Render an already written script: narration, stick-figure video, thumbnail."""
+    topic = script.topic
+    provider = script.provider
     job_id = f"longform_{uuid4().hex[:10]}"
     work_dir = get_work_dir() / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -100,8 +116,12 @@ def render_longform(
     thumb_path = make_thumbnail(script.title, out_dir / f"{job_id}_thumb.png")
 
     audio = _concat_audio(sections, work_dir)
-    _encode(sections, script.title, audio, video_path)
+    _encode(sections, script.title, audio, video_path, scenes_for_topic(topic))
     logger.info("Rendered long-form video %s (%.1fs)", video_path, duration)
+
+    description = description_for(script)
+    if extra_description:
+        description = description + "\n\n" + extra_description
 
     return LongformResult(
         topic=topic,
@@ -109,7 +129,7 @@ def render_longform(
         video_path=video_path,
         thumbnail_path=thumb_path,
         duration=duration,
-        description=description_for(script),
+        description=description,
         hashtags=list(script.hashtags),
         provider=provider,
     )

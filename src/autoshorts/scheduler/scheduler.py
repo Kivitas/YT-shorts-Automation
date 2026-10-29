@@ -619,6 +619,16 @@ class SpreadScheduler:
             logger.info(f"Successfully uploaded and verified job {job_id} as {result.video_id}.")
             return result
         except Exception as e:
+            if isinstance(e, (QuotaExceededError, QuotaExhaustedError)):
+                # The channel's daily upload limit is not a failure of this video. Keep the slot
+                # queued and leave the job alone; the exhausted bucket stops dispatch until the reset.
+                self.state_manager.update_scheduled_slot_status(job_id, "SCHEDULED")
+                logger.warning(
+                    "Upload limit reached for job %s; slot kept queued until the quota resets: %s",
+                    job_id,
+                    e,
+                )
+                raise
             self.state_manager.update_scheduled_slot_status(job_id, "FAILED")
             job = self.state_manager.get_job(job_id)
             if job:

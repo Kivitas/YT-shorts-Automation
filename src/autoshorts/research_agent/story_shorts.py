@@ -32,7 +32,7 @@ from autoshorts.research_agent.moneyprinter import synthesize_neural_tts
 
 logger = logging.getLogger("autoshorts.research_agent.story_shorts")
 
-STORY_MOODS = ("sad", "funny", "angry")
+STORY_MOODS = ("sad", "funny", "angry", "emotional", "advice", "heartbreak")
 STORY_PROVIDERS = ("api", "local")
 FICTION_DISCLAIMER = (
     "Fictional story written for entertainment. Names, places and events are made up."
@@ -42,14 +42,14 @@ BACKGROUND_LINE = "Background: gameplay footage."
 # The compositor caps a render at 60 s, so a longer narration would be cut off.
 MIN_WORDS = 135
 MAX_WORDS = 170
-MIN_DURATION = 45.0
+MIN_DURATION = 30.0
 MAX_DURATION = 60.0
 
-MOOD_VOICES = {
-    "sad": "en-US-ChristopherNeural",
-    "funny": "en-US-GuyNeural",
-    "angry": "en-US-AriaNeural",
-}
+# One bright, fast female voice for every mood: short Shorts need energy to hold attention.
+STORY_VOICE = "en-US-JennyNeural"
+STORY_RATE = "+25%"
+STORY_PITCH = "+6Hz"
+MOOD_VOICES = {mood: STORY_VOICE for mood in ("sad", "funny", "angry", "emotional", "advice", "heartbreak")}
 
 CURATED_STORIES: dict[str, dict[str, str]] = {
     "sad": {
@@ -98,6 +98,46 @@ CURATED_STORIES: dict[str, dict[str, str]] = {
             "towing company's number. Two days later his car was gone. He knocked on my door "
             "asking who called the tow. I told him, the rules did. Nobody parks in my space "
             "anymore, and I still smile every time I pull in."
+        ),
+    },
+    "emotional": {
+        "title": "The Stranger Who Paid for My Groceries Changed My Whole Year",
+        "hook": "A stranger paid for my groceries when I was eleven dollars short, and I still think about her every week.",
+        "narration": (
+            "A stranger paid for my groceries when I was eleven dollars short, and I still think about her every week. "
+            "It was a Tuesday, and I was standing at the register counting coins, face burning. I was too proud to put "
+            "anything back. The woman behind me stepped up and said, Put it on mine. I tried to refuse. She just smiled and "
+            "said, Someday somebody will do this for you, and you will remember to do it for someone else. I never got her "
+            "name. I went home and cried in my car, not because I was sad, but because I felt seen. I started volunteering "
+            "at the food bank on Saturdays. Last week a young man at the same register was short by three dollars. I stepped "
+            "up without thinking and said, Put it on mine. His shoulders dropped, and he thanked me like I had saved his day. "
+            "That is how kindness works. It only travels when someone passes it on."
+        ),
+    },
+    "advice": {
+        "title": "Stop Saying Yes When You Mean No. Here Is What It Costs You",
+        "hook": "If you keep saying yes when you mean no, you are not being nice. You are slowly losing your own life.",
+        "narration": (
+            "If you keep saying yes when you mean no, you are not being nice. You are slowly losing your own life. I learned "
+            "this the hard way. For years I said yes to extra shifts, weekend favors, and friends who always needed a ride. "
+            "Every yes felt like a small win, until I had no time left for my own goals. I was tired, resentful, and quietly "
+            "angry at everyone. Then I tried a new rule. Before I answer, I count to five and ask myself one question. Do I "
+            "want to do this, or do I just want to be liked? If the answer is no, I say, Let me check my schedule and get "
+            "back to you. That small pause saved me. I still help people. I just choose when. Try it this week. Say no once, "
+            "and notice how the world does not end. Your time is not a prize you hand out to whoever asks loudest."
+        ),
+    },
+    "heartbreak": {
+        "title": "He Said He Loved Me on Monday and Blocked Me on Tuesday",
+        "hook": "On Monday he told me he loved me. On Tuesday my texts stopped going through, and I had no idea why.",
+        "narration": (
+            "On Monday he told me he loved me. On Tuesday my texts stopped going through, and I had no idea why. I called "
+            "from three different numbers. Nothing. I went to his apartment and his car was gone. I spent that night "
+            "rereading our messages, looking for the moment I had ruined everything. There was no moment. Two weeks later a "
+            "mutual friend told me the truth. He had been talking to someone else since January. He had only told me he loved "
+            "me because he wanted one more good memory before he ended it. I was furious at first, then just empty. Here is "
+            "what helped. I stopped searching for the reason. A person who cannot tell you the truth is not someone you need "
+            "to understand. He was never the answer. He was just the lesson."
         ),
     },
 }
@@ -254,6 +294,8 @@ def synthesize_story_voice(
             voice=MOOD_VOICES[mood],
             output_audio_path=work_dir / "story_voice.mp3",
             output_words_path=words_path,
+            rate=STORY_RATE,
+            pitch=STORY_PITCH,
         )
     else:
         audio_path = work_dir / "story_voice.wav"
@@ -282,11 +324,15 @@ def create_story_job(
     provider: str | None,
     pipe: Any,
     state_mgr: Any,
+    draft: StoryDraft | None = None,
 ) -> Job:
+    """Build one story Short. Pass ``draft`` to use a written story instead of generating one."""
     mood = normalize_mood(mood)
     provider = normalize_provider(provider)
     config = getattr(pipe, "config", None)
-    draft = generate_story(mood, topic, provider, config)
+    if draft is None:
+        draft = generate_story(mood, topic, provider, config)
+    mood = normalize_mood(draft.mood)
 
     job_id = f"story_{uuid4().hex[:10]}"
     work_dir = get_work_dir() / job_id

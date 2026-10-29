@@ -94,14 +94,14 @@ def test_local_missing_model_falls_back(tmp_path):
 def test_voice_api_duration_check(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_tts(text, voice, output_audio_path, output_words_path):
+    def fake_tts(text, voice, output_audio_path, output_words_path, rate="+0%", pitch="+0Hz"):
         seen["voice"] = voice
-        return output_audio_path, [{"word": "a", "start": 0, "end": 1}], 30.0
+        return output_audio_path, [{"word": "a", "start": 0, "end": 1}], 10.0
 
     monkeypatch.setattr(ss, "synthesize_neural_tts", fake_tts)
     with pytest.raises(ValueError):
         ss.synthesize_story_voice("x", "funny", "api", tmp_path)
-    assert seen["voice"] == "en-US-GuyNeural"
+    assert seen["voice"] == ss.STORY_VOICE
 
 
 def test_create_story_job(monkeypatch, tmp_path):

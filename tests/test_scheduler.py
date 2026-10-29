@@ -597,3 +597,46 @@ def test_enqueue_never_anchors_in_the_past(state_mgr: StateManager):
     sched.enqueue("job_old", vid, "t", "d", target_time=stale)
     new_time = sched.enqueue("job_new", vid, "t", "d")
     assert new_time > now
+
+
+# -----------------------------------------------------------------------------
+# A channel's daily upload limit must hold the slot, not fail the video
+# -----------------------------------------------------------------------------
+
+
+def test_upload_limit_keeps_slot_queued_and_job_not_failed(state_mgr: StateManager):
+    """uploadLimitExceeded is a daily channel limit: the slot stays queued for the next day."""
+    from autoshorts.uploader.errors import QuotaExceededError
+
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(state_mgr, clock=lambda: now)
+
+    class LimitUploader(FakeUploader):
+        def upload(self, *args: Any, **kwargs: Any) -> UploadResult:
+            raise QuotaExceededError("The user has exceeded the number of videos they may upload.")
+
+    scheduler = SpreadScheduler(
+        state_mgr=state_mgr,
+        quota_tracker=tracker,
+        uploader=LimitUploader(),
+        clock=lambda: now,
+    )
+
+    job_id = "job_upload_limit"
+    state_mgr.save_job(Job(id=job_id, source_url="https://youtube.com/watch?v=limit", status=JobStatus.SCHEDULED))
+    scheduler.enqueue(
+        job_id=job_id,
+        video_path="output/master.mp4",
+        title="Limit Title",
+        description="Limit Desc",
+        target_time=now,
+    )
+
+    with pytest.raises(QuotaExceededError):
+        scheduler.upload_now(job_id)
+
+    pending_ids = [slot["job_id"] for slot in state_mgr.get_pending_scheduled_slots()]
+    assert job_id in pending_ids
+    updated_job = state_mgr.get_job(job_id)
+    assert updated_job is not None
+    assert updated_job.status != JobStatus.FAILED
