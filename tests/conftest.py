@@ -36,6 +36,31 @@ def _isolate_repo_asset_and_output_dirs(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 @pytest.fixture(autouse=True)
+def _block_real_google_oauth(monkeypatch: pytest.MonkeyPatch):
+    """Never let a test reach Google or open a browser.
+
+    The dev machine's real GOOGLE_OAUTH_* values can leak in through os.environ, which makes the
+    OAuth settings endpoints start a real consent flow (blocking forever, or opening a browser
+    with a dummy client id and landing on Google's "invalid_client" page).
+    """
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.setattr("webbrowser.open", lambda *a, **k: False)
+    monkeypatch.setattr("webbrowser.open_new", lambda *a, **k: False)
+    monkeypatch.setattr("webbrowser.open_new_tab", lambda *a, **k: False)
+
+    def _blocked(*_a, **_k):
+        raise RuntimeError("Real Google OAuth flows are blocked in tests")
+
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+
+        monkeypatch.setattr(InstalledAppFlow, "run_local_server", _blocked)
+    except ImportError:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _mock_pipeline_network_for_tests(monkeypatch: pytest.MonkeyPatch):
     """Ensure pipeline unit tests use an offline mock LLM provider by default instead of live APIs."""
     orig_init = ShortsPipeline.__init__
