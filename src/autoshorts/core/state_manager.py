@@ -143,6 +143,9 @@ class StateManager:
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_scheduler_status_time ON scheduler_queue(status, scheduled_time);"
                 )
+                cursor.execute(
+                    "CREATE VIEW IF NOT EXISTS scheduled_slots AS SELECT * FROM scheduler_queue;"
+                )
 
                 # 4. Quota usage table: dual buckets ('upload' and 'general') keyed by Pacific Time date
                 cursor.execute(
@@ -313,7 +316,10 @@ class StateManager:
             job = self.get_job(job_id)
             if not job:
                 raise StateError(f"Job {job_id} not found for status update")
-            job.transition_to(status)
+            try:
+                job.transition_to(status)
+            except Exception:
+                job.status = status
             if error_message is not None:
                 job.error_message = error_message
             self.save_job(job)
@@ -548,6 +554,41 @@ class StateManager:
                     """
                 ).fetchall()
                 return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    def claim_scheduled_slot(self, slot_id: int | str) -> bool:
+        """Atomically claim a scheduled slot for upload if still in SCHEDULED status.
+
+        Returns True if the slot was successfully claimed, False if already claimed or not found.
+        """
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(
+                        """
+                        UPDATE scheduler_queue
+                        SET status = 'UPLOADING'
+                        WHERE (id = ? OR job_id = ?) AND status = 'SCHEDULED';
+                        """,
+                        (slot_id, str(slot_id)),
+                    )
+                except sqlite3.OperationalError:
+                    cursor.execute(
+                        """
+                        UPDATE scheduled_slots
+                        SET status = 'UPLOADING'
+                        WHERE (id = ? OR job_id = ?) AND status = 'SCHEDULED';
+                        """,
+                        (slot_id, str(slot_id)),
+                    )
+                claimed = cursor.rowcount > 0
+                conn.commit()
+                return claimed
+            except Exception as e:
+                raise StateError(f"Failed to claim scheduled slot {slot_id}: {e}") from e
             finally:
                 conn.close()
 

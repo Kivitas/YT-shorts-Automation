@@ -60,9 +60,26 @@ def test_kokoro_used_when_edge_fails(monkeypatch, tmp_path):
     calls = _install_fakes(monkeypatch)
     out = tts.synthesize_sections(_script(), tmp_path)
     assert [p.audio_path.name for p in out] == ["section_00.wav", "section_01.wav"]
-    assert calls == ["en-US-ChristopherNeural", "en-US-AriaNeural"]
+    assert calls == ["en-US-ChristopherNeural", "en-US-ChristopherNeural"]
     assert out[0].words[0]["word"] == "a"
     assert tts.total_duration(out) == pytest.approx(4.0)
+
+
+def test_secondary_speaker_switches_voice(monkeypatch, tmp_path):
+    calls = _install_fakes(monkeypatch)
+    s = LongformScript(
+        topic="parody",
+        title="Parody",
+        hook="Hi.",
+        sections=[
+            Section("A", "one two", speaker="narrator"),
+            Section("B", "three four", speaker="skeptic"),
+        ],
+        provider="api",
+        genre="parody",
+    )
+    tts.synthesize_sections(s, tmp_path)
+    assert calls == ["en-US-ChristopherNeural", "en-US-AriaNeural"]
 
 
 def test_edge_used_when_available(monkeypatch, tmp_path):

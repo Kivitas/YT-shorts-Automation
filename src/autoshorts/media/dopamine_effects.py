@@ -566,6 +566,8 @@ def build_complex_filtergraph(
     split_separator: str = "none",
     source_clip_has_video: bool = True,
     rhythm_ducking_release: float | None = None,
+    enable_visual_momentum: bool | None = None,
+    skip_in_graph_loudnorm: bool = False,
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -589,6 +591,11 @@ def build_complex_filtergraph(
         else []
     )
     current_a = "0:a" if source_clip_has_audio else None
+    wire_momentum = (
+        enable_visual_momentum
+        if enable_visual_momentum is not None
+        else (dopamine_preset.level in ("ultra", "extreme"))
+    )
 
     # Determine effective split separator style across layout and preset
     eff_sep = (
@@ -682,11 +689,23 @@ def build_complex_filtergraph(
                 )
                 top_final = "top_cut"
 
+            if wire_momentum:
+                mom_str, mom_out = build_visual_momentum_filter(
+                    valid_cuts,
+                    input_label=top_final,
+                    output_label="top_momentum",
+                    target_w=width,
+                    target_h=top_h,
+                )
+                filter_stages.append(mom_str)
+                top_final = mom_out
+
         filter_stages.append(
             f"[1:v]scale={width}:{bottom_h}:force_original_aspect_ratio=increase,"
             f"crop={width}:{bottom_h},setsar=1,fps={fps}[bottom]"
         )
-        filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
+        vstack_opts = ":shortest=1" if valid_cuts else ""
+        filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2{vstack_opts}[stacked]")
         current_v = "stacked"
         if eff_sep != "none":
             sep_str, sep_out = build_split_separator_filter(
@@ -896,11 +915,23 @@ def build_complex_filtergraph(
                 )
                 top_final = "top_cut"
 
+            if wire_momentum:
+                mom_str, mom_out = build_visual_momentum_filter(
+                    valid_cuts,
+                    input_label=top_final,
+                    output_label="top_momentum",
+                    target_w=width,
+                    target_h=top_h,
+                )
+                filter_stages.append(mom_str)
+                top_final = mom_out
+
         filter_stages.append(
             f"[1:v]scale={width}:{bottom_h}:force_original_aspect_ratio=increase,"
             f"crop={width}:{bottom_h},setsar=1,fps={fps}[bottom]"
         )
-        filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2[stacked]")
+        vstack_opts = ":shortest=1" if valid_cuts else ""
+        filter_stages.append(f"[{top_final}][bottom]vstack=inputs=2{vstack_opts}[stacked]")
         current_v = "stacked"
         if eff_sep != "none":
             sep_str, sep_out = build_split_separator_filter(
@@ -978,7 +1009,7 @@ def build_complex_filtergraph(
         voice_chain: list[str] = []
         if voice_boost:
             voice_chain.append("highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5")
-        if dopamine_preset.enable_loudnorm:
+        if dopamine_preset.enable_loudnorm and not skip_in_graph_loudnorm:
             # Single-pass loudnorm plus a -1 dBTP limiter. The two-pass form is applied to the
             # finished file by audio_master.normalize_two_pass, not in this graph.
             voice_chain.append(build_loudnorm_filter(None, float(target_lufs)))
@@ -997,7 +1028,7 @@ def build_complex_filtergraph(
             filter_stages.append(
                 f"[{voice_label}]asplit=2[v_main][v_side]; "
                 f"[{music_input_index}:a]volume={bg_music_volume:.2f}[bg_raw]; "
-                f"[bg_raw][v_side]sidechaincompress=threshold=0.1:ratio=4:attack=20:release={duck_release}[bg_ducked]; "
+                f"[bg_raw][v_side]sidechaincompress=threshold=0.08:ratio=3.5:attack=15:release={duck_release}:knee=2.5:link=average[bg_ducked]; "
                 f"[v_main][bg_ducked]amix=inputs=2:duration=first:dropout_transition=2[mixed_a]"
             )
             voice_label = "mixed_a"

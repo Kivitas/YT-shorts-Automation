@@ -317,13 +317,20 @@ class FasterWhisperTranscriber:
         )
         return self._model
 
-    def transcribe(self, audio_path: Path) -> list[dict[str, Any]]:
+    def transcribe(
+        self, audio_path: Path, initial_prompt: str | None = None
+    ) -> list[dict[str, Any]]:
         """Transcribe an audio file into timed segments with word timestamps."""
         model = self._get_model()
+        kwargs: dict[str, Any] = {
+            "word_timestamps": True,
+            "vad_filter": True,
+        }
+        if initial_prompt:
+            kwargs["initial_prompt"] = initial_prompt
         segments, _info = model.transcribe(
             str(audio_path),
-            word_timestamps=True,
-            vad_filter=True,
+            **kwargs,
         )
         results: list[dict[str, Any]] = []
         for seg in segments:
@@ -354,10 +361,25 @@ class FasterWhisperTranscriber:
         text: str | None = None,
     ) -> list[dict[str, Any]]:
         """Extract precise word-level start and end timestamps for karaoke subtitle styling."""
-        segments = self.transcribe(audio_path)
+        segments = self.transcribe(audio_path, initial_prompt=text if text else None)
         words: list[dict[str, Any]] = []
         for seg in segments:
             words.extend(seg.get("words", []))
+        if text and words:
+            ref_tokens = text.split()
+            if ref_tokens:
+                import difflib
+
+                whisper_tokens = [w["word"].strip() for w in words]
+                matcher = difflib.SequenceMatcher(
+                    None,
+                    [t.lower().strip(".,!?:;\"'") for t in whisper_tokens],
+                    [r.lower().strip(".,!?:;\"'") for r in ref_tokens],
+                )
+                for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                    if tag == "equal" and (i2 - i1 == j2 - j1):
+                        for idx_w, idx_r in zip(range(i1, i2), range(j1, j2)):
+                            words[idx_w]["word"] = ref_tokens[idx_r]
         return words
 
 
@@ -1172,6 +1194,7 @@ class FFmpegCompositor:
         timestamp_sec: float | None = 1.2,
         auto_best_frame: bool = False,
         search_window_sec: float = 2.5,
+        target_ts: float | None = None,
     ) -> Path:
         """Extract a crisp 1080x1920 JPEG frame from the rendered Short.
 
@@ -1180,6 +1203,8 @@ class FFmpegCompositor:
         facial contrast, and hook banner visibility rather than relying on a static timestamp.
         Falls back to 0.1s if the clip is very short or initial seek fails.
         """
+        if target_ts is not None:
+            timestamp_sec = target_ts
         src = Path(video_path).resolve()
         dest = Path(output_path).resolve()
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1230,12 +1255,33 @@ class FFmpegCompositor:
             fallback_cmd = _build_thumb_cmd(0.1)
             proc = run_command_with_cleanup(fallback_cmd, timeout=30.0)
 
-        if proc.returncode != 0:
+        if proc.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+            dest.unlink(missing_ok=True)
             raise RuntimeError(
-                f"FFmpeg thumbnail extraction failed (code {proc.returncode}):\n"
+                f"FFmpeg produced an empty or missing thumbnail file (code {proc.returncode}):\n"
                 f"{_stderr_tail(proc.stderr)}"
             )
         return dest
+
+
+def extract_thumbnail(
+    video_path: Path | str,
+    output_path: Path | str,
+    timestamp_sec: float | None = 1.2,
+    auto_best_frame: bool = False,
+    search_window_sec: float = 2.5,
+    target_ts: float | None = None,
+) -> Path:
+    """Extract a crisp JPEG frame from the video using FFmpegCompositor."""
+    comp = FFmpegCompositor()
+    return comp.extract_thumbnail(
+        Path(video_path),
+        Path(output_path),
+        timestamp_sec=timestamp_sec,
+        auto_best_frame=auto_best_frame,
+        search_window_sec=search_window_sec,
+        target_ts=target_ts,
+    )
 
 
 __all__ = [
@@ -1245,6 +1291,7 @@ __all__ = [
     "detect_encoder_pixel_format",
     "detect_hardware_encoder",
     "extract_16khz_mono_wav",
+    "extract_thumbnail",
     "find_best_thumbnail_timestamp",
     "get_ffmpeg_path",
     "has_audio_stream",

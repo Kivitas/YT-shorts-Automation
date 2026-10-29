@@ -1,4 +1,4 @@
-"""Publish rendered long-form videos to YouTube, capped at 4 per Pacific-Time day."""
+"""Publish rendered long-form videos to YouTube (API, Studio, or Local export), capped at 4 per Pacific-Time day."""
 
 from __future__ import annotations
 
@@ -68,13 +68,16 @@ def _record_upload() -> None:
 
 
 def publish_longform(result: LongformResult, config=None, state_manager=None) -> str:
-    """Upload one rendered long-form video and return its YouTube URL.
+    """Upload one rendered long-form video and return its YouTube/export URL.
 
-    Raises RuntimeError when today's cap of 4 is already used or the upload is not verified.
+    Respects `cfg.upload.mode` ('api', 'studio', or 'local') and raises RuntimeError
+    when today's cap of 4 is already used or the upload is not verified.
     """
     from autoshorts.core.config import load_config
     from autoshorts.core.state_manager import StateManager
     from autoshorts.quota.quota_tracker import QuotaTracker
+    from autoshorts.uploader.local_exporter import LocalExportUploader
+    from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
     from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
     with _LOCK:
@@ -83,22 +86,31 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
                 f"Long-form daily cap reached ({LONGFORM_DAILY_CAP} uploads per Pacific day)."
             )
         cfg = config or load_config(None)
-        state = state_manager or StateManager()
-        uploader = YouTubeApiUploader(
-            config=cfg, quota_tracker=QuotaTracker(state_manager=state, config=cfg)
-        )
+        upload_cfg = getattr(cfg, "upload", None)
+        upload_mode = str(getattr(upload_cfg, "mode", "api") or "api").strip().lower()
+
+        if upload_mode == "studio":
+            uploader = PlaywrightStudioUploader(config=cfg)
+        elif upload_mode == "local":
+            uploader = LocalExportUploader()
+        else:
+            state = state_manager or StateManager()
+            uploader = YouTubeApiUploader(
+                config=cfg, quota_tracker=QuotaTracker(state_manager=state, config=cfg)
+            )
+
         upload_result = uploader.upload(
             video_path=result.video_path,
             title=result.title,
             description=result.description,
             tags=list(result.hashtags),
-            privacy_status=cfg.upload.default_privacy_status,
-            category_id=cfg.upload.category_id,
+            privacy_status=getattr(upload_cfg, "default_privacy_status", "unlisted"),
+            category_id=getattr(upload_cfg, "category_id", "27"),
             is_short=False,
             thumbnail_path=getattr(result, "thumbnail_path", None),
         )
         if not getattr(upload_result, "url", None):
             raise RuntimeError("YouTube upload did not return a video URL.")
         _record_upload()
-        logger.info("Published long-form video %s", upload_result.url)
+        logger.info("Published long-form video %s (mode=%s)", upload_result.url, upload_mode)
         return str(upload_result.url)

@@ -22,7 +22,7 @@ from autoshorts.core.paths import PROJECT_ROOT, get_config_dir
 LayoutMode = Literal[
     "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
 ]
-SubtitlePreset = Literal["neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic"]
+SubtitlePreset = Literal["neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid"]
 ColorGradingPreset = Literal["none", "vibrant", "cinematic", "warm", "crisp"]
 ProgressBarPosition = Literal["top", "bottom", "seam", "none"]
 TextTransform = Literal["uppercase", "title", "none"]
@@ -243,7 +243,7 @@ class SubtitlesConfig(BaseModel):
     safe_zone_margin_v: int = 780
     style_preset: str = Field(
         default="neon",
-        description="Subtitle visual preset: neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic",
+        description="Subtitle visual preset: neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic, rapid",
     )
     text_transform: str = "uppercase"
     position: str = "center"
@@ -272,6 +272,33 @@ class CleanupConfig(BaseModel):
     dry_run: bool = False
 
 
+class PipelineConfig(BaseModel):
+    """Pipeline concurrency, caption engine, and delivery QC parameters."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    concurrency: int = Field(default=3, ge=1)
+    caption_engine: str = "ass"
+    enable_delivery_qc: bool = True
+
+
+class EachLabsConfig(BaseModel):
+    """EachLabs music / audio generation configuration."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    model: str = "mureka-generate-music"
+
+
+class IntegrationsConfig(BaseModel):
+    """External third-party platform integrations."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    eachlabs: EachLabsConfig = Field(default_factory=EachLabsConfig)
+
+
 class Settings(BaseSettings):
     """Master Application Settings loaded from config.yaml and environment."""
 
@@ -295,6 +322,8 @@ class Settings(BaseSettings):
     audio_mastering: AudioMasteringConfig = Field(default_factory=AudioMasteringConfig)
     upload: UploadConfig = Field(default_factory=UploadConfig)
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
 
     # Secrets (strictly from environment or .env, never hardcoded)
     app_env: str = Field(default="production", alias="APP_ENV")
@@ -303,6 +332,9 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = Field(default=None, alias="OPENROUTER_API_KEY")
     youtube_api_key: SecretStr | None = Field(default=None, alias="YOUTUBE_API_KEY")
     local_gguf_path: str | None = Field(default=None, alias="LOCAL_GGUF_PATH")
+    eachlabs_api_key: SecretStr | None = Field(default=None, alias="EACHLABS_API_KEY")
+    pexels_api_key: SecretStr | None = Field(default=None, alias="PEXELS_API_KEY")
+    pixabay_api_key: SecretStr | None = Field(default=None, alias="PIXABAY_API_KEY")
 
     def _register_loaded_secrets(self) -> None:
         """Register loaded secrets for automatic redaction in logs."""
@@ -312,6 +344,12 @@ class Settings(BaseSettings):
             register_secret(self.openrouter_api_key.get_secret_value())
         if self.youtube_api_key:
             register_secret(self.youtube_api_key.get_secret_value())
+        if self.eachlabs_api_key:
+            register_secret(self.eachlabs_api_key.get_secret_value())
+        if self.pexels_api_key:
+            register_secret(self.pexels_api_key.get_secret_value())
+        if self.pixabay_api_key:
+            register_secret(self.pixabay_api_key.get_secret_value())
 
     def model_post_init(self, context: Any, /) -> None:
         """Register loaded secrets for automatic redaction in logs."""
@@ -334,6 +372,24 @@ class Settings(BaseSettings):
         if self.youtube_api_key:
             return self.youtube_api_key.get_secret_value()
         return os.environ.get("YOUTUBE_API_KEY")
+
+    def get_eachlabs_api_key_str(self) -> str | None:
+        """Return the unmasked EachLabs API key string, or None if not set."""
+        if self.eachlabs_api_key:
+            return self.eachlabs_api_key.get_secret_value()
+        return os.environ.get("EACHLABS_API_KEY")
+
+    def get_pexels_api_key_str(self) -> str | None:
+        """Return the unmasked Pexels API key string, or None if not set."""
+        if self.pexels_api_key:
+            return self.pexels_api_key.get_secret_value()
+        return os.environ.get("PEXELS_API_KEY")
+
+    def get_pixabay_api_key_str(self) -> str | None:
+        """Return the unmasked Pixabay API key string, or None if not set."""
+        if self.pixabay_api_key:
+            return self.pixabay_api_key.get_secret_value()
+        return os.environ.get("PIXABAY_API_KEY")
 
 
 def load_config(config_path: Path | str | None = None) -> Settings:
@@ -373,12 +429,15 @@ __all__ = [
     "CleanupConfig",
     "ColorGradingPreset",
     "ConfigError",
+    "EachLabsConfig",
     "EditPlannerConfig",
     "HookBannerStyle",
+    "IntegrationsConfig",
     "JobDefaultsConfig",
     "LLMConfig",
     "LayoutMode",
     "MediaConfig",
+    "PipelineConfig",
     "ProgressBarPosition",
     "QuotaConfig",
     "SchedulerConfig",

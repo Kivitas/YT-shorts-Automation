@@ -300,7 +300,7 @@ def test_complex_filtergraph_with_jumpcuts():
     # Both video select and audio aselect should be in filtergraph before vstack
     assert "select='not(between(t,2.00,4.00))'" in fg
     assert "aselect='not(between(t,2.00,4.00))'" in fg
-    assert "[top_cut][bottom]vstack=inputs=2[stacked]" in fg
+    assert "[top_cut][bottom]vstack=inputs=2:shortest=1[stacked]" in fg
     assert (
         "[a_cut]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7"
         in fg
@@ -1448,3 +1448,216 @@ def test_watermark_filter_parses_in_real_ffmpeg_with_awkward_text():
             text,
             proc.stderr,
         )
+
+
+def test_complex_filtergraph_skip_in_graph_loudnorm():
+    """Verify that skip_in_graph_loudnorm=True omits loudnorm from the voice filter chain."""
+    preset = get_dopamine_preset("high")
+    fg, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        skip_in_graph_loudnorm=True,
+    )
+    assert "loudnorm=" not in fg
+    assert "highpass=f=85" in fg
+
+
+def test_complex_filtergraph_with_visual_momentum():
+    """Verify that visual momentum filter is wired when jump cuts exist on ultra/extreme presets."""
+    edl = EditDecisionList(
+        jump_cuts=[JumpCut(cut_start=2.0, cut_end=3.5, reason="silence")],
+    )
+    ultra = get_dopamine_preset("ultra")
+    fg, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=ultra,
+        edl=edl,
+    )
+    assert "top_momentum" in fg
+    assert "crop=w='iw*0.96'" in fg
+    assert "[top_momentum][bottom]vstack=inputs=2:shortest=1[stacked]" in fg
+
+
+def test_align_words_with_text_prompt_and_anchoring(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify that align_words passes initial_prompt=text and reconciles tokens against text."""
+    transcriber = FasterWhisperTranscriber()
+    fake_audio = tmp_path / "audio.wav"
+    fake_audio.write_bytes(b"dummy")
+
+    captured_kwargs = {}
+
+    class DummyWord:
+        def __init__(self, word: str, start: float, end: float):
+            self.word = word
+            self.start = start
+            self.end = end
+            self.probability = 0.95
+
+    class DummySegment:
+        def __init__(self, words):
+            self.words = words
+            self.start = words[0].start if words else 0.0
+            self.end = words[-1].end if words else 0.0
+            self.text = " ".join(w.word for w in words)
+
+    class DummyModel:
+        def transcribe(self, path, **kwargs):
+            captured_kwargs.update(kwargs)
+            # Whisper transcribes lowercase or slight difference
+            w1 = DummyWord("hello", 0.0, 0.4)
+            w2 = DummyWord("world!", 0.45, 0.9)
+            return [DummySegment([w1, w2])], None
+
+    monkeypatch.setattr(transcriber, "_get_model", lambda: DummyModel())
+
+    reference_text = "Hello WORLD!"
+    words = transcriber.align_words(fake_audio, text=reference_text)
+
+    assert captured_kwargs.get("initial_prompt") == reference_text
+    assert len(words) == 2
+    # Anchored casing/punctuation
+    assert words[0]["word"] == "Hello"
+    assert words[1]["word"] == "WORLD!"
+
+
+def test_extract_thumbnail_fails_on_empty_or_missing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify that extract_thumbnail unlinks empty/corrupt files and raises RuntimeError."""
+    from autoshorts.media.compositor import extract_thumbnail
+
+    video = tmp_path / "dummy_vid.mp4"
+    video.write_bytes(b"data")
+    thumb = tmp_path / "thumb.jpg"
+
+    # Mock run_command_with_cleanup to return 0 but create 0-byte file
+    class DummyProc:
+        returncode = 0
+        stderr = "Nothing written"
+
+    def mock_run(cmd, timeout=30.0):
+        thumb.write_bytes(b"")  # 0-byte file
+        return DummyProc()
+
+    monkeypatch.setattr("autoshorts.media.compositor.run_command_with_cleanup", mock_run)
+
+    with pytest.raises(RuntimeError, match="empty or missing thumbnail file"):
+        extract_thumbnail(video, thumb, target_ts=1.0)
+
+    assert not thumb.exists()
+
+
+def test_ass_activebox_and_spring_bounce():
+    """Verify ActiveBox style definition and spring bounce animation tags."""
+    from autoshorts.media.ass_styler import build_ass_script, build_spring_bounce_tags
+
+    words = [{"word": "PopWord", "start": 0.0, "end": 0.8}]
+    script = build_ass_script(words, style_preset="neon")
+
+    # ActiveBox style must be in V4+ Styles
+    assert "Style: ActiveBox," in script
+    assert ",3,6,0,2," in script  # BorderStyle=3
+
+    # Spring bounce tags helper
+    tags = build_spring_bounce_tags(scale_overshoot=128, scale_rebound=95)
+    assert r"\fscx128\fscy128" in tags
+    assert r"\fscx95\fscy95" in tags
+    assert r"\fscx100\fscy100" in tags
+
+
+def test_remap_words_for_jump_cuts_frame_quantization():
+    """Verify that remap_words_for_jump_cuts quantizes timestamps when fps is provided."""
+    from autoshorts.media.ass_styler import TimedWord, remap_words_for_jump_cuts
+
+    words = [
+        TimedWord("One", 0.031, 0.412),
+        TimedWord("Two", 0.822, 1.233),
+    ]
+    # At 30 fps, frame duration is 1/30 ~= 0.033333s
+    remapped = remap_words_for_jump_cuts(words, jump_cuts=None, fps=30.0)
+    assert len(remapped) == 2
+    # 0.031 snaps to 0.033 (1 frame)
+    assert abs(remapped[0].start - 0.033) < 0.005
+    assert abs(remapped[1].start - 0.833) < 0.005
+
+
+def test_remotion_overlay_captions_with_encoder_args_and_cleanup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify overlay_captions accepts encoder_args and cleans up output on failure."""
+    from autoshorts.media.remotion_overlay import RemotionRenderError, overlay_captions
+
+    base_vid = tmp_path / "base.mp4"
+    base_vid.write_bytes(b"vid")
+    cap_track = tmp_path / "caps.webm"
+    cap_track.write_bytes(b"caps")
+    out_vid = tmp_path / "final.mp4"
+
+    captured_cmd = []
+
+    class DummyProc:
+        returncode = 1
+        stderr = "Encoder error"
+
+    def mock_run(cmd, timeout=900.0):
+        captured_cmd.extend(cmd)
+        out_vid.write_bytes(b"corrupt")
+        return DummyProc()
+
+    monkeypatch.setattr("autoshorts.media.remotion_overlay.run_command_with_cleanup", mock_run)
+
+    custom_enc = ["-c:v", "h264_nvenc", "-preset", "p4"]
+    with pytest.raises(RemotionRenderError):
+        overlay_captions(
+            base_vid,
+            cap_track,
+            out_vid,
+            ffmpeg_path="ffmpeg",
+            encoder_args=custom_enc,
+        )
+
+    # Output file was unlinked on error
+    assert not out_vid.exists()
+    assert "-c:v" in captured_cmd
+    assert "h264_nvenc" in captured_cmd
+
+
+def test_visual_fetcher_and_synthetic_broll(tmp_path: Path):
+    """Verify VisualFetcher creates valid synthetic B-roll clips and inspects assets."""
+    from autoshorts.media.visual_fetcher import VisualFetcher
+
+    fetcher = VisualFetcher(api_key=None, cache_dir=tmp_path / "cache")
+    # Missing API key returns empty list cleanly
+    res = fetcher.fetch_broll_clips(["nature", "city"])
+    assert res == []
+
+    # Generate synthetic 9:16 vertical broll
+    out_broll = tmp_path / "synth_broll.mp4"
+    asset = fetcher.generate_synthetic_broll(out_broll, duration=1.0, width=320, height=568)
+    assert asset.exists()
+    assert asset.aspect == "9:16"
+    assert asset.media_type == "video"
+    assert asset.path == out_broll
+
+
+def test_thumbnail_maker_create_short_thumbnail(tmp_path: Path):
+    """Verify ThumbnailMaker produces high-CTR vertical 9:16 PNG thumbnail."""
+    from autoshorts.media.thumbnail_maker import (
+        ThumbnailConfig,
+        ThumbnailMaker,
+        make_short_thumbnail,
+    )
+
+    out_thumb = tmp_path / "thumb_test.png"
+    config = ThumbnailConfig(width=360, height=640, badge_text="SECRET")
+    maker = ThumbnailMaker(config)
+    res = maker.create_thumbnail(title="HOW TO WIN MONEY", output_path=out_thumb)
+
+    assert res.is_file()
+    assert res == out_thumb
+
+    # Test convenience function
+    out_thumb2 = tmp_path / "thumb_convenience.png"
+    res2 = make_short_thumbnail(title="CRAZY HACK EXPOSED", output_path=out_thumb2, badge="VIRAL")
+    assert res2.is_file()
+

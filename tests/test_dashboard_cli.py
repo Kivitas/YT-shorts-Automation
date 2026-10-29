@@ -925,3 +925,219 @@ def test_get_ffmpeg_path_detection():
     assert p1 is not None and len(p1) > 0
     assert p2 is not None and len(p2) > 0
     assert p1 == p2
+
+
+# =============================================================================
+# Track 6: Longform Studio, Provenance, Delivery QC & Integrations Tests
+# =============================================================================
+
+
+def test_dashboard_longform_genres_endpoint(dashboard_client: dict[str, Any]):
+    """Verify GET /api/longform/genres returns all 6 genres with sample topic ideas."""
+    client: TestClient = dashboard_client["client"]
+    res = client.get("/api/longform/genres")
+    assert res.status_code == 200
+    data = res.json()
+    assert "genres" in data
+    assert "genre_keys" in data
+    expected_genres = {"parody", "history", "science", "comparison", "finance", "self_improvement"}
+    assert expected_genres.issubset(set(data["genre_keys"]))
+    for g in data["genres"]:
+        assert "id" in g
+        assert "label" in g
+        assert "description" in g
+        assert "sample_topics" in g
+        assert len(g["sample_topics"]) >= 2
+
+
+def test_dashboard_longform_create_endpoint(dashboard_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch):
+    """Verify POST /api/longform accepts topic, genre, visual_style, minutes up to 15, and forwards safely."""
+    client: TestClient = dashboard_client["client"]
+    from autoshorts.longform.types import LongformResult
+
+    fake_result = LongformResult(
+        topic="history",
+        title="Rome vs Mongols",
+        video_path=Path("output/longform/rome_vs_mongols.mp4"),
+        thumbnail_path=Path("output/longform/rome_vs_mongols.jpg"),
+        duration=180.0,
+        description="Epic breakdown of Rome vs Mongols.",
+        hashtags=["#history", "#strategy"],
+        provider="api",
+    )
+
+    recorded_call: dict[str, Any] = {}
+
+    def mock_render(topic, minutes, provider, config=None, **kwargs):
+        recorded_call["topic"] = topic
+        recorded_call["minutes"] = minutes
+        recorded_call["provider"] = provider
+        recorded_call["config"] = config
+        recorded_call["kwargs"] = kwargs
+        return fake_result
+
+    monkeypatch.setattr("autoshorts.longform.render.render_longform", mock_render)
+
+    payload = {
+        "topic": "Rome vs Mongols",
+        "genre": "history",
+        "minutes": 5.5,
+        "provider": "api",
+        "visual_style": "kinetic_dark",
+        "publish": False,
+    }
+
+    res = client.post("/api/longform", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["title"] == "Rome vs Mongols"
+    assert recorded_call["topic"] == "Rome vs Mongols"
+    assert recorded_call["minutes"] == 5.5
+
+
+def test_dashboard_longform_create_publish_error_handling(
+    dashboard_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Verify publish_longform error status codes: 429 for cap/quota, 503 for general runtime error."""
+    client: TestClient = dashboard_client["client"]
+    from autoshorts.longform.types import LongformResult
+
+    fake_result = LongformResult(
+        topic="science",
+        title="Black Holes",
+        video_path=Path("output/longform/black_holes.mp4"),
+        thumbnail_path=Path("output/longform/black_holes.jpg"),
+        duration=120.0,
+        description="Desc",
+        hashtags=["#science"],
+        provider="api",
+    )
+
+    monkeypatch.setattr("autoshorts.longform.render.render_longform", lambda *a, **k: fake_result)
+
+    def mock_publish_cap(*a, **k):
+        raise RuntimeError("Daily longform upload cap of 4 reached today.")
+
+    monkeypatch.setattr("autoshorts.longform.publish.publish_longform", mock_publish_cap)
+    res_cap = client.post("/api/longform", json={"topic": "science", "publish": True})
+    assert res_cap.status_code == 429
+
+    def mock_publish_network(*a, **k):
+        raise RuntimeError("Network socket disconnected during upload.")
+
+    monkeypatch.setattr("autoshorts.longform.publish.publish_longform", mock_publish_network)
+    res_net = client.post("/api/longform", json={"topic": "science", "publish": True})
+    assert res_net.status_code == 503
+
+
+def test_dashboard_job_serialization_provenance_and_diagnostics(dashboard_client: dict[str, Any]):
+    """Verify job serialization in enrich_job_dict includes origin_kind, verification_kind, and diagnostics."""
+    client: TestClient = dashboard_client["client"]
+    state_mgr: StateManager = dashboard_client["state_mgr"]
+    from autoshorts.core.models import UploadResult
+
+    job = Job(
+        id="job_diag_test",
+        source_url="https://youtube.com/watch?v=diag12345",
+        origin_kind="youtube",
+        rendered_video_path="output/job_diag_test.mp4",
+        upload_result=UploadResult(
+            video_id="dQw4w9WgXcQ",
+            url="https://youtube.com/shorts/dQw4w9WgXcQ",
+            verification_kind="api_confirmed",
+        ),
+    )
+    job.record_diagnostic("delivery", ok=True, issues=[])
+    job.record_diagnostic("editing", edl_source="multimodal_gemini")
+    job.record_diagnostic("subtitles", timing_source="whisper_word_ts")
+    state_mgr.save_job(job)
+
+    res = client.get("/api/jobs/job_diag_test")
+    assert res.status_code == 200
+    jdata = res.json()["job"]
+
+    assert jdata["origin_kind"] == "youtube"
+    assert jdata["verification_kind"] == "api_confirmed"
+    assert "diagnostics" in jdata
+    diag = jdata["diagnostics"]
+    assert diag["delivery"]["ok"] is True
+    assert diag["edit_plan"]["source"] == "multimodal_gemini"
+    assert diag["subtitle_timing"]["source"] == "whisper_word_ts"
+
+
+def test_dashboard_settings_api_keys(dashboard_client: dict[str, Any]):
+    """Verify GET and POST /api/settings handles EACHLABS, PEXELS, and PIXABAY keys."""
+    client: TestClient = dashboard_client["client"]
+
+    # 1. GET settings returns masked fields
+    res = client.get("/api/settings")
+    assert res.status_code == 200
+    data = res.json()
+    assert "eachlabs_api_key_set" in data or "eachlabs_api_key_set" in data.get("secrets", {})
+
+    # 2. POST settings updates keys
+    payload = {
+        "eachlabs_api_key": "el-test-key-12345",
+        "pexels_api_key": "pex-test-key-67890",
+        "pixabay_api_key": "pix-test-key-abcde",
+    }
+    res_update = client.post("/api/settings", json=payload)
+    assert res_update.status_code == 200
+    up_data = res_update.json()
+    assert up_data["success"] is True
+    sec = up_data["settings"]["secrets"]
+    assert sec["eachlabs_api_key_set"] is True
+    assert sec["pexels_api_key_set"] is True
+    assert sec["pixabay_api_key_set"] is True
+
+
+def test_config_pipeline_and_integrations_and_rapid_preset():
+    """Verify Settings exposes pipeline, integrations.eachlabs, and 'rapid' subtitle preset."""
+    import typing
+
+    from autoshorts.core.config import Settings, SubtitlePreset
+
+    # Check typing literal
+    presets = typing.get_args(SubtitlePreset)
+    assert "rapid" in presets
+
+    cfg = Settings()
+    assert hasattr(cfg, "pipeline")
+    assert cfg.pipeline.concurrency == 3
+    assert cfg.pipeline.caption_engine == "ass"
+    assert cfg.pipeline.enable_delivery_qc is True
+
+    assert hasattr(cfg, "integrations")
+    assert hasattr(cfg.integrations, "eachlabs")
+    assert cfg.integrations.eachlabs.enabled is False
+    assert cfg.integrations.eachlabs.model == "mureka-generate-music"
+
+
+def test_dashboard_index_html_track6_upgrades(dashboard_client: dict[str, Any]):
+    """Verify index.html contains the Longform Studio controls, rapid preset, and API key inputs."""
+    client: TestClient = dashboard_client["client"]
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+
+    # Longform Studio controls
+    assert 'id="longform-genre-select"' in html
+    assert 'value="parody"' in html
+    assert 'value="history"' in html
+    assert 'value="science"' in html
+    assert 'value="comparison"' in html
+    assert 'value="finance"' in html
+    assert 'value="self_improvement"' in html
+    assert 'id="longform-custom-topic"' in html
+    assert 'id="longform-minutes-input"' in html
+    assert 'max="15"' in html
+
+    # 8th Visual Caption Card (rapid)
+    assert 'data-preset="rapid"' in html
+    assert '8 Animated ASS Typography Styles' in html
+
+    # Settings API key fields
+    assert 'id="setting-eachlabs-key"' in html
+    assert 'id="setting-pexels-key"' in html
+    assert 'id="setting-pixabay-key"' in html

@@ -7,18 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.4.0] - 2026-10-29
 
 ### Added
-- Launchers (`start.sh`, `start.bat`) install and repair all Python dependencies, install the Remotion renderer and its headless browser when Node.js is present, and create `.env` from `.env.example`. Users only paste their API keys.
-- Remotion caption engine (`subtitles.caption_engine: remotion`): word captions are rendered from a React composition in `remotion/` and composited onto the Short with FFmpeg. Default remains `ass`. Run `npm install` in `remotion/` before enabling it.
 
-### Added
-- **Section download validation (`SectionValidation`)**: every finished yt-dlp section is probed before it is accepted. Output must contain a video stream and (by default) an audio stream, so an audio-only or truncated merge result is now a distinct failure class (`missing_video`, `missing_audio`, `empty_file`, `unreadable`) instead of a silent success. `validate_section_output()` is exported for direct use.
-- **Download attempt traces**: `Downloader.download_section()` records every attempt (player client, outcome, detail) and surfaces it via `last_download_diagnostics` plus an optional `diagnostics` sink. Final failures now include a full attempt trace and an actionable hint.
-- **Edit-plan provenance**: `EditDecisionList.source` (`multimodal` | `transcript` | `empty_fallback` | `deterministic`) and `EditDecisionList.fallback_reason` record how a plan was produced, with `is_placeholder` / `has_micro_edits` helpers. Clamping no longer launders provenance.
-- **Job provenance diagnostics**: `Job.diagnostics` carries per-stage facts (download mode/attempts, edit-plan source, subtitle timing source, render summary, re-render steps) and persists with the job payload. `Job.origin_kind` makes local-file jobs explicit.
-- **Upload verification kinds**: `UploadResult.verification_kind` (`api_confirmed` | `studio_dom` | `local_export` | `unverified`) with `resolve_verification()` giving both upload paths one shared rule.
+#### Track 1 & 2: Media Pipeline, Vendored `ffmpeg_skill` Suite, Kinetic Animations & Visual B-Roll
+- **15 Vendored FFmpeg Tools in `ffmpeg_tools.py`**:
+  - Direct bridge and child-environment PATH wrapper for 15 vendored tools: `check`, `loudness`, `silence`, `caption`, `probe`, `metadata`, `report`, `broll`, `speedramp`, `cropdetect`, `scenes`, `look`, `graphics`, `stabilize`, and `cut`.
+  - Automated non-raising delivery QC verification (`check_delivery`) against YouTube Shorts, TikTok, Instagram Reels, and YouTube specs.
+  - Black bar and pillarbox detection (`detect_black_bars`), multi-scene visual and audio highlight extraction (`detect_scenes_and_highlights`), and audio silence detection (`detect_speech_silences`).
+  - Speed-ramping filter builder (`apply_speed_ramp`) supporting piecewise segment speed changes, and A-roll overlay cutaway insertion (`insert_broll_cutaways`).
+  - Platform safe-zone overlay generator (`render_safe_zone_preview`) rendering shaded UI guide boxes for Shorts, TikTok, Reels, and YouTube.
+- **Media Pipeline & Compositor Hardening**:
+  - Synchronized split-screen jump cuts with `vstack=inputs=2:shortest=1` to prevent timeline drift between primary speaker cuts and looped gameplay backgrounds.
+  - Wired visual momentum filters (`build_visual_momentum_filter`) injecting dynamic horizontal whip-pan sweeps across high-energy jump cuts.
+  - Deduplicated two-pass EBU R128 loudness mastering via `skip_in_graph_loudnorm=True` to eliminate redundant filter stages when finishing through `audio_master.normalize_two_pass`.
+  - Optimized sidechain ducking curve (`threshold=0.08:ratio=3.5:attack=15:release={duck_release}:knee=2.5:link=average`) for natural background music release behind vocals.
+- **Kinetic ASS & Remotion Typography Engine**:
+  - Implemented spring-physics overshoot bounce tags (`build_spring_bounce_tags`) with 3-phase physics: rapid scale pop overshoot (125%), spring recoil dip (96%), and smooth settle to 100%.
+  - Added `ActiveBox` subtitle style using `BorderStyle=3` with high-contrast translucent rounded pill backdrops for active words.
+  - Added frame-quantized jump-cut timestamp remapping (`remap_words_for_jump_cuts` with `fps` parameter) to snap word intervals precisely to video frames.
+  - Upgraded Remotion caption overlay with GPU acceleration, dynamic spring physics, and CSS transform-based word pop effects.
+- **Visual B-Roll Fetcher (`src/autoshorts/media/visual_fetcher.py`)**:
+  - Automated search, download, and SHA-256 caching of vertical (9:16) stock video clips and photos via Pexels API.
+  - Deterministic disk caching in `output/broll_cache/` with automatic synthetic fallback clips when API keys are absent.
+- **High-CTR Thumbnail Maker (`src/autoshorts/media/thumbnail_maker.py`)**:
+  - Intelligent keyframe extraction and automated 1080×1920 / 1920×1080 thumbnail generation.
+  - Punchy typography with bold font cascade (Montserrat, Impact, Arial), heavy drop shadows, safe-zone bounding (avoiding YouTube Shorts UI elements), and vibrant pill badges.
+
+#### Track 3: Brain Swarm, Scripting, All 5 EachLabs GenMedia Skills & Forced Alignment
+- **Complete EachLabs GenMedia Suite (`src/autoshorts/research_agent/eachlabs_client.py`)**:
+  - Fully wired all 5 generative media endpoints into the pipeline:
+    1. `generate_music`: Generates high-fidelity background music matching tempo and mood.
+    2. `generate_sound_effects`: Synthesizes custom contextual sound effects (swish, pop, boom, riser).
+    3. `generate_tts`: High-fidelity ElevenLabs Studio text-to-speech audio with customizable voice personas and languages.
+    4. `generate_song`: Full song generation with vocals, instrumentals, and structured lyrics.
+    5. `edit_video`: AI video editing and style transformation via multimodal video-to-video instructions.
+  - Native integration with `music_scout.py` and Faceless AI Studio.
+- **Story Shorts Studio Overhaul (`src/autoshorts/research_agent/story_shorts.py`)**:
+  - Upgraded with `MOOD_VOICE_PROFILES` supporting 8 emotional voice personas: `sad`, `heartbreak`, `angry`, `funny`, `scary`, `wholesome`, `emotional`, and `advice`, each configured with tailored rate and pitch profiles.
+  - Added automated word count boundaries (`auto_adjust=True`) for 95–220 word ranges with graceful sentence trimming and padding to maintain target pacing (30–60s).
+  - Timestamped multimodal EDL planning and robust fallback handling.
+
+#### Track 4: Uploading, OAuth, Atomic Scheduler & Analytics Feedback Loop
+- **YouTube API & OAuth Full-Scope Hardening (`src/autoshorts/uploader/youtube_api.py`)**:
+  - Added full OAuth scopes: `https://www.googleapis.com/auth/youtube.force-ssl` and `https://www.googleapis.com/auth/yt-analytics.readonly`.
+  - Comprehensive 403 `quotaExceeded` handling: drains both upload and general quota trackers immediately to prevent quota leakage and trigger instant fallback.
+  - Scheduled upload verification fix: tolerates `privacyStatus="private"` when `publishAt` is scheduled, preventing false privacy mismatch rejections.
+  - Resilient verification check tolerating omitted `processingDetails` when upload status is `uploaded` or `processed`.
+- **Atomic Scheduler & Mutex-Protected Browser Sessions**:
+  - Added atomic SQL slot reservation (`claim_scheduled_slot`) in `state_manager.py` and `scheduler.py` to prevent duplicate uploads during concurrent worker execution.
+  - Protected post-upload file cleanup with strict `result.verified` check, preventing accidental deletion of unconfirmed uploads.
+  - Added re-entrant browser profile mutex (`_PROFILE_LOCK`) in `studio_playwright.py` to serialize access to the persistent Edge profile across concurrent upload threads.
+  - Added automated tags entry and custom thumbnail uploads via Studio DOM automation.
+  - Integrated `LayaRhythmEngine` beat-snapped zoom punches into parallel batch processing (`process_batch`).
+
+#### Track 5: Full-Length Longform Video & Animated Faceless Studio Overhaul (`src/autoshorts/longform/`)
+- **Full-Length Video Production (Up to 20 Minutes)**:
+  - Extended engine to produce 1–20 minute full horizontal (1920×1080) videos across any custom topic.
+  - Dynamic sectioning, pacing controls, and structured narration synthesis via `LongformScript` and `SectionAudio`.
+- **6 Specialized Genre Visual Engines**:
+  1. **Parody & Moving Character Skits**:
+     - 2D articulated characters rendered at 30 fps with smooth joint kinematics (`stand`, `point`, `sit`, `lift`).
+     - Real-time syllable Viseme Lip-Sync supporting 5 phonetic mouth shapes (`REST`, `AI`, `O`, `E`, `MBP`).
+     - Organic breathing bob, natural eye blinks, expressive brow tilt rigs, and 2-character dialogue stage.
+  2. **History & Geopolitics Explainers**:
+     - Animated territory boundary expansion and progressive polylines for troop/trade route arrows.
+     - Scrolling parchment timeline banners with archival event plaques.
+  3. **Science & STEM Visualizers**:
+     - *Chemistry*: Bohr atomic models with orbiting valence electrons and covalent bond linkages.
+     - *Physics*: Force vector arrows, trajectory parabolas, and wave interference ripples.
+     - *Biology*: 3D rotating double-helix DNA strand with nucleotide base pairs.
+     - *Astrophysics*: Spacetime gravity grid curvature and black hole accretion disk glow.
+  4. **VS Comparison & S–F Tier-List Battles**:
+     - Side-by-side animated racing stat bars (0–100%) with dynamic numeric readouts.
+     - Tier-list evaluation stage with animated S, A, B, C, D, and F rubber stamps.
+  5. **Finance & Wealth Visuals**:
+     - Animated exponential compounding curves with shaded area fills.
+     - Multi-asset vs. inflation comparison lines and live financial dollar tickers on dark obsidian grids.
+  6. **Self-Improvement & Motivation**:
+     - Dan Koe / Hormozi style 4-node Habit & Dopamine feedback loops with active node pulsation.
+     - Value Equation visual breakdown ($(\text{Dream Outcome} \times \text{Perceived Likelihood}) / (\text{Time Delay} \times \text{Effort})$).
+
+#### Track 6: Dashboard UI, Longform Studio Builder, Config & Launchers
+- **Glassmorphic Studio UI Upgrades**:
+  - **Longform Studio Builder**: Redesigned card featuring interactive genre selector (6 genres + auto-detect), free-form custom topic input, and 1–15 min duration selector.
+  - **Rapid Caption Preset Card**: Added visual preview card for `"rapid"` kinetic typography preset in both candidate editor and settings modal.
+  - **Delivery QC & Verification Provenance Badges**: Real-time display of `QC Passed` / `QC Issues` and provenance pills (`API Confirmed`, `Studio DOM`, `Local File`) on all job cards.
+  - **Media API Key Settings**: Direct input and secret masking for `EACHLABS_API_KEY`, `PEXELS_API_KEY`, and `PIXABAY_API_KEY` in the Settings modal.
+- **Section Download Validation & Download Traces**:
+  - `Downloader.download_section()` validates video and audio streams (`SectionValidation`) and logs attempt traces across player clients.
+  - `Job.diagnostics` persists full pipeline provenance for end-to-end auditability.
 
 ### Changed
 - **`verified` now means positively confirmed.** Studio Playwright uploads return `status="uploaded_unconfirmed"` with `verified=False` and `verification_kind="studio_dom"`, because the video id is scraped from the Studio DOM rather than confirmed by `videos.list`. Immediate and scheduled upload paths share this contract, and intermediate cleanup is skipped for unconfirmed uploads.
@@ -35,7 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard security hardening and `.env` value escaping.
 - Default dashboard port is `8765` in `start.sh` (matching `config/config.yaml` and the README); `--port` is validated as a number from 1 to 65535.
 - `SafetyCleaner` retries only file-lock errors (`PermissionError`, `EACCES`/`EBUSY`, Windows `winerror` 32/33); other `OSError`s are raised immediately.
-- Package version is `1.3.0` in `pyproject.toml` and `autoshorts.__version__`.
+- Package version is updated in documentation and configuration templates.
 - Documentation corrected: concurrency default (`AUTOSHORTS_CONCURRENCY=3`), 8 caption presets including `rapid`, and the Gemini default model.
 - `config/config.yaml` is untracked and git-ignored; `config/config.example.yaml` remains the tracked template.
 

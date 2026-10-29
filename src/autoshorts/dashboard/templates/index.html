@@ -303,7 +303,7 @@
             <!-- Visual Caption Style Cards (All 7 Studio Presets) -->
             <div class="picker-section-header" style="margin-top: 1rem;">
               <span class="picker-title">🎨 Caption Style Presets</span>
-              <span class="picker-subtitle">7 Animated ASS Typography Styles</span>
+              <span class="picker-subtitle">8 Animated ASS Typography Styles</span>
             </div>
             <div class="caption-cards-grid" id="caption-cards-grid">
               <div class="caption-card active" data-preset="neon" onclick="selectCaptionPreset('neon')">
@@ -353,6 +353,13 @@
                   <span class="demo-active">CINEMA</span>
                 </div>
                 <span class="caption-card-title">Cinematic</span>
+              </div>
+
+              <div class="caption-card" data-preset="rapid" onclick="selectCaptionPreset('rapid')">
+                <div class="caption-micro-demo demo-rapid">
+                  <span class="demo-active">RAPID</span>
+                </div>
+                <span class="caption-card-title">Rapid</span>
               </div>
             </div>
 
@@ -573,21 +580,35 @@
         <!-- Long-form Stick-Figure Video Card -->
         <div class="card longform-card">
           <div class="card-title">
-            <span>Long-form stick-figure video (3 min max)</span>
+            <span>🎬 Long-form Studio Builder (up to 15 min)</span>
           </div>
-          <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-            <select id="longform-topic-select">
-              <option value="discipline">Discipline</option>
-              <option value="money">Money</option>
-              <option value="testosterone">Testosterone</option>
-              <option value="science">Science</option>
-              <option value="self_improvement">Self-improvement</option>
-            </select>
-            <input id="longform-minutes-input" type="number" min="1" max="4" step="0.5" value="2.5" />
-            <select id="longform-provider-select">
-              <option value="api">api</option>
-              <option value="local">local</option>
-            </select>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+              <select id="longform-genre-select" onchange="onLongformGenreChange()">
+                <option value="auto" selected>Auto-Detect Best Engine</option>
+                <option value="parody">🎭 Parody &amp; Moving Character Skit</option>
+                <option value="history">🏛️ History &amp; Geopolitics Explainer</option>
+                <option value="science">🔬 Science &amp; STEM (Chem, Physics, Bio, Astrophysics)</option>
+                <option value="comparison">⚔️ VS Comparison &amp; S-F Tier List</option>
+                <option value="finance">📈 Finance, Investing &amp; Wealth Charts</option>
+                <option value="self_improvement">🧠 Self-Improvement, Motivation &amp; Habits</option>
+              </select>
+              <select id="longform-topic-select" onchange="onLongformPresetSelect()">
+                <option value="discipline">Discipline</option>
+                <option value="money">Money</option>
+                <option value="testosterone">Testosterone</option>
+                <option value="science">Science</option>
+                <option value="self_improvement">Self-improvement</option>
+              </select>
+              <input id="longform-minutes-input" type="number" min="1" max="15" step="0.5" value="3.0" style="width: 80px;" title="Duration in minutes (1 to 15 min)" />
+              <select id="longform-provider-select">
+                <option value="api">api</option>
+                <option value="local">local</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+              <input id="longform-custom-topic" type="text" placeholder="Type custom topic or premise (e.g. 'Rome vs Mongols', 'How Black Holes Bend Time', 'The $100/Day Compounding Rule')..." style="flex: 1; min-width: 260px;" />
+            </div>
           </div>
           <div class="action-buttons-row" style="margin-top: 8px;">
             <label style="display: flex; gap: 6px; align-items: center;"><input id="longform-publish-toggle" type="checkbox" /> Upload to YouTube after render</label>
@@ -1900,6 +1921,31 @@
           </div>
 
           <div class="settings-section-card">
+            <div class="section-card-title">Media &amp; Music API Integrations</div>
+            <div class="control-group password-group" style="margin-bottom: 0.75rem;">
+              <label for="setting-eachlabs-key">EACHLABS_API_KEY (AI Music &amp; Audio Generation)</label>
+              <div class="input-password-wrap">
+                <input type="password" id="setting-eachlabs-key" placeholder="el-... or masked in env">
+                <button type="button" class="btn-toggle-eye" onclick="togglePasswordInput('setting-eachlabs-key', this)">👁️</button>
+              </div>
+            </div>
+            <div class="control-group password-group" style="margin-bottom: 0.75rem;">
+              <label for="setting-pexels-key">PEXELS_API_KEY (Stock B-Roll Video &amp; Photos)</label>
+              <div class="input-password-wrap">
+                <input type="password" id="setting-pexels-key" placeholder="Pexels API key or masked in env">
+                <button type="button" class="btn-toggle-eye" onclick="togglePasswordInput('setting-pexels-key', this)">👁️</button>
+              </div>
+            </div>
+            <div class="control-group password-group">
+              <label for="setting-pixabay-key">PIXABAY_API_KEY (Stock B-Roll &amp; Visuals)</label>
+              <div class="input-password-wrap">
+                <input type="password" id="setting-pixabay-key" placeholder="Pixabay API key or masked in env">
+                <button type="button" class="btn-toggle-eye" onclick="togglePasswordInput('setting-pixabay-key', this)">👁️</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-card">
             <div class="section-card-title">Local GGUF &amp; Multimodal Planner</div>
             <div class="settings-grid">
               <div class="control-group" style="grid-column: span 2;">
@@ -1989,6 +2035,16 @@
                 <div class="preset-card-info">
                   <strong>Cinematic</strong>
                   <span>Warm cream &amp; gold lower-third serif typography.</span>
+                </div>
+              </div>
+
+              <div class="preset-card" id="preset-card-rapid" onclick="selectPresetOption('rapid')">
+                <div class="preset-preview-box preview-rapid">
+                  <span class="word-highlight">RAPID</span> POP
+                </div>
+                <div class="preset-card-info">
+                  <strong>Rapid Kinetic</strong>
+                  <span>Rapid kinetic high-energy pop typography with electric crimson burst.</span>
                 </div>
               </div>
             </div>

@@ -176,7 +176,7 @@ if ! command -v ffprobe >/dev/null 2>&1; then
 fi
 
 # ----------------------------------------------------------------------------- runtime folders
-mkdir -p assets/backgrounds assets/music data/logs work inbox output
+mkdir -p assets/backgrounds assets/music assets/broll_cache data/logs data/edge_profile work inbox output output/export output/longform
 
 # ----------------------------------------------------------------------------- modes
 case "$MODE" in

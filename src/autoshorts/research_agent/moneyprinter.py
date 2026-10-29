@@ -33,6 +33,7 @@ from autoshorts.core.models import (
 )
 from autoshorts.core.paths import get_work_dir
 from autoshorts.media.dopamine_effects import pick_background_asset
+from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.research_agent.models import FacelessScriptResult, FacelessShortRequest
 
 logger = logging.getLogger("autoshorts.research_agent.moneyprinter")
@@ -616,6 +617,73 @@ def _try_kokoro_tts(
         return None
 
 
+def _try_eachlabs_tts(
+    text: str,
+    voice: str,
+    output_audio_path: Path,
+    output_words_path: Path,
+) -> tuple[Path, list[dict[str, Any]], float] | None:
+    """Attempt studio voice synthesis via each::labs when enabled."""
+    import os
+
+    api_key = os.environ.get("EACHLABS_API_KEY", "").strip()
+    flag = os.environ.get("AUTOSHORTS_EACHLABS_ENABLED", "").lower() in ("1", "true", "yes")
+    if not (api_key and flag):
+        return None
+
+    try:
+        from autoshorts.research_agent import eachlabs_client as ec
+
+        if not ec.is_enabled(flag):
+            return None
+
+        eachlabs_voice = "Rachel"
+        if "guy" in voice.lower() or "christopher" in voice.lower():
+            eachlabs_voice = "Adam"
+        elif "jenny" in voice.lower() or "aria" in voice.lower():
+            eachlabs_voice = "Rachel"
+        else:
+            eachlabs_voice = voice
+
+        asset = ec.generate_tts(text, voice=eachlabs_voice, enabled=True)
+        if not asset or not asset.url:
+            return None
+
+        output_audio_path.parent.mkdir(parents=True, exist_ok=True)
+        output_words_path.parent.mkdir(parents=True, exist_ok=True)
+        downloaded = ec.download_asset(asset.url, output_audio_path)
+
+        words: list[dict[str, Any]] = []
+        try:
+            from autoshorts.media.compositor import FasterWhisperTranscriber
+
+            words = FasterWhisperTranscriber().align_words(downloaded)
+        except Exception as e:
+            logger.debug("Whisper alignment for eachlabs audio skipped (%s)", e)
+
+        if not words:
+            tokens = text.split()
+            dur = max(5.0, len(tokens) / 2.6)
+            step = dur / max(1, len(tokens))
+            for i, tok in enumerate(tokens):
+                words.append(
+                    {
+                        "word": tok,
+                        "start": round(i * step, 3),
+                        "end": round((i + 1) * step, 3),
+                        "probability": 1.0,
+                    }
+                )
+
+        output_words_path.write_text(json.dumps(words, indent=2), encoding="utf-8")
+        total_dur = words[-1]["end"] if words else 40.0
+        logger.info("TTS engine used: eachlabs")
+        return downloaded, words, total_dur
+    except Exception as err:
+        logger.info("eachlabs TTS synthesis unavailable (%s); falling back.", err)
+        return None
+
+
 def synthesize_neural_tts(
     text: str,
     voice: str,
@@ -629,6 +697,9 @@ def synthesize_neural_tts(
     Returns (audio_path, aligned_words_list, total_duration_seconds).
     Falls back gracefully to offline synthesized voiceover if network is unavailable.
     """
+    eachlabs_res = _try_eachlabs_tts(text, voice, output_audio_path, output_words_path)
+    if eachlabs_res is not None:
+        return eachlabs_res
 
     def _run_bounded() -> tuple[Path, list[dict[str, Any]], float]:
         # wait_for cancels the stream when it hangs, so no late write can race the fallback.
@@ -727,9 +798,10 @@ def create_faceless_short_job(
     section_path = work_dir / f"section_{job_id}.mp4"
 
     # Mux background video and voiceover audio
+    ffmpeg_bin = get_ffmpeg_path() or "ffmpeg"
     if bg_file and Path(bg_file).is_file():
         mux_cmd = [
-            "ffmpeg",
+            ffmpeg_bin,
             "-y",
             "-stream_loop",
             "-1",
@@ -759,7 +831,7 @@ def create_faceless_short_job(
     else:
         # Generate 1080x1920 solid dark canvas
         mux_cmd = [
-            "ffmpeg",
+            ffmpeg_bin,
             "-y",
             "-f",
             "lavfi",
@@ -795,11 +867,13 @@ def create_faceless_short_job(
             check=False,
         )
         if proc.returncode != 0 or not section_path.is_file():
-            # If FFmpeg failed, create empty fallback section
-            section_path.touch()
+            logger.warning("Base video mux failed: %s", (proc.stderr or "")[-300:])
+            if section_path.is_file() and section_path.stat().st_size == 0:
+                section_path.unlink(missing_ok=True)
     except Exception as mux_err:
-        logger.warning("Base video mux failed (%s); creating mock section.", mux_err)
-        section_path.touch()
+        logger.warning("Base video mux failed (%s); cleaning up.", mux_err)
+        if section_path.is_file() and section_path.stat().st_size == 0:
+            section_path.unlink(missing_ok=True)
 
     # 6. Configure Job state
     candidate = ClipCandidate(

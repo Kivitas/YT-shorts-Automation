@@ -141,10 +141,13 @@ def render_caption_overlay(
             cwd=str(project_dir),
         )
     except subprocess.TimeoutExpired as exc:
+        output_path.unlink(missing_ok=True)
         raise RemotionRenderError(f"Remotion render timed out after {timeout_sec:.0f}s") from exc
     except OSError as exc:
+        output_path.unlink(missing_ok=True)
         raise RemotionUnavailableError(f"Remotion CLI could not be started: {exc}") from exc
     if proc.returncode != 0 or not output_path.is_file():
+        output_path.unlink(missing_ok=True)
         tail = (proc.stderr or proc.stdout or "").strip()[-800:]
         raise RemotionRenderError(f"Remotion render failed (exit {proc.returncode}): {tail}")
     return output_path
@@ -157,11 +160,19 @@ def overlay_captions(
     *,
     ffmpeg_path: str,
     timeout_sec: float = 900.0,
+    encoder_args: list[str] | None = None,
 ) -> Path:
     """Composite the transparent caption track over the finished Short. Audio is copied as-is."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if Path(output_path).resolve() == Path(base_video).resolve():
         raise RemotionRenderError("Caption overlay output must differ from the base video")
+
+    enc_args = (
+        encoder_args
+        if encoder_args is not None
+        else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]
+    )
+
     cmd = [
         ffmpeg_path,
         "-y",
@@ -182,12 +193,7 @@ def overlay_captions(
         "[v]",
         "-map",
         "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "18",
+        *enc_args,
         "-c:a",
         "copy",
         "-movflags",
@@ -195,18 +201,18 @@ def overlay_captions(
         str(output_path),
     ]
     try:
-        proc = subprocess.run(
+        proc = run_command_with_cleanup(
             cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=timeout_sec,
-            check=False,
         )
     except subprocess.TimeoutExpired as exc:
+        output_path.unlink(missing_ok=True)
         raise RemotionRenderError(f"Caption overlay timed out after {timeout_sec:.0f}s") from exc
+    except Exception as exc:
+        output_path.unlink(missing_ok=True)
+        raise RemotionRenderError(f"Caption overlay failed: {exc}") from exc
     if proc.returncode != 0 or not output_path.is_file():
-        tail = (proc.stderr or "").strip()[-800:]
+        output_path.unlink(missing_ok=True)
+        tail = (proc.stderr or proc.stdout or "").strip()[-800:]
         raise RemotionRenderError(f"Caption overlay failed (exit {proc.returncode}): {tail}")
     return output_path

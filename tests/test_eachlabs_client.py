@@ -150,3 +150,142 @@ def test_failed_download_leaves_no_partial_files(tmp_path):
 
     assert not dest.exists()
     assert list(tmp_path.glob("*.part")) == []
+
+
+def test_generate_sound_effects_disabled_raises():
+    with _client(_no_network) as client, pytest.raises(EachLabsError) as exc:
+        ec.generate_sound_effects("heavy wooden door creaking", client=client)
+    assert "disabled" in str(exc.value)
+
+
+def test_generate_sound_effects_success(monkeypatch):
+    monkeypatch.setenv(ec.API_KEY_ENV, SECRET)
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": f"Sound effect: {OK_URL}"}}]},
+        )
+
+    with _client(handler) as client:
+        asset = ec.generate_sound_effects(
+            "heavy wooden door creaking",
+            duration_seconds=3,
+            enabled=True,
+            client=client,
+        )
+
+    assert isinstance(asset, ec.EachLabsAsset)
+    assert asset.url == OK_URL
+    assert asset.media_type == "audio"
+    assert asset.metadata["duration_seconds"] == 3
+    body = json.loads(seen["request"].content)
+    assert "heavy wooden door creaking" in body["messages"][0]["content"]
+    assert "3 seconds long" in body["messages"][0]["content"]
+
+
+def test_generate_sound_effects_validation(monkeypatch):
+    monkeypatch.setenv(ec.API_KEY_ENV, SECRET)
+    with _client(_no_network) as client:
+        with pytest.raises(EachLabsError):
+            ec.generate_sound_effects("", enabled=True, client=client)
+        with pytest.raises(EachLabsError):
+            ec.generate_sound_effects("door", duration_seconds=0, enabled=True, client=client)
+
+
+def test_generate_tts_success(monkeypatch):
+    monkeypatch.setenv(ec.API_KEY_ENV, SECRET)
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": f"Speech audio: {OK_URL}"}}]},
+        )
+
+    with _client(handler) as client:
+        asset = ec.generate_tts(
+            "Welcome to AutoShorts studio.",
+            voice="Rachel",
+            language="en",
+            enabled=True,
+            client=client,
+        )
+
+    assert asset.url == OK_URL
+    assert asset.media_type == "audio"
+    assert asset.metadata["voice"] == "Rachel"
+    body = json.loads(seen["request"].content)
+    assert "Welcome to AutoShorts studio." in body["messages"][0]["content"]
+    assert "Rachel" in body["messages"][0]["content"]
+
+
+def test_generate_song_with_lyrics(monkeypatch):
+    monkeypatch.setenv(ec.API_KEY_ENV, SECRET)
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": f"Song ready: {OK_URL}"}}]},
+        )
+
+    with _client(handler) as client:
+        asset = ec.generate_song(
+            "Indie pop summer beat",
+            lyrics="Walking in the sun, summer has begun",
+            duration_seconds=30,
+            enabled=True,
+            client=client,
+        )
+
+    assert asset.url == OK_URL
+    assert asset.metadata["lyrics"] == "Walking in the sun, summer has begun"
+    body = json.loads(seen["request"].content)
+    assert "Lyrics:\nWalking in the sun" in body["messages"][0]["content"]
+
+
+def test_generate_song_validation():
+    with _client(_no_network) as client, pytest.raises(EachLabsError):
+        ec.generate_song("beat", duration_seconds=2, enabled=True, client=client)
+
+
+def test_edit_video_multimodal_request(monkeypatch):
+    monkeypatch.setenv(ec.API_KEY_ENV, SECRET)
+    video_url = "https://storage.eachlabs.ai/raw.mp4"
+    edited_url = "https://storage.eachlabs.ai/output.mp4"
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": f"Edited video: {edited_url}"}}]},
+        )
+
+    with _client(handler) as client:
+        asset = ec.edit_video(
+            video_url,
+            "Apply cinematic teal and orange color grade",
+            enabled=True,
+            client=client,
+        )
+
+    assert asset.url == edited_url
+    assert asset.media_type == "video"
+    body = json.loads(seen["request"].content)
+    msg_content = body["messages"][0]["content"]
+    assert isinstance(msg_content, list)
+    assert msg_content[0]["text"] == "Apply cinematic teal and orange color grade"
+    assert msg_content[1]["image_url"]["url"] == video_url
+
+
+def test_edit_video_validation():
+    with _client(_no_network) as client, pytest.raises(EachLabsError):
+        ec.edit_video("", "grade video", enabled=True, client=client)
+    with _client(_no_network) as client, pytest.raises(EachLabsError):
+        ec.edit_video("https://example.com/vid.mp4", "", enabled=True, client=client)

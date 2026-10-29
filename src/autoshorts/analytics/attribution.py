@@ -7,10 +7,12 @@ styles, and background styles, and recommend high-confidence Winning Recipes.
 
 from __future__ import annotations
 
+import json
 import logging
 import statistics
 from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from autoshorts.analytics.models import (
@@ -441,6 +443,32 @@ class PerformanceAttributionEngine:
                         except Exception:
                             pass
 
+        # Persist auto-tuned winners to data/autotune_winners.json
+        try:
+            from autoshorts.core.paths import atomic_write, get_data_dir
+
+            winners_path = get_data_dir() / "autotune_winners.json"
+            winners_data = {
+                "updated_at": datetime.now(UTC).isoformat(),
+                "winning_recipe": recipe.model_dump(),
+                "tuned_fields": {
+                    "layout_mode": recipe.layout_mode,
+                    "style_preset": recipe.style_preset,
+                    "background_category": recipe.background_category,
+                    "color_grading": recipe.color_grading,
+                },
+                "sample_size": recipe.sample_size,
+                "avg_views": recipe.avg_views,
+                "avg_retention_pct": recipe.avg_retention_pct,
+                "confidence": str(recipe.confidence),
+                "uplift_summary": recipe.uplift_summary,
+                "rationale": recipe.rationale,
+            }
+            atomic_write(winners_path, json.dumps(winners_data, indent=2))
+            logger.info("Persisted auto-tuned winning recipe to %s", winners_path)
+        except Exception as p_err:
+            logger.warning("Could not persist autotune_winners.json: %s", p_err)
+
         return {
             "applied": True,
             "winning_recipe": recipe.model_dump(),
@@ -455,6 +483,18 @@ class PerformanceAttributionEngine:
     # -------------------------------------------------------------------------
     # 1-Click Clone Job Style
     # -------------------------------------------------------------------------
+
+    def get_winning_guidance_summary(self) -> str:
+        """Return a concise textual summary of winning styles/recipes for LLM prompts."""
+        recipe = self.compute_winning_recipe()
+        if recipe.sample_size > 0:
+            return (
+                f"Historical Channel Top Performers: Best layout '{recipe.layout_mode}', "
+                f"subtitle style '{recipe.style_preset}', background '{recipe.background_category}', "
+                f"color grading '{recipe.color_grading}' (avg views: {recipe.avg_views}, "
+                f"avg retention: {recipe.avg_retention_pct}%, confidence: {recipe.confidence})."
+            )
+        return get_winning_guidance_summary()
 
     def clone_job_style(self, job_id: str) -> dict[str, Any]:
         """Extract and clone the complete rendering and styling parameters of an existing Job."""
@@ -501,4 +541,30 @@ class PerformanceAttributionEngine:
         }
 
 
-__all__ = ["PerformanceAttributionEngine"]
+def get_winning_guidance_summary(data_dir: Path | str | None = None) -> str:
+    """Read persisted autotune_winners.json and return a prompt guidance string."""
+    try:
+        from autoshorts.core.paths import get_data_dir
+
+        target_dir = Path(data_dir).resolve() if data_dir else get_data_dir()
+        winners_file = target_dir / "autotune_winners.json"
+        if winners_file.is_file():
+            data = json.loads(winners_file.read_text(encoding="utf-8"))
+            rec = data.get("winning_recipe") or data.get("tuned_fields") or {}
+            if rec:
+                sample_size = data.get("sample_size", rec.get("sample_size", 0))
+                avg_ret = data.get("avg_retention_pct", rec.get("avg_retention_pct"))
+                extra = f" across {sample_size} sample(s)" if sample_size else ""
+                if avg_ret:
+                    extra += f" with {avg_ret}% avg retention"
+                return (
+                    f"Historical Channel Top Performers: Best layout '{rec.get('layout_mode')}', "
+                    f"subtitle style '{rec.get('style_preset')}', background '{rec.get('background_category')}', "
+                    f"color grading '{rec.get('color_grading')}'{extra}."
+                )
+    except Exception as e:
+        logger.debug(f"Could not load autotune_winners.json: {e}")
+    return ""
+
+
+__all__ = ["PerformanceAttributionEngine", "get_winning_guidance_summary"]

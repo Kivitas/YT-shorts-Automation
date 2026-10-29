@@ -28,11 +28,12 @@ from autoshorts.core.models import (
 )
 from autoshorts.core.paths import get_work_dir
 from autoshorts.media.dopamine_effects import pick_background_asset
+from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.research_agent.moneyprinter import synthesize_neural_tts
 
 logger = logging.getLogger("autoshorts.research_agent.story_shorts")
 
-STORY_MOODS = ("sad", "funny", "angry", "emotional", "advice", "heartbreak")
+STORY_MOODS = ("sad", "funny", "angry", "emotional", "advice", "heartbreak", "scary", "wholesome")
 STORY_PROVIDERS = ("api", "local")
 FICTION_DISCLAIMER = (
     "Fictional story written for entertainment. Names, places and events are made up."
@@ -45,11 +46,54 @@ MAX_WORDS = 170
 MIN_DURATION = 30.0
 MAX_DURATION = 60.0
 
-# One bright, fast female voice for every mood: short Shorts need energy to hold attention.
 STORY_VOICE = "en-US-JennyNeural"
 STORY_RATE = "+25%"
 STORY_PITCH = "+6Hz"
-MOOD_VOICES = {mood: STORY_VOICE for mood in ("sad", "funny", "angry", "emotional", "advice", "heartbreak")}
+
+MOOD_VOICE_PROFILES: dict[str, dict[str, str]] = {
+    "sad": {
+        "voice": "en-US-GuyNeural",
+        "rate": "-10%",
+        "pitch": "-4Hz",
+    },
+    "heartbreak": {
+        "voice": "en-US-GuyNeural",
+        "rate": "-12%",
+        "pitch": "-5Hz",
+    },
+    "angry": {
+        "voice": "en-US-ChristopherNeural",
+        "rate": "+15%",
+        "pitch": "+2Hz",
+    },
+    "funny": {
+        "voice": "en-US-JennyNeural",
+        "rate": "+25%",
+        "pitch": "+6Hz",
+    },
+    "scary": {
+        "voice": "en-US-ChristopherNeural",
+        "rate": "-15%",
+        "pitch": "-8Hz",
+    },
+    "wholesome": {
+        "voice": "en-US-AriaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+    },
+    "emotional": {
+        "voice": "en-US-GuyNeural",
+        "rate": "-8%",
+        "pitch": "-3Hz",
+    },
+    "advice": {
+        "voice": "en-US-JennyNeural",
+        "rate": "+10%",
+        "pitch": "+1Hz",
+    },
+}
+
+MOOD_VOICES = {mood: prof["voice"] for mood, prof in MOOD_VOICE_PROFILES.items()}
 
 CURATED_STORIES: dict[str, dict[str, str]] = {
     "sad": {
@@ -140,6 +184,34 @@ CURATED_STORIES: dict[str, dict[str, str]] = {
             "to understand. He was never the answer. He was just the lesson."
         ),
     },
+    "scary": {
+        "title": "The Knocking That Came from Inside My Closet",
+        "hook": "I live alone on the top floor of an old building, but last night something knocked from inside my closet.",
+        "narration": (
+            "I live alone on the top floor of an old building, but last night something knocked from inside my closet. "
+            "It was two in the morning. At first I told myself it was settling pipes or old wood shrinking in the cold. "
+            "Then the rhythm changed. Three slow taps, a pause, and two quick raps. Exactly the code my brother and I used "
+            "as kids whenever we wanted each other to wake up. My brother has been gone for ten years. I sat up in bed, "
+            "barely breathing, phone glowing in my hand. I watched the door handle turn downward half an inch and stop. "
+            "I called building security with shaking hands. The guard arrived ten minutes later and opened the closet with "
+            "a flashlight. It was completely empty. But on the interior wall, someone had scratched two words in fresh wood. "
+            "Let me out. I packed my essentials and left before sunrise. I am never going back."
+        ),
+    },
+    "wholesome": {
+        "title": "My Stray Cat Brought Me an Unexpected Surprise",
+        "hook": "I started feeding a stray black cat behind my bakery, and yesterday she brought me an incredible thank you gift.",
+        "narration": (
+            "I started feeding a stray black cat behind my bakery, and yesterday she brought me an incredible thank you gift. "
+            "For six months she would wait by the back door at seven sharp every morning. I gave her tuna and fresh water, "
+            "and she allowed me exactly three gentle head scratches before trotting away. Last Thursday it poured rain all day. "
+            "She did not show up at seven, and I spent the morning checking the alley worried sick. Around noon I heard a faint "
+            "mewing near the delivery ramp. She had marched through the rain carrying a tiny orange kitten by the scruff of its "
+            "neck, soaked but proud. She deposited the kitten right onto my dry apron, sat down, and nudged my hand toward it. "
+            "Ten minutes later she brought two more. Now my bakery has three sleepy kittens in a warm basket and the happiest "
+            "protective mother cat in the city. Best family I could have ever asked for."
+        ),
+    },
 }
 
 
@@ -190,7 +262,7 @@ def build_story_prompt(mood: str, topic: str | None) -> str:
     )
 
 
-def parse_story_response(raw: str, mood: str, provider: str) -> StoryDraft:
+def parse_story_response(raw: str, mood: str, provider: str, auto_adjust: bool = False) -> StoryDraft:
     text = (raw or "").strip()
     text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
     text = re.sub(r"\s*```$", "", text).strip()
@@ -206,14 +278,49 @@ def parse_story_response(raw: str, mood: str, provider: str) -> StoryDraft:
         if not isinstance(val, str) or not val.strip():
             raise ValueError(f"Story response missing non-empty '{key}'")
         fields[key] = val.strip()
-    count = len(fields["narration"].split())
+
+    narration = fields["narration"]
+    words = narration.split()
+    count = len(words)
+
+    if auto_adjust:
+        # If slightly outside [MIN_WORDS, MAX_WORDS] (e.g. 95 to 220 words), trim/adjust gracefully
+        if 95 <= count < MIN_WORDS:
+            pad_sentence = (
+                " That is why you should always cherish the moments that matter most, "
+                "because once they are gone, all you have left are the stories you remember."
+            )
+            narration = narration.rstrip(".!?") + "." + pad_sentence
+            words = narration.split()
+            count = len(words)
+        elif MAX_WORDS < count <= 220:
+            sentences = re.split(r"(?<=[.!?])\s+", narration)
+            trimmed_sentences: list[str] = []
+            running_count = 0
+            for sent in sentences:
+                sent_words = len(sent.split())
+                if running_count + sent_words <= MAX_WORDS:
+                    trimmed_sentences.append(sent)
+                    running_count += sent_words
+                else:
+                    if running_count < MIN_WORDS:
+                        needed = MAX_WORDS - running_count
+                        partial = " ".join(sent.split()[:needed]).rstrip(",;:-") + "."
+                        trimmed_sentences.append(partial)
+                        running_count += needed
+                    break
+            if trimmed_sentences:
+                narration = " ".join(trimmed_sentences)
+                words = narration.split()
+                count = len(words)
+
     if not MIN_WORDS <= count <= MAX_WORDS:
         raise ValueError(f"Narration has {count} words; expected {MIN_WORDS}-{MAX_WORDS}")
     return StoryDraft(
         mood=normalize_mood(mood),
         title=fields["title"],
         hook=fields["hook"],
-        narration=fields["narration"],
+        narration=narration,
         description=_description(),
         provider=provider,
     )
@@ -260,7 +367,7 @@ def generate_story(
         else:
             llm = get_provider(name="gemini", settings=config)
         raw = llm.complete(prompt)
-        return parse_story_response(raw, mood, provider)
+        return parse_story_response(raw, mood, provider, auto_adjust=True)
     except Exception as exc:
         logger.warning("Story generation via %s failed (%s); using curated story.", provider, exc)
         return _curated_draft(mood, provider)
@@ -289,13 +396,17 @@ def synthesize_story_voice(
     words_path = work_dir / "aligned_words.json"
 
     if provider == "api":
+        profile = MOOD_VOICE_PROFILES.get(
+            mood,
+            {"voice": STORY_VOICE, "rate": STORY_RATE, "pitch": STORY_PITCH},
+        )
         audio_path, words, duration = synthesize_neural_tts(
             text=narration,
-            voice=MOOD_VOICES[mood],
+            voice=profile.get("voice", STORY_VOICE),
             output_audio_path=work_dir / "story_voice.mp3",
             output_words_path=words_path,
-            rate=STORY_RATE,
-            pitch=STORY_PITCH,
+            rate=profile.get("rate", STORY_RATE),
+            pitch=profile.get("pitch", STORY_PITCH),
         )
     else:
         audio_path = work_dir / "story_voice.wav"
@@ -346,9 +457,10 @@ def create_story_job(
 
     bg_file, _ = pick_background_asset(category="subway", auto_fetch=False)
     section_path = work_dir / f"section_{job_id}.mp4"
+    ffmpeg_bin = get_ffmpeg_path() or "ffmpeg"
     if bg_file and Path(bg_file).is_file():
         mux_cmd = [
-            "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(bg_file),
+            ffmpeg_bin, "-y", "-stream_loop", "-1", "-i", str(bg_file),
             "-i", str(audio_path), "-t", str(duration),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
@@ -356,7 +468,7 @@ def create_story_job(
         ]  # fmt: skip
     else:
         mux_cmd = [
-            "ffmpeg", "-y", "-f", "lavfi",
+            ffmpeg_bin, "-y", "-f", "lavfi",
             "-i", f"color=c=0x0f172a:s=1080x1920:r=30:d={duration}",
             "-i", str(audio_path), "-t", str(duration),
             "-map", "0:v:0", "-map", "1:a:0",
@@ -374,10 +486,12 @@ def create_story_job(
         )
         if proc.returncode != 0 or not section_path.is_file():
             logger.warning("Story mux failed: %s", (proc.stderr or "")[-300:])
-            section_path.touch()
+            if section_path.is_file() and section_path.stat().st_size == 0:
+                section_path.unlink(missing_ok=True)
     except Exception as exc:
-        logger.warning("Story mux failed (%s); creating empty section.", exc)
-        section_path.touch()
+        logger.warning("Story mux failed (%s); cleaning up.", exc)
+        if section_path.is_file() and section_path.stat().st_size == 0:
+            section_path.unlink(missing_ok=True)
 
     candidate = ClipCandidate(
         start=0.0, end=duration, text=draft.narration, score=1.0, reason=f"story:{draft.mood}"

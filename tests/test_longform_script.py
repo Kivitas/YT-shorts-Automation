@@ -61,13 +61,15 @@ def test_safety_notes():
 
 def test_validation_errors():
     with pytest.raises(ValueError):
-        build_script("discipline", minutes=5)
+        build_script("discipline", minutes=25)
     with pytest.raises(ValueError):
         build_script("discipline", minutes=0.5)
     with pytest.raises(ValueError):
         build_script("discipline", provider="cloud")
     with pytest.raises(ValueError):
         build_script("nope")
+    with pytest.raises(ValueError):
+        build_script("   ")
 
 
 class _FakeLLM:

@@ -25,8 +25,31 @@ logger = logging.getLogger(__name__)
 
 TOOLS_DIR = PROJECT_ROOT / "third_party" / "ffmpeg_skill" / "scripts"
 ALLOWED_TOOLS = frozenset(
-    {"check", "loudness", "silence", "caption", "probe", "metadata", "report"}
+    {
+        "check",
+        "loudness",
+        "silence",
+        "caption",
+        "probe",
+        "metadata",
+        "report",
+        "broll",
+        "speedramp",
+        "cropdetect",
+        "scenes",
+        "look",
+        "graphics",
+        "stabilize",
+        "cut",
+    }
 )
+
+PLATFORM_SAFE_ZONES: dict[str, dict[str, float]] = {
+    "shorts": {"top": 0.06, "bottom": 0.18, "left": 0.05, "right": 0.12},
+    "tiktok": {"top": 0.10, "bottom": 0.22, "left": 0.05, "right": 0.14},
+    "reels": {"top": 0.08, "bottom": 0.20, "left": 0.05, "right": 0.12},
+    "youtube": {"top": 0.05, "bottom": 0.05, "left": 0.05, "right": 0.05},
+}
 
 
 class FfmpegToolError(RuntimeError):
@@ -85,15 +108,20 @@ def _failure(reason: str) -> dict[str, Any]:
     return {"ok": False, "issues": [reason], "raw": {}}
 
 
-def check_delivery(video_path: Path) -> dict[str, Any]:
-    """Run check.py (default platform spec) on ``video_path``; never raises.
+def check_delivery(
+    video_path: Path | str, platform: str = "shorts"
+) -> dict[str, Any]:
+    """Run check.py on ``video_path`` against ``platform`` spec (default: shorts); never raises.
 
     Returns ``{"ok": bool, "issues": [str], "raw": dict}``. ``issues`` lists every FAIL and WARN
     row from check.py, or the failure reason when no JSON result could be read.
     """
     try:
         # The script runs from another folder, so the path must be absolute.
-        result = run_tool("check", [str(Path(video_path).resolve()), "--json"])
+        args = [str(Path(video_path).resolve()), "--json"]
+        if platform:
+            args.extend(["--platform", platform])
+        result = run_tool("check", args)
         doc = _parse_json_doc(result.stdout) or _parse_json_doc(result.stderr)
         if doc is None:
             return _failure(f"check.py exited {result.returncode} without a JSON result")
@@ -114,3 +142,229 @@ def check_delivery(video_path: Path) -> dict[str, Any]:
     except Exception as exc:  # informational check: never let it break the pipeline
         logger.warning("ffmpeg delivery check failed for %s: %s", video_path, exc)
         return _failure(f"delivery check could not run: {exc}")
+
+
+def detect_black_bars(
+    video_path: Path | str, seconds: float = 10.0, samples: int = 5
+) -> dict[str, Any]:
+    """Measure black letterbox/pillarbox bars and report the crop rectangle.
+
+    Returns structured dict with crop info and parsed crop parameters.
+    """
+    try:
+        args = [
+            str(Path(video_path).resolve()),
+            "--json",
+            "--seconds",
+            f"{seconds:g}",
+            "--samples",
+            str(samples),
+        ]
+        result = run_tool("cropdetect", args)
+        doc = _parse_json_doc(result.stdout) or _parse_json_doc(result.stderr)
+        if doc is None:
+            return {
+                "ok": False,
+                "crop": None,
+                "error": f"cropdetect exited {result.returncode}",
+                "raw": {},
+            }
+        doc["ok"] = result.returncode == 0
+        return doc
+    except Exception as exc:
+        logger.warning("cropdetect failed for %s: %s", video_path, exc)
+        return {"ok": False, "crop": None, "error": str(exc), "raw": {}}
+
+
+def detect_scenes_and_highlights(
+    video_path: Path | str, highlights: int = 5, target_duration: float | None = None
+) -> dict[str, Any]:
+    """Find scene changes, audio peaks, and propose candidate highlight ranges."""
+    try:
+        args = [str(Path(video_path).resolve()), "--json", "--highlights", str(highlights)]
+        if target_duration is not None:
+            args.extend(["--target", f"{target_duration:g}"])
+        result = run_tool("scenes", args)
+        doc = _parse_json_doc(result.stdout) or _parse_json_doc(result.stderr)
+        if doc is None:
+            return {
+                "ok": False,
+                "scenes": [],
+                "highlights": [],
+                "error": f"scenes exited {result.returncode}",
+                "raw": {},
+            }
+        doc["ok"] = result.returncode == 0
+        return doc
+    except Exception as exc:
+        logger.warning("scenes detection failed for %s: %s", video_path, exc)
+        return {"ok": False, "scenes": [], "highlights": [], "error": str(exc), "raw": {}}
+
+
+def detect_speech_silences(
+    video_path: Path | str, threshold_db: float = -38.0
+) -> dict[str, Any]:
+    """Detect speech silences and dead-air intervals in audio track."""
+    try:
+        args = [
+            str(Path(video_path).resolve()),
+            "--list",
+            "--json",
+            "--threshold",
+            f"{threshold_db:g}",
+        ]
+        result = run_tool("silence", args)
+        doc = _parse_json_doc(result.stdout) or _parse_json_doc(result.stderr)
+        if doc is None:
+            return {
+                "ok": False,
+                "silences": [],
+                "keeps": [],
+                "error": f"silence exited {result.returncode}",
+                "raw": {},
+            }
+        doc["ok"] = result.returncode == 0
+        return doc
+    except Exception as exc:
+        logger.warning("silence detection failed for %s: %s", video_path, exc)
+        return {"ok": False, "silences": [], "keeps": [], "error": str(exc), "raw": {}}
+
+
+def apply_speed_ramp(
+    video_path: Path | str,
+    output_path: Path | str,
+    segments: list[str] | list[tuple[float, float, float]],
+) -> Path:
+    """Step through varying speed factors across contiguous clip segments."""
+    out = Path(output_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    args = [str(Path(video_path).resolve()), "-o", str(out)]
+    for seg in segments:
+        if isinstance(seg, (tuple, list)):
+            seg_str = f"{seg[0]:g}-{seg[1]:g}:{seg[2]:g}"
+        else:
+            seg_str = str(seg)
+        args.extend(["--segment", seg_str])
+
+    res = run_tool("speedramp", args)
+    if res.returncode != 0:
+        raise FfmpegToolError(f"speedramp failed (exit {res.returncode}): {res.stderr}")
+    return out
+
+
+def insert_broll_cutaways(
+    main_video: Path | str,
+    output_path: Path | str,
+    insertions: list[dict[str, Any]],
+    audio: str = "a",
+) -> Path:
+    """Cut away to B-roll clips over A-roll footage while preserving main timeline."""
+    out = Path(output_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    args = [str(Path(main_video).resolve()), "-o", str(out), "--audio", audio]
+    for item in insertions:
+        clip = item.get("insert") or item.get("clip") or item.get("path")
+        if not clip:
+            continue
+        args.extend(["--insert", str(Path(clip).resolve())])
+        args.extend(["--at", f"{item['at']}"])
+        if "duration" in item:
+            args.extend(["--duration", f"{item['duration']}"])
+        elif "end" in item:
+            args.extend(["--end", f"{item['end']}"])
+        if "from" in item:
+            args.extend(["--from", f"{item['from']}"])
+
+    res = run_tool("broll", args)
+    if res.returncode != 0:
+        raise FfmpegToolError(f"broll failed (exit {res.returncode}): {res.stderr}")
+    return out
+
+
+def render_safe_zone_preview(
+    video_path: Path | str,
+    output_path: Path | str,
+    platform: str = "shorts",
+) -> Path:
+    """Render preview with shaded platform UI safe-zone guides (Shorts, TikTok, Reels, YouTube)."""
+    out = Path(output_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    norm_platform = (platform or "shorts").strip().lower()
+
+    if out.suffix.lower() == ".png":
+        res = run_tool(
+            "look",
+            [
+                str(Path(video_path).resolve()),
+                "-o",
+                str(out),
+                "--safe",
+                norm_platform,
+                "--overwrite",
+            ],
+        )
+        if res.returncode == 0 and out.is_file():
+            return out
+
+    # For video formats or if look tool did not produce expected file, draw boxes directly with ffmpeg
+    z = PLATFORM_SAFE_ZONES.get(norm_platform, PLATFORM_SAFE_ZONES["shorts"])
+    boxes: list[str] = []
+    for edge, frac in (
+        ("top", z["top"]),
+        ("bottom", z["bottom"]),
+        ("left", z["left"]),
+        ("right", z["right"]),
+    ):
+        if frac <= 0:
+            continue
+        if edge == "top":
+            boxes.append(f"drawbox=x=0:y=0:w=iw:h=ih*{frac:g}:color=red@0.35:t=fill")
+        elif edge == "bottom":
+            boxes.append(
+                f"drawbox=x=0:y=ih*(1-{frac:g}):w=iw:h=ih*{frac:g}:color=red@0.35:t=fill"
+            )
+        elif edge == "left":
+            boxes.append(f"drawbox=x=0:y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill")
+        else:
+            boxes.append(
+                f"drawbox=x=iw*(1-{frac:g}):y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill"
+            )
+
+    vf = ",".join(boxes) if boxes else "null"
+    cmd = [
+        get_ffmpeg_path(),
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(Path(video_path).resolve()),
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-c:a",
+        "copy",
+        str(out),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, env=_child_env())
+    return out
+
+
+__all__ = [
+    "ALLOWED_TOOLS",
+    "TOOLS_DIR",
+    "FfmpegToolError",
+    "apply_speed_ramp",
+    "check_delivery",
+    "detect_black_bars",
+    "detect_scenes_and_highlights",
+    "detect_speech_silences",
+    "insert_broll_cutaways",
+    "render_safe_zone_preview",
+    "run_tool",
+]

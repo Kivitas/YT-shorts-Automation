@@ -1,14 +1,63 @@
-# AutoShorts v1.3 — SuperBrain Orchestrator & TimesFM Forecasting
+# AutoShorts v1.4 — Full System Overhaul & Animated Faceless Studio
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
-[![Version: v1.3](https://img.shields.io/badge/Version-v1.3-brightgreen.svg)](pyproject.toml)
-[![Tests: 670+ Passing](https://img.shields.io/badge/Tests-670%2B%20Passing-brightgreen.svg)](tests/)
-[![Status: Production Release](https://img.shields.io/badge/Status-v1.3--Production-success.svg)](PLAN.md)
+[![Version: v1.4](https://img.shields.io/badge/Version-v1.4-brightgreen.svg)](pyproject.toml)
+[![Tests: 1,160+ Passing](https://img.shields.io/badge/Tests-1%2C160%2B%20Passing-brightgreen.svg)](tests/)
+[![Status: Production Release](https://img.shields.io/badge/Status-v1.4--Production-success.svg)](PLAN.md)
 
-An on-device, CPU-optimized YouTube clip-to-Shorts and autonomous faceless video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution) and macOS Monterey 12+ (Apple Silicon & Intel). Transforms long-form YouTube videos and neural text scripts into high-retention 9:16 vertical Shorts using the Master Brain Orchestrator multi-agent swarm, Google Research TimesFM time-series forecasting, Laya rhythm and beat snapping, word-level animated karaoke captions, multi-layout compositing, and closed-loop analytics.
+An on-device, CPU-optimized YouTube clip-to-Shorts, autonomous faceless video, and full-length animated video creation pipeline designed for consumer Windows hardware (Intel UHD / CPU execution) and macOS Monterey 12+ (Apple Silicon & Intel). Transforms long-form YouTube videos, neural text scripts, and custom topics into high-retention 9:16 vertical Shorts and up to 20-minute 16:9 full-length animated videos using the Master Brain Orchestrator multi-agent swarm, Google Research TimesFM forecasting, Laya beat snapping, 6 specialized animated genre visual engines (Parody, History, Science, Comparison, Finance, Motivation), the 15-tool vendored FFmpeg suite, full EachLabs GenMedia integration, kinetic ASS/Remotion subtitles, and closed-loop analytics.
 
 For the exhaustive engineering specification and architecture, see **[PLAN.md](PLAN.md)** and **[INTERFACES.md](INTERFACES.md)**.
+
+---
+
+## What's New in v1.4 (Full System Overhaul & Animated Faceless Studio)
+
+- 🛠️ **Vendored `ffmpeg_skill` Suite & Delivery QC (`src/autoshorts/media/ffmpeg_tools.py`)**:
+  - **15 Unlocked Standalone Tools**: Direct child-environment PATH wrapper for 15 vendored FFmpeg CLI utilities: `check`, `loudness`, `silence`, `caption`, `probe`, `metadata`, `report`, `broll`, `speedramp`, `cropdetect`, `scenes`, `look`, `graphics`, `stabilize`, and `cut`.
+  - **Automated Delivery QC (`check_delivery`)**: Verifies output videos against strict platform specifications (Shorts, TikTok, Reels, YouTube) for dimensions, audio loudness, aspect ratio, and video codecs with non-raising error reporting.
+  - **Black Bar & Highlight Detection**: Frame-accurate crop detection (`detect_black_bars`), multi-scene visual and audio highlight scoring (`detect_scenes_and_highlights`), and audio silence excision (`detect_speech_silences`).
+  - **Speed-Ramp & B-Roll Cutaways**: Piecewise segment speed acceleration (`apply_speed_ramp`) and overlay B-roll insertion (`insert_broll_cutaways`) over A-roll timelines.
+  - **Interactive Safe-Zone HUDs (`render_safe_zone_preview`)**: Shaded platform UI guide previews (Shorts, TikTok, Reels, YouTube) preventing mobile button obstruction.
+- 🎬 **Compositor & Visual Momentum Hardening (`src/autoshorts/media/compositor.py` & `dopamine_effects.py`)**:
+  - **Split-Screen Jump-Cut Duration Sync**: Enforces `vstack=inputs=2:shortest=1` to mathematically lock the duration of top cropped speaker cuts with bottom gameplay video, eliminating timeline desync.
+  - **Whip-Pan Visual Momentum Filters**: Injects dynamic horizontal camera pans across jump cuts (`build_visual_momentum_filter`), simulating human camera operator momentum.
+  - **Deduplicated Two-Pass Loudness Mastering**: Skips in-graph single-pass loudness normalization (`skip_in_graph_loudnorm=True`) when two-pass EBU R128 mastering (`audio_master.normalize_two_pass`) is enabled, preventing duplicate audio processing.
+  - **Polished Sidechain Ducking Curve**: Tuned compressor curve (`threshold=0.08:ratio=3.5:attack=15:release={duck_release}:knee=2.5:link=average`) for seamless BGM fading behind spoken dialogue.
+- 🔤 **Kinetic ASS & Remotion Typography Engine (`src/autoshorts/media/ass_styler.py` & `remotion/`)**:
+  - **Spring-Physics Overshoot Bounce (`build_spring_bounce_tags`)**: ASS override tags featuring 3-phase physics: 125% pop overshoot (0–70ms), 96% spring rebound (70–130ms), and 100% rest settle (130–180ms) with micro-rotation tilt (`\frz-2`).
+  - **`ActiveBox` Subtitle Style**: High-contrast `BorderStyle=3` rounded background pill boxes behind active words, ensuring readability over complex footage.
+  - **Frame-Quantized Jump-Cut Remapping**: Snaps word-level timestamps to discrete video frame boundaries (`fps`) across dead-air excisions (`remap_words_for_jump_cuts`).
+  - **GPU-Accelerated Remotion Overlays**: React-based word captions rendered via headless Chromium with CSS spring physics and FFmpeg overlay composition.
+- 📦 **Visual B-Roll Fetcher & High-CTR Thumbnail Maker (`src/autoshorts/media/`)**:
+  - **`VisualFetcher` (`visual_fetcher.py`)**: Automated discovery, download, and deterministic SHA-256 caching of vertical (9:16) stock video clips and photos via Pexels/Pixabay APIs, with synthetic fallback clips.
+  - **`ThumbnailMaker` (`thumbnail_maker.py`)**: High-retention 9:16 and 16:9 thumbnail synthesis featuring intelligent keyframe extraction, multi-line typography cascade (Montserrat, Impact, Arial), safe-zone bounding, and category pill badges.
+- 🧠 **EachLabs GenMedia Suite & Brain Swarm (`src/autoshorts/research_agent/eachlabs_client.py`)**:
+  - **All 5 GenMedia Endpoints**: Complete implementation of `generate_music`, `generate_sound_effects`, `generate_tts` (ElevenLabs Studio TTS), `generate_song` (vocals + instrumentals + lyrics), and `edit_video` (video-to-video style transformation).
+  - **Story Shorts Overhaul (`story_shorts.py`)**: `MOOD_VOICE_PROFILES` for 8 emotions (`sad`, `heartbreak`, `angry`, `funny`, `scary`, `wholesome`, `emotional`, `advice`), automated 95–220 word count bounds, and timestamped multimodal EDL planning.
+- 🚀 **Uploading, OAuth & Atomic Scheduler Hardening**:
+  - **Full-Scope OAuth Authorization**: Added `youtube.force-ssl` and `yt-analytics.readonly` scopes.
+  - **Quota Exhaustion Safeguards**: Project-wide 403 `quotaExceeded` immediately exhausts both upload and general quota trackers, initiating instant failover.
+  - **Scheduled Upload Verification**: Tolerates `privacyStatus="private"` when `publishAt` is scheduled.
+  - **Atomic Slot Claiming (`claim_scheduled_slot`)**: Atomic SQL slot reservation preventing duplicate uploads across concurrent workers.
+  - **Verified Cleanup Protection**: Video cleanup strictly requires `result.verified=True`.
+  - **Playwright Profile Mutex (`_PROFILE_LOCK`)**: Thread-safe access to persistent Microsoft Edge profiles, automated tags entry, and custom thumbnail uploads.
+- 🎥 **Full-Length Longform Video & Animated Studio (`src/autoshorts/longform/`)**:
+  - Produces up to 20-minute (1200.0s) full-length horizontal (1920×1080, 30 fps) videos across **any custom topic** and 6 specialized genres:
+    - **Parody & Moving Character Skits**: 2D articulated characters, real-time Viseme Lip-Sync (5 mouth shapes: `REST`, `AI`, `O`, `E`, `MBP`), eye blinks, breathing bob, expressive brow rigs, and 2-character dialogue stages.
+    - **History & Geopolitics Explainers**: Animated territory boundary expansion, progressive troop/trade route arrows, scrolling parchment timelines, and archival event plaques.
+    - **Science & STEM Visualizers**: Chemistry Bohr atoms & covalent bonds; Physics force vectors & wave interference; Biology rotating 3D DNA double-helix; Astrophysics spacetime gravity grids & black hole accretion disks.
+    - **VS Comparison & S–F Tier-List Battles**: Side-by-side racing stat bars (0–100%) and rubber-stamp S–F tier ratings.
+    - **Finance & Wealth Visuals**: Animated exponential compounding curves, asset vs. inflation comparison lines, and live dollar tickers on dark obsidian grids.
+    - **Self-Improvement & Motivation**: Dan Koe / Hormozi style 4-node Habit & Dopamine feedback loops with active node pulsation, and Value Equation visual breakdowns.
+- 💻 **Dashboard UI, Longform Studio Builder & Settings**:
+  - Interactive **Longform Studio Builder** card with genre picker, free-form custom topic input, and 1–15 min duration selector.
+  - New visual caption preset card for `"rapid"` kinetic typography.
+  - Delivery QC badges (`QC Passed` / `QC Issues`) and Provenance pills (`API Confirmed`, `Studio DOM`, `Local File`) on all job cards.
+  - Media & Music API integration settings for `EACHLABS_API_KEY`, `PEXELS_API_KEY`, and `PIXABAY_API_KEY`.
+- 🧪 **Test Suite Expansion**:
+  - Test suite expanded to **1,160+ passing tests** with 0 failures, 0 lint errors, and 100% CI pass rate.
 
 ---
 
@@ -129,7 +178,7 @@ flowchart TD
 
 ---
 
-## 4-View Studio Command Center
+## 5-View Studio Command Center
 
 AutoShorts provides an all-in-one desktop studio operating on `http://localhost:8765`, styled with an ultramodern **Glassmorphic and Claymorphic UI**:
 
@@ -169,6 +218,17 @@ AutoShorts provides an all-in-one desktop studio operating on `http://localhost:
 - **1-Click Closed-Loop Auto-Tune (`POST /api/analytics/auto-tune`)**: One-click optimization that extracts the winning configurations (aspect ratio, caption preset, crop focus, dopamine pacing, background category) from your top viral outliers and automatically applies them to studio defaults.
 - **CSV & JSON Telemetry Exporter (`GET /api/analytics/export?format=csv|json`)**: 1-click export of your full analytics dataset, retention figures, and attribution history.
 - **Strict Zero-Phantom Data Policy**: Telemetry strictly represents verified API and scraped metrics; zero synthetic or placeholder values are ever injected.
+
+### 5. 🎬 Longform Studio Builder (Full Videos up to 20 Min)
+- **Multi-Minute Autonomous Production**: Generate full-length 16:9 (1920×1080) videos across any custom topic with selectable durations from 1 to 15+ minutes (hard ceiling 20 minutes / 1200s).
+- **6 Specialized Genre Visual Engines**:
+  1. *Parody & Moving Character Skits*: 2D articulated characters, real-time Viseme Lip-Sync (5 mouth shapes: `REST`, `AI`, `O`, `E`, `MBP`), eye blinks, breathing bob, and 2-character dialogue stages.
+  2. *History & Geopolitics Explainers*: Animated territory expansion, progressive troop/trade route arrows, scrolling parchment timelines, and archival plaques.
+  3. *Science & STEM Visualizers*: Chemistry Bohr atoms & covalent bonds; Physics force vectors & wave interference; Biology 3D rotating DNA double-helix; Astrophysics gravity grids & black hole accretion disks.
+  4. *VS Comparison & S–F Tier-List Battles*: Side-by-side animated racing stat bars (0–100%) and rubber-stamp S–F tier ratings.
+  5. *Finance & Wealth Visuals*: Animated exponential compounding curves, asset vs. inflation comparison lines, and live dollar tickers on dark obsidian grids.
+  6. *Self-Improvement & Motivation*: Dan Koe / Hormozi style 4-node Habit & Dopamine feedback loops with active node pulsation, and Value Equation visual breakdowns.
+- **Section Audio & Timestamped Narration**: Automatically breaks scripts into thematic chapters with heading banners, synchronized narration, and dynamic visual transitions (`slide`, `zoom`, `iris`, `wipe`).
 
 ---
 
@@ -455,6 +515,10 @@ AutoShorts features an interactive **Settings Modal** accessible from the dashbo
   - Switch between `local` (CPU GGUF via `llama-cpp-python`), `gemini` (Google Gemini, default model `gemini-3.5-flash-lite` from `config/config.yaml`), and `openrouter`.
   - Enter or update `GEMINI_API_KEY` and `OPENROUTER_API_KEY` with automatic secret masking in logs.
   - Set local model paths (default: `data/models/Qwen3-0.6B-Instruct-Q8_0.gguf`).
+- **Media & Music API Integrations**:
+  - `EACHLABS_API_KEY`: Generative AI music, sound effects, ElevenLabs Studio TTS, songs with lyrics, and multimodal video editing.
+  - `PEXELS_API_KEY`: Vertical 9:16 stock B-roll video clip and photo discovery with local disk caching.
+  - `PIXABAY_API_KEY`: Supplementary royalty-free stock footage and visual B-roll search.
 - **Smart Clipping & Video Defaults (`job_defaults`)**:
   - `skip_sponsors`: Auto-query SponsorBlock API to skip sponsor segments, self-promos, and intros/outros (`true` by default).
   - `auto_trim_silence`: Auto-detect dead-air pauses (`> 0.45s`) in speech transcripts and convert to tight `JumpCut` ranges (`true` by default).
@@ -495,6 +559,14 @@ The FastAPI server exposes clean REST endpoints covering all pipeline capabiliti
 | `POST` | `/api/jobs/{id}/auto-trim-silence` | ✂️ Run Dead-Air Silence Auto-Trimmer (> 0.45s pauses) to generate frame-accurate jump-cuts. |
 | `POST` | `/api/jobs/{id}/re-burn` | ⚡ Fast 1-click re-burn of ASS subtitles into base video with modified styling. |
 | `DELETE` | `/api/jobs/{id}` | Cancel job and purge intermediate files via `SafetyCleaner`. |
+
+### Full-Length Longform Studio (`/api/longform`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/longform/generate` | Generate complete multi-minute longform video (1–20 min) with genre engine, custom topic, and optional auto-upload. |
+| `GET` | `/api/longform/status/{id}` | Check rendering progress, section audio alignment, and output paths. |
+| `GET` | `/api/longform/topics` | List curated topics across Parody, History, Science, Comparison, Finance, and Motivation genres. |
+| `GET` | `/api/longform/genres` | List available long-form visual genre engines and their supported sub-modes. |
 
 ### Built-In Viral Research Agent (`/api/research`)
 | Method | Endpoint | Description |

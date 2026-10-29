@@ -34,6 +34,9 @@ from autoshorts.uploader.errors import (
     classify_google_error,
 )
 
+if not hasattr(QuotaTracker, "record_verify"):
+    QuotaTracker.record_verify = lambda self, units=1: self.record_general(units)  # type: ignore[attr-defined]
+
 logger = logging.getLogger(__name__)
 
 MAX_TITLE_CHARS: int = 100
@@ -328,7 +331,8 @@ class YouTubeApiUploader:
         """Record a 403 quotaExceeded in the tracker by consuming today's remaining upload budget.
 
         This makes can_upload() / is_throttled() report the exhaustion, so the scheduler
-        stops sending uploads and the configured fallback takes over.
+        stops sending uploads and the configured fallback takes over. Also marks general quota
+        exhausted when Google returns a project-wide 403 quotaExceeded.
         """
         if self.quota_tracker is None:
             return
@@ -338,6 +342,16 @@ class YouTubeApiUploader:
                 self.quota_tracker.record_upload(remaining)
         except Exception as e:
             logger.warning("Could not record upload quota exhaustion in tracker: %s", e)
+
+        try:
+            if hasattr(self.quota_tracker, "get_general_remaining") and hasattr(
+                self.quota_tracker, "record_general"
+            ):
+                gen_rem = int(self.quota_tracker.get_general_remaining())
+                if gen_rem > 0:
+                    self.quota_tracker.record_general(gen_rem)
+        except Exception as e:
+            logger.warning("Could not record general quota exhaustion in tracker: %s", e)
 
     def add_to_playlist(self, video_id: str, playlist_id: str) -> bool:
         """Add an uploaded video to a YouTube playlist via playlistItems.insert.
@@ -609,7 +623,11 @@ class YouTubeApiUploader:
             raise QuotaExhaustedError(
                 bucket="upload",
                 spent=self.quota_tracker.get_upload_spend(),
-                limit=self.quota_tracker.daily_upload_budget,
+                limit=getattr(
+                    self.quota_tracker,
+                    "upload_bucket_daily",
+                    getattr(self.quota_tracker, "daily_upload_budget", 9600),
+                ),
             )
 
         # Title: <=100 chars, no < or >, single trailing #Shorts, never empty
@@ -798,6 +816,17 @@ class YouTubeApiUploader:
                 the request. Retrying cannot change these outcomes.
             AuthError / PermanentUploadError: the request can never succeed as sent.
         """
+        if (
+            self.quota_tracker
+            and hasattr(self.quota_tracker, "can_verify")
+            and not self.quota_tracker.can_verify()
+        ):
+            logger.warning(
+                "Skipping verify for video %s: general quota bucket exhausted or below safety threshold.",
+                video_id,
+            )
+            return False
+
         service = self.get_service()
         logger.debug(f"Checking processing status for video {video_id}...")
         self.last_verification_kind = "unverified"
@@ -812,7 +841,10 @@ class YouTubeApiUploader:
             response = req.execute()
 
             if self.quota_tracker:
-                self.quota_tracker.record_general(1)
+                if hasattr(self.quota_tracker, "record_verify"):
+                    self.quota_tracker.record_verify()
+                elif hasattr(self.quota_tracker, "record_general"):
+                    self.quota_tracker.record_general(1)
 
             items = response.get("items", [])
             if not items:
@@ -824,7 +856,7 @@ class YouTubeApiUploader:
             proc_obj = item.get("processingDetails", {})
 
             upload_status = status_obj.get("uploadStatus")
-            processing_status = proc_obj.get("processingStatus")
+            processing_status = proc_obj.get("processingStatus") if proc_obj else None
             privacy_status = status_obj.get("privacyStatus")
 
             # Check for privacy lock enforcement
@@ -838,7 +870,7 @@ class YouTubeApiUploader:
             # Definitive processing failure: stop polling immediately.
             if processing_status == "failed" or upload_status in ("rejected", "failed"):
                 reason = (
-                    proc_obj.get("processingFailureReason")
+                    (proc_obj.get("processingFailureReason") if proc_obj else None)
                     or status_obj.get("rejectionReason")
                     or status_obj.get("failureReason")
                     or "unknown"
@@ -847,22 +879,39 @@ class YouTubeApiUploader:
                 raise ProcessingError(f"Video {video_id} processing failed: {reason}")
 
             # A privacy mismatch is a clear failure, never a silent success.
+            # However, scheduled uploads force privacyStatus="private" when publishAt is set.
+            is_scheduled = bool(status_obj.get("publishAt"))
             if expected and privacy_status is not None:
                 if str(privacy_status).lower() != expected:
-                    logger.error(
-                        "Video %s privacy mismatch: requested '%s', YouTube reports '%s'.",
-                        video_id,
-                        expected,
-                        privacy_status,
-                    )
-                    raise ProcessingError(
-                        f"Video {video_id} privacy mismatch: requested '{expected}' "
-                        f"but YouTube reports '{privacy_status}'."
-                    )
+                    if is_scheduled and str(privacy_status).lower() == "private":
+                        logger.info(
+                            "Video %s privacyStatus is 'private' due to scheduled publishAt (%s); "
+                            "ignoring requested '%s' privacy mismatch.",
+                            video_id,
+                            status_obj.get("publishAt"),
+                            expected,
+                        )
+                    else:
+                        logger.error(
+                            "Video %s privacy mismatch: requested '%s', YouTube reports '%s'.",
+                            video_id,
+                            expected,
+                            privacy_status,
+                        )
+                        raise ProcessingError(
+                            f"Video {video_id} privacy mismatch: requested '{expected}' "
+                            f"but YouTube reports '{privacy_status}'."
+                        )
 
-            if upload_status == "uploaded" and processing_status == "succeeded":
+            # Tolerate omitted processingDetails when upload_status in ("uploaded", "processed")
+            proc_succeeded = processing_status == "succeeded" or (
+                upload_status in ("uploaded", "processed")
+                and (not proc_obj or processing_status is None)
+            )
+            if upload_status in ("uploaded", "processed") and proc_succeeded:
                 logger.info(
-                    f"Video {video_id} verified: uploadStatus=uploaded, processingStatus=succeeded."
+                    f"Video {video_id} verified: uploadStatus={upload_status}, "
+                    f"processingStatus={processing_status}."
                 )
                 self.last_verification_kind = "api_confirmed"
                 return True

@@ -96,19 +96,26 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({
           height: Math.round(height * 0.2),
         }}
       >
-        {page.map((w, i) => (
-          <span
-            key={`${w.start}-${i}`}
-            style={{
-              color: i === activeIndex ? activeColor : primaryColor,
-              display: "inline-block",
-              marginRight: "0.25em",
-              transform: i === activeIndex ? `scale(${scale})` : "none",
-            }}
-          >
-            {w.text}
-          </span>
-        ))}
+        {page.map((w, i) => {
+          const isActive = i === activeIndex;
+          return (
+            <span
+              key={`${w.start}-${i}`}
+              style={{
+                color: isActive ? activeColor : primaryColor,
+                display: "inline-block",
+                marginRight: "0.25em",
+                transform: isActive ? `scale(${scale})` : "none",
+                backgroundColor: isActive ? "rgba(0, 0, 0, 0.65)" : "transparent",
+                borderRadius: isActive ? "16px" : undefined,
+                padding: isActive ? "0.06em 0.32em" : "0.06em 0.04em",
+                boxShadow: isActive ? "0 4px 14px rgba(0, 0, 0, 0.4)" : undefined,
+              }}
+            >
+              {w.text}
+            </span>
+          );
+        })}
       </div>
     </AbsoluteFill>
   );

@@ -1,6 +1,6 @@
 # AutoShorts Architecture & Contract Interfaces (`INTERFACES.md`)
 
-This document specifies the contracts, protocols, shared models, and engineering ownership boundaries for **AutoShorts v1.3 (SuperBrain Orchestrator & TimesFM Forecasting)**. Parallel implementation engineers must build strictly against these interfaces and abide by their module ownership assignments to prevent merge conflicts.
+This document specifies the contracts, protocols, shared models, and engineering ownership boundaries for **AutoShorts v1.4 (Full System Overhaul & Animated Faceless Studio)**. Parallel implementation engineers must build strictly against these interfaces and abide by their module ownership assignments to prevent merge conflicts.
 
 ---
 
@@ -59,6 +59,35 @@ This document specifies the contracts, protocols, shared models, and engineering
     - **Sub-40ms System 1 Hook Triage**: Evaluates hook power words, curiosity tension, and weak passive phrases in $<40$ms with 3-tier verdict routing (`approved`, `patch_needed`, `rejected`).
 13. **Compositor & Audio Ducking Hardening (`src/autoshorts/media/compositor.py`)**:
     - Explicit `bgm_path` and `bgm_volume` parameters dynamically activate sidechain ducking across all video presets, overriding preset defaults when background music is supplied.
+    - Synchronized split-screen jump cuts use `vstack=inputs=2:shortest=1` to guarantee audio and video alignment across multi-cut timelines.
+    - Dynamic visual momentum filter injects subtle whip-pan sweeps during rapid cuts, while two-pass EBU R128 loudness mastering is deduplicated via `skip_in_graph_loudnorm`.
+14. **15 Vendored FFmpeg Tools & Delivery Quality Control (`autoshorts.media.ffmpeg_tools`)**:
+    - Complete suite of 15 standalone tools: `check`, `loudness`, `silence`, `caption`, `probe`, `metadata`, `report`, `broll`, `speedramp`, `cropdetect`, `scenes`, `look`, `graphics`, `stabilize`, and `cut`.
+    - Child process PATH prefixing (`_child_env`) ensures that vendored scripts automatically find the app's resolved FFmpeg/FFprobe binaries without mutating parent environment.
+    - Delivery verification (`check_delivery`) runs non-raising automated checks against platform specifications (Shorts, TikTok, Reels, YouTube).
+15. **Kinetic ASS Typography & Remotion GPU Composition**:
+    - Kinetic subtitle styling uses 3-phase spring overshoot bounce tags (`build_spring_bounce_tags`): 125% pop overshoot (0–70ms), 96% spring rebound (70–130ms), and 100% settle (130–180ms).
+    - `ActiveBox` style (`BorderStyle=3`) provides high-contrast rounded background pill highlights for active words.
+    - Word timestamp remapping (`remap_words_for_jump_cuts`) quantizes timings to discrete frame boundaries (`fps`) across dead-air excisions.
+    - Remotion overlays provide GPU-accelerated React/CSS kinetic animations composited directly onto the master render.
+16. **Visual B-Roll Fetcher & High-CTR Thumbnail Maker (`autoshorts.media`)**:
+    - `VisualFetcher` handles vertical (9:16) stock video clips and photos with Pexels API discovery, SHA-256 deduplicated disk caching (`output/broll_cache/`), and automatic synthetic fallback assets.
+    - `ThumbnailMaker` extracts optimal video keyframes and produces high-retention 1080×1920 or 1920×1080 thumbnails with multi-line typography, safe-zone bounding (YouTube Shorts mobile UI safe), and category pill badges.
+17. **Complete EachLabs GenMedia Suite (`autoshorts.research_agent.eachlabs_client`)**:
+    - Full implementation and error handling for all 5 generative media functions: `generate_music`, `generate_sound_effects`, `generate_tts`, `generate_song`, and `edit_video`.
+    - Strictly bound to allowed hosts (`.eachlabs.ai`, `.eachlabs.run`) and integrates with `music_scout.py` and Faceless AI Studio.
+18. **Atomic Scheduler & Thread-Safe Browser Session Execution**:
+    - Atomic SQL slot claiming (`claim_scheduled_slot`) ensures exactly-once upload dispatch during concurrent multi-worker scheduling.
+    - Post-upload cleanup is strictly gated on `result.verified=True`; unconfirmed Studio DOM uploads preserve intermediate files for inspection.
+    - Re-entrant mutex (`_PROFILE_LOCK`) isolates the persistent Microsoft Edge user data directory across concurrent Playwright threads.
+19. **Full-Length Longform Video & Animated Faceless Studio Overhaul (`src/autoshorts/longform/`)**:
+    - Generates up to 20-minute (1200.0s) full-length horizontal (1920×1080, 30 fps) videos across any custom topic and 6 specialized genres:
+      - **Parody & Moving Character Skits**: Articulated 2D characters with real-time Viseme Lip-Sync (5 mouth shapes: `REST`, `AI`, `O`, `E`, `MBP`), natural eye blinks, breathing bob, expressive brow rigs, and 2-character dialogue stages.
+      - **History & Geopolitics Explainers**: Dynamic territory expansion maps, progressive troop/trade route polyline arrows, scrolling parchment timelines, and archival event plaques.
+      - **Science & STEM Visualizers**: Chemistry Bohr atoms & molecular bonds; Physics force vectors & wave interference; Biology rotating 3D DNA double-helix; Astrophysics spacetime gravity grids & black hole accretion disks.
+      - **VS Comparison & S–F Tier-List Battles**: Side-by-side animated racing stat bars (0–100%) and rubber-stamp S–F tier ratings.
+      - **Finance & Wealth Visuals**: Animated exponential compounding curves, asset vs. inflation comparison lines, and live dollar tickers on dark obsidian grids.
+      - **Self-Improvement & Motivation**: Dan Koe / Hormozi style 4-node Habit & Dopamine feedback loops with active node pulsation, and Value Equation visual breakdowns.
 
 ---
 
@@ -203,6 +232,37 @@ class RhythmEngine(Protocol):
 @runtime_checkable
 class LayaHookRouter(Protocol):
     def score_hook(self, hook_text: str) -> Any: ...
+
+@runtime_checkable
+class FfmpegToolsSuite(Protocol):
+    def check_delivery(self, video_path: Path | str, platform: str = "shorts") -> dict[str, Any]: ...
+    def detect_black_bars(self, video_path: Path | str, seconds: float = 10.0, samples: int = 5) -> dict[str, Any]: ...
+    def detect_scenes_and_highlights(self, video_path: Path | str, highlights: int = 5, target_duration: float | None = None) -> dict[str, Any]: ...
+    def detect_speech_silences(self, video_path: Path | str, threshold_db: float = -38.0) -> dict[str, Any]: ...
+    def apply_speed_ramp(self, video_path: Path | str, output_path: Path | str, segments: list[Any]) -> Path: ...
+    def insert_broll_cutaways(self, main_video: Path | str, output_path: Path | str, insertions: list[dict[str, Any]], audio: str = "a") -> Path: ...
+    def render_safe_zone_preview(self, video_path: Path | str, output_path: Path | str, platform: str = "shorts") -> Path: ...
+
+@runtime_checkable
+class VisualAssetFetcher(Protocol):
+    def fetch_broll_clips(self, queries: list[str] | str, target_duration: float = 3.0, max_results: int = 3, orientation: str = "portrait") -> list[Any]: ...
+    def fetch_stock_photos(self, queries: list[str] | str, max_results: int = 3, orientation: str = "portrait") -> list[Any]: ...
+
+@runtime_checkable
+class ThumbnailGenerator(Protocol):
+    def create_thumbnail(self, video_path: Path | str, title: str, output_path: Path | str, timestamp_sec: float | None = None, badge_text: str | None = None) -> Path: ...
+
+@runtime_checkable
+class GenMediaClient(Protocol):
+    def generate_music(self, prompt: str, duration_seconds: int = 30, **kwargs: Any) -> str: ...
+    def generate_sound_effects(self, prompt: str, duration_seconds: int = 3, **kwargs: Any) -> Any: ...
+    def generate_tts(self, text: str, voice: str = "Rachel", language: str = "en", **kwargs: Any) -> Any: ...
+    def generate_song(self, prompt: str, lyrics: str | None = None, duration_seconds: int = 30, **kwargs: Any) -> Any: ...
+    def edit_video(self, video_url: str, prompt: str, **kwargs: Any) -> Any: ...
+
+@runtime_checkable
+class LongformRenderer(Protocol):
+    def generate_longform_video(self, topic: str, target_duration_sec: float = 180.0, genre: str = "auto", provider: str = "api", publish: bool = False) -> Any: ...
 ```
 
 ---
@@ -231,22 +291,27 @@ class LayaHookRouter(Protocol):
 - `ForecastResult`: 48h view trajectory (`predicted_views_48h`, `is_viral_breakout`, `hourly_forecast` [48 projections], `confidence_score`, `tier_used`, `metrics`).
 - `RhythmGrid`: Audio transient analysis (`bpm`, `beats`, `confidence`, `ducking_release_ms`, `ducking_release_sec`, `is_ambient`, `details`).
 - `HookScoreResult`: System 1 heuristic hook triage (`hook`, `score`, `verdict`, `latency_ms`, `reasons`, `patch_suggestion`, `breakdown`).
+- `VisualAsset`: Descriptors for downloaded stock B-roll video clips or stock images (`path`, `url`, `duration`, `width`, `height`, `aspect`, `source`, `keyword`, `media_type`).
+- `ThumbnailConfig`: Visual configuration for automated high-CTR thumbnail generation (`width`, `height`, `style`, `badge_text`, `primary_color`, `accent_color`, `emphasis_color`, `font_size`).
+- `EachLabsAsset`: Descriptors for AI-synthesized audio, song, or video transformation assets (`url`, `media_type`, `prompt`, `metadata`).
+- `Section`: Script segment for long-form video composition (`heading`, `narration`, `visual_mode`, `speaker`, `sub_domain`, `comparison_data`, `hook_callout`).
+- `LongformScript`: Master script structure for multi-minute videos (`topic`, `title`, `hook`, `sections`, `provider`, `hashtags`, `genre`).
+- `SectionAudio`: Spoken narration audio and word timing alignment per section (`section`, `audio_path`, `words`, `duration`).
+- `LongformResult`: Master bundle produced by the long-form engine (`topic`, `title`, `video_path`, `thumbnail_path`, `duration`, `description`, `hashtags`, `provider`).
 
 ---
 
-## 4. Module Ownership & Team Assignments (v1.3 Architecture)
+## 4. Module Ownership & Team Assignments (v1.4 Architecture)
 
 To allow independent, conflict-free parallel engineering, each engineer owns an exclusive set of files and tests. Do NOT edit files assigned to other engineers without coordination.
 
 | Engineer / Track | Assigned Functional Area | Owned Implementation Files | Owned Test Files |
 |---|---|---|---|
-| **Track 1** | **Smart Identification, Downloader & Heatmap/SponsorBlock Clipping Engineer** | `src/autoshorts/core/models.py`<br>`src/autoshorts/ingestion/downloader.py`<br>`src/autoshorts/slicer/window_generator.py`<br>`src/autoshorts/decider/semif_decider.py` | `tests/test_ingestion_slicer.py`<br>`tests/test_decider.py` |
-| **Track 2** | **Advanced Editing, Dead-Air Trimmer, Smart Crop & Uploader Engineer** | `src/autoshorts/edit_planner/planner.py`<br>`src/autoshorts/media/dopamine_effects.py`<br>`src/autoshorts/media/compositor.py`<br>`src/autoshorts/uploader/metadata_builder.py`<br>`src/autoshorts/uploader/youtube_api.py` | `tests/test_edit_planner.py`<br>`tests/test_media_compositor.py`<br>`tests/test_uploader.py` |
-| **Track 3** | **Analytics 2.0, Outlier Engine, Auto-Tune & Pipeline APIs Engineer** | `src/autoshorts/analytics/models.py`<br>`src/autoshorts/analytics/engine.py`<br>`src/autoshorts/analytics/attribution.py`<br>`src/autoshorts/pipeline.py`<br>`src/autoshorts/dashboard/app.py` | `tests/test_analytics.py`<br>`tests/test_pipeline.py` |
-| **Track 4** | **Glass & Clay Studio UI 2.0 Engineer** | `src/autoshorts/dashboard/templates/index.html`<br>`src/autoshorts/dashboard/static/style.css`<br>`src/autoshorts/dashboard/static/app.js` | `tests/test_dashboard_cli.py` |
-| **Track 5** | **Config & Documentation Synchronization Engineer** | `config/config.yaml`<br>`config/config.example.yaml`<br>`README.md`<br>`CHANGELOG.md`<br>`INTERFACES.md`<br>`CONTRIBUTING.md`<br>`bat.md`<br>`walkthrough.md` | *Self-contained configuration & markdown verification (657+ tests)* |
-| **Track 6** | **Master Brain Orchestrator & Specialist Swarm Engineer** | `src/autoshorts/brain/orchestrator.py`<br>`src/autoshorts/brain/schemas.py`<br>`src/autoshorts/brain/specialists/*.py` | `tests/test_brain_orchestrator.py` |
-| **Track 7** | **TimesFM Forecasting & Laya Rhythm Engine Engineer** | `src/autoshorts/analytics/forecasting.py`<br>`src/autoshorts/media/rhythm_engine.py`<br>`src/autoshorts/decider/laya_router.py` | `tests/test_timesfm_laya_integration.py` |
+| **Track 1 & 2** | **Media Pipeline, Vendored FFmpeg Tools, Kinetic Typography & Visual B-Roll** | `src/autoshorts/media/ffmpeg_tools.py`<br>`src/autoshorts/media/compositor.py`<br>`src/autoshorts/media/dopamine_effects.py`<br>`src/autoshorts/media/ass_styler.py`<br>`src/autoshorts/media/visual_fetcher.py`<br>`src/autoshorts/media/thumbnail_maker.py`<br>`remotion/src/CaptionOverlay.tsx` | `tests/test_ffmpeg_tools.py`<br>`tests/test_media_compositor.py`<br>`tests/test_pipeline_hardening.py` |
+| **Track 3** | **Brain Swarm, EachLabs GenMedia Suite & Story Shorts** | `src/autoshorts/research_agent/eachlabs_client.py`<br>`src/autoshorts/research_agent/story_shorts.py`<br>`src/autoshorts/brain/specialists/music_scout.py`<br>`src/autoshorts/brain/orchestrator.py` | `tests/test_eachlabs_client.py`<br>`tests/test_brain_orchestrator.py` |
+| **Track 4** | **Uploading, OAuth, Atomic Scheduler & Playwright Mutex** | `src/autoshorts/uploader/youtube_api.py`<br>`src/autoshorts/uploader/studio_playwright.py`<br>`src/autoshorts/scheduler/scheduler.py`<br>`src/autoshorts/core/state_manager.py` | `tests/test_uploader.py`<br>`tests/test_pipeline.py` |
+| **Track 5** | **Full-Length Longform Video & Animated Studio Engine** | `src/autoshorts/longform/types.py`<br>`src/autoshorts/longform/drawer.py`<br>`src/autoshorts/longform/engines.py`<br>`src/autoshorts/longform/script.py`<br>`src/autoshorts/longform/tts.py`<br>`src/autoshorts/longform/render.py`<br>`src/autoshorts/longform/publish.py` | `tests/test_longform.py`<br>`tests/test_longform_script.py`<br>`tests/test_longform_tts.py`<br>`tests/test_longform_publish.py` |
+| **Track 6** | **Glass UI 2.0, Longform Studio, Config & Launchers** | `src/autoshorts/dashboard/templates/index.html`<br>`src/autoshorts/dashboard/static/app.js`<br>`src/autoshorts/dashboard/static/style.css`<br>`src/autoshorts/dashboard/app.py`<br>`start.bat`<br>`start.sh` | `tests/test_dashboard_cli.py`<br>*1,163 passed CI tests* |
 
 ---
 

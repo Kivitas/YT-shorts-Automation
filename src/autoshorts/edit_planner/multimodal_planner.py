@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from autoshorts.edit_planner.edl_schema import (
     create_empty_edl,
     validate_edl,
 )
+from autoshorts.media.encoder_probe import get_ffprobe_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +42,9 @@ def probe_clip_duration(video_path: Path | str, default: float = 45.0) -> float:
         return default
 
     try:
+        ffprobe_bin = get_ffprobe_path() or "ffprobe"
         cmd = [
-            "ffprobe",
+            ffprobe_bin,
             "-v",
             "error",
             "-show_entries",
@@ -68,13 +71,31 @@ def build_edl_prompt(
     transcript_text: str | None = None,
     instructions: str | None = None,
     is_multimodal: bool = False,
+    word_timings: Sequence[dict[str, Any]] | None = None,
 ) -> str:
     """Construct structured instruction prompt commanding strict EDL JSON response."""
-    transcript_section = (
-        f"\nTRANSCRIPT EXCERPT:\n{transcript_text.strip()}\n"
-        if transcript_text and transcript_text.strip()
-        else "\n(No raw transcript provided; analyze spoken dialogue and visual cues directly)\n"
-    )
+    transcript_parts: list[str] = []
+    if transcript_text and transcript_text.strip():
+        transcript_parts.append(f"TRANSCRIPT EXCERPT:\n{transcript_text.strip()}")
+
+    if word_timings:
+        cue_lines: list[str] = []
+        for w in word_timings:
+            word_str = str(w.get("word", "")).strip()
+            start = float(w.get("start", 0.0))
+            end = float(w.get("end", 0.0))
+            if word_str:
+                cue_lines.append(f"[{start:.2f}s - {end:.2f}s] {word_str}")
+        if cue_lines:
+            cues_text = "\n".join(cue_lines)
+            transcript_parts.append(
+                f"TIMESTAMPED TRANSCRIPT CUES (use these exact second boundaries to align jump_cuts and zoom_punch_ins):\n{cues_text}"
+            )
+
+    if transcript_parts:
+        transcript_section = "\n\n" + "\n\n".join(transcript_parts) + "\n"
+    else:
+        transcript_section = "\n(No raw transcript provided; analyze spoken dialogue and visual cues directly)\n"
 
     instructions_section = (
         f"\nOPERATOR EDITORIAL INSTRUCTIONS:\n{instructions.strip()}\n"
@@ -174,6 +195,7 @@ class MultimodalEditPlanner(EditPlanner):
         video_clip_path: Path,
         transcript_text: str | None = None,
         instructions: str | None = None,
+        word_timings: Sequence[dict[str, Any]] | None = None,
     ) -> EditDecisionList:
         """Analyze video clip and generate symbolic EDL (hook trims, jump cuts, zoom punch-ins).
 
@@ -206,6 +228,7 @@ class MultimodalEditPlanner(EditPlanner):
                     transcript_text=transcript_text,
                     instructions=instructions,
                     is_multimodal=True,
+                    word_timings=word_timings,
                 )
 
                 if hasattr(self.provider, "analyze_video"):
@@ -232,6 +255,7 @@ class MultimodalEditPlanner(EditPlanner):
                     transcript_text=transcript_text,
                     instructions=instructions,
                     is_multimodal=False,
+                    word_timings=word_timings,
                 )
                 if hasattr(self.provider, "complete"):
                     raw_output = self.provider.complete(prompt=prompt)

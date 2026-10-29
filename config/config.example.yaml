@@ -72,7 +72,7 @@ media:
   generate_lowres_preview: true    # Renders 540x960 fast preview for dashboard
 
 subtitles:
-  style_preset: "neon"             # "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic"
+  style_preset: "neon"             # "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid"
   font_name: "Montserrat ExtraBold"
   font_size: 76
   words_per_burst: 3
@@ -144,3 +144,21 @@ cleanup:
   keep_final_days: 1               # Days a kept master MP4 stays in output/
   purge_intermediate_work: true
   dry_run: false
+
+pipeline:
+  concurrency: 3                   # Max concurrent rendering and processing workers
+  caption_engine: "ass"            # Caption generator engine ("ass" or "remotion")
+  enable_delivery_qc: true         # Run automatic FFmpeg delivery QC checks on completed renders
+
+integrations:
+  eachlabs:
+    enabled: false                 # Enable EachLabs audio and music synthesis
+    model: "mureka-generate-music" # Model identifier for EachLabs generation
+
+# API Keys & Secrets (Set in .env or environment variables):
+# GEMINI_API_KEY: "AIzaSy..."
+# OPENROUTER_API_KEY: "sk-or-v1-..."
+# YOUTUBE_API_KEY: "AIzaSy..."
+# EACHLABS_API_KEY: "el-..."
+# PEXELS_API_KEY: "..."
+# PIXABAY_API_KEY: "..."

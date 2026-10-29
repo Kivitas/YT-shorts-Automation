@@ -43,6 +43,7 @@ class OpenRouterProvider(BaseLLMProvider):
         self.settings = settings or load_config()
         self._api_key = api_key or self.settings.get_openrouter_api_key_str()
         self._custom_client = http_client
+        self._http_client: httpx.Client | None = http_client
         self._timeout = timeout
 
     @property
@@ -71,10 +72,17 @@ class OpenRouterProvider(BaseLLMProvider):
         return self._api_key
 
     def _get_client(self) -> httpx.Client:
-        """Return the active HTTP client."""
+        """Return the active shared or custom HTTP client."""
         if self._custom_client is not None:
             return self._custom_client
-        return httpx.Client(timeout=self._timeout)
+        if self._http_client is None or getattr(self._http_client, "is_closed", False):
+            self._http_client = httpx.Client(timeout=self._timeout)
+        return self._http_client
+
+    def close(self) -> None:
+        """Close shared HTTP client."""
+        if self._http_client is not None and not getattr(self._http_client, "is_closed", False):
+            self._http_client.close()
 
     def _get_headers(self) -> dict[str, str]:
         """Return common headers for OpenRouter API requests."""

@@ -1,4 +1,4 @@
-"""Per-section narration audio for long-form videos (Edge neural TTS, then Kokoro)."""
+"""Per-section narration audio for long-form videos with consistent character cast voices."""
 
 from __future__ import annotations
 
@@ -8,11 +8,33 @@ import wave
 from pathlib import Path
 from typing import Any
 
-from autoshorts.longform.types import LongformScript, SectionAudio
+from autoshorts.longform.types import LongformScript, Section, SectionAudio
 
 logger = logging.getLogger(__name__)
 
-VOICES = ("en-US-ChristopherNeural", "en-US-AriaNeural")
+NARRATOR_VOICE = "en-US-ChristopherNeural"
+SECONDARY_VOICE = "en-US-AriaNeural"
+VOICES = (NARRATOR_VOICE, SECONDARY_VOICE)
+
+SPEAKER_VOICES: dict[str, str] = {
+    "narrator": NARRATOR_VOICE,
+    "host": NARRATOR_VOICE,
+    "main": NARRATOR_VOICE,
+    "character_a": NARRATOR_VOICE,
+    "skeptic": SECONDARY_VOICE,
+    "cohost": SECONDARY_VOICE,
+    "guest": SECONDARY_VOICE,
+    "character_b": SECONDARY_VOICE,
+    "friend": "en-US-GuyNeural",
+}
+
+
+def voice_for_section(section: Section, default_voice: str | None = None) -> str:
+    """Resolve the consistent character cast voice for a script section."""
+    if default_voice:
+        return default_voice
+    speaker = (getattr(section, "speaker", "narrator") or "narrator").strip().lower()
+    return SPEAKER_VOICES.get(speaker, NARRATOR_VOICE)
 
 
 def _edge(
@@ -49,12 +71,12 @@ def _kokoro(text: str, voice: str, wav_path: Path) -> tuple[list[dict[str, Any]]
 def synthesize_sections(
     script: LongformScript, work_dir: Path, voice: str | None = None
 ) -> list[SectionAudio]:
-    """Synthesize every section. Never produces silent or tone audio."""
+    """Synthesize every section using consistent character cast voices."""
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     results: list[SectionAudio] = []
     for i, section in enumerate(script.sections):
-        v = voice or VOICES[i % len(VOICES)]
+        v = voice_for_section(section, default_voice=voice)
         text = section.narration
         mp3 = work_dir / f"section_{i:02d}.mp3"
         words_json = work_dir / f"section_{i:02d}_words.json"

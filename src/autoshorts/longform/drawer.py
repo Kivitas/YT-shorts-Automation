@@ -1,7 +1,8 @@
-"""Pillow cartoon renderer for long-form videos (1920x1080, 30 fps).
+"""Pillow animated studio renderer for long-form videos (1920x1080, 30 fps).
 
-Each section gets its own bright set, a new character placement, pop-in stickers and a
-different transition into the next section. Characters have round heads and thick outlines.
+Features articulated 2D characters with real-time viseme lip-sync, expressive brow rigs,
+two-character parody banter stages, smooth Ken-Burns camera motion, and 5 specialized
+genre visual engines (History, Science, Comparison, Finance, Motivation).
 """
 
 from __future__ import annotations
@@ -14,7 +15,14 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from autoshorts.longform.types import MAX_VIDEO_SECONDS, SectionAudio
+from autoshorts.longform.engines import (
+    draw_comparison_canvas,
+    draw_finance_canvas,
+    draw_history_canvas,
+    draw_motivation_canvas,
+    draw_science_canvas,
+)
+from autoshorts.longform.types import MAX_VIDEO_SECONDS, VISEME_SHAPES, SectionAudio
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +38,7 @@ WHITE = (255, 255, 255)
 YELLOW = (255, 214, 40)
 PINK = (255, 72, 120)
 GREEN = (60, 200, 90)
+CYAN = (0, 228, 255)
 CAPTION_BG = (22, 18, 48)
 WOOD = (176, 110, 60)
 PANTS = (40, 52, 112)
@@ -43,9 +52,10 @@ SHIRT_PURPLE = (150, 90, 235)
 HAIR_BROWN = (92, 52, 28)
 HAIR_BLACK = (30, 28, 34)
 MOUTH_DARK = (120, 24, 44)
+TONGUE_PINK = (235, 96, 120)
 
 MAIN_SHIRTS = (SHIRT_RED, SHIRT_BLUE, SHIRT_PURPLE)
-MOODS = ("happy", "shock", "worried", "excited", "angry", "think")
+MOODS = ("happy", "shocked", "deadpan", "smug", "hyped", "thinking", "angry", "worried")
 TRANSITIONS = ("slide", "zoom", "iris", "wipe")
 STICKER_KINDS = ("star", "boom", "coin", "check", "arrow")
 STICKER_LABELS = ("WOW", "NO WAY", "REAL", "YES", "STOP", "KEY")
@@ -112,10 +122,26 @@ POSES: dict[str, Pose] = {
         "l_knee": (-12, 45), "l_foot": (-16, 100),
         "r_knee": (12, 45), "r_foot": (16, 100),
     },
+    "present": {
+        "head": (2, -150), "neck": (0, -122),
+        "l_elbow": (-32, -82), "l_hand": (-42, -52),
+        "r_elbow": (54, -108), "r_hand": (112, -122),
+        "l_knee": (-14, 45), "l_foot": (-18, 100),
+        "r_knee": (16, 45), "r_foot": (22, 100),
+    },
+    "debate": {
+        "head": (4, -150), "neck": (2, -122),
+        "l_elbow": (-40, -98), "l_hand": (-64, -120),
+        "r_elbow": (46, -102), "r_hand": (82, -118),
+        "l_knee": (-15, 45), "l_foot": (-20, 100),
+        "r_knee": (15, 45), "r_foot": (20, 100),
+    },
 }  # fmt: skip
 
-POSE_CYCLE = ("stand", "point", "think", "lift", "shrug", "walk", "point", "stand")
+POSE_CYCLE = ("stand", "point", "present", "think", "lift", "shrug", "walk", "point")
 FRIEND_CYCLE = ("sit", "point", "sit", "think")
+BANTER_CYCLE_A = ("debate", "point", "present", "shrug", "stand")
+BANTER_CYCLE_B = ("stand", "shrug", "think", "debate", "point")
 
 
 def ease_in_out(t: float) -> float:
@@ -158,23 +184,179 @@ def pose_at(sequence: Sequence[str], time_s: float, hold: float = 2.2, tween: fl
 
 
 # ---------------------------------------------------------------------------
+# Viseme Lip-Sync Engine
+# ---------------------------------------------------------------------------
+def _char_to_viseme(ch: str) -> str:
+    c = ch.lower()
+    if c in "mbp":
+        return "MBP"
+    if c in "ouwq":
+        return "O"
+    if c in "aiy":
+        return "AI"
+    if c in "esztdkgcrlnfvjxh":
+        return "E"
+    return ""
+
+
+def viseme_at(words: Sequence[dict[str, Any]], t: float) -> str:
+    """Return the active mouth viseme ('REST', 'AI', 'O', 'E', 'MBP') at timestamp ``t``."""
+    if not words:
+        return "REST"
+    for w in words:
+        start = float(w.get("start", 0.0))
+        end = float(w.get("end", start + 0.18))
+        if end <= start:
+            end = start + 0.18
+        if start <= t <= end:
+            raw_word = "".join(ch for ch in str(w.get("word", "")) if ch.isalpha())
+            dur = max(0.05, end - start)
+            rel = min(0.999, max(0.0, (t - start) / dur))
+            # Rapid syllable oscillation so mouth visibly opens/closes across long words
+            beat = int((t - start) * 14.0)
+            if beat % 5 == 4:
+                return "MBP"
+            if raw_word:
+                idx = min(len(raw_word) - 1, int(rel * len(raw_word)))
+                mapped = _char_to_viseme(raw_word[idx])
+                if mapped:
+                    # Alternate if consecutive frames would stay static too long
+                    if beat % 3 == 2 and mapped == "E":
+                        return "AI"
+                    return mapped
+            cycle = ("AI", "O", "E", "MBP")
+            return cycle[beat % len(cycle)]
+    return "REST"
+
+
+# ---------------------------------------------------------------------------
 # Characters
 # ---------------------------------------------------------------------------
-def _blob(draw: ImageDraw.ImageDraw, cx: float, cy: float, rx: float, ry: float, fill: Any, out: int) -> None:
+def _blob(
+    draw: ImageDraw.ImageDraw, cx: float, cy: float, rx: float, ry: float, fill: Any, out: int
+) -> None:
     draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=fill, outline=OUTLINE, width=out)
 
 
 def _brow(mood: str, side: int, r: float) -> tuple[float, float]:
     """Vertical offsets of the (outer, inner) end of one eyebrow."""
     if mood == "angry":
-        return -0.1 * r, 0.14 * r
+        return -0.12 * r, 0.16 * r
     if mood == "worried":
-        return 0.1 * r, -0.14 * r
-    if mood == "shock":
-        return -0.22 * r, -0.22 * r
-    if mood == "think" and side > 0:
-        return -0.2 * r, -0.12 * r
+        return 0.12 * r, -0.14 * r
+    if mood in ("shock", "shocked", "hyped", "excited"):
+        return -0.24 * r, -0.22 * r
+    if mood == "deadpan":
+        return 0.04 * r, 0.04 * r
+    if mood == "smug":
+        return (-0.22 * r, -0.08 * r) if side > 0 else (0.05 * r, 0.08 * r)
+    if mood in ("think", "thinking") and side > 0:
+        return -0.22 * r, -0.12 * r
     return 0.0, 0.0
+
+
+def _draw_mouth(
+    draw: ImageDraw.ImageDraw,
+    mx: float,
+    my: float,
+    r: float,
+    line_w: int,
+    mood: str,
+    viseme: str,
+) -> None:
+    mw = 0.36 * r
+    if viseme == "AI":
+        # Wide open vowel mouth with white teeth bar and pink tongue
+        rx, ry = 0.34 * r, 0.25 * r
+        draw.ellipse(
+            [mx - rx, my - ry * 0.7, mx + rx, my + ry * 1.1],
+            fill=MOUTH_DARK,
+            outline=OUTLINE,
+            width=line_w,
+        )
+        draw.ellipse(
+            [mx - rx * 0.65, my + ry * 0.15, mx + rx * 0.65, my + ry * 0.95],
+            fill=TONGUE_PINK,
+        )
+        draw.rectangle(
+            [mx - rx * 0.7, my - ry * 0.55, mx + rx * 0.7, my - ry * 0.15],
+            fill=WHITE,
+        )
+        return
+    if viseme == "O":
+        # Rounded O vowel mouth
+        rx, ry = 0.20 * r, 0.24 * r
+        draw.ellipse(
+            [mx - rx, my - ry * 0.8, mx + rx, my + ry],
+            fill=MOUTH_DARK,
+            outline=OUTLINE,
+            width=line_w,
+        )
+        draw.ellipse(
+            [mx - rx * 0.55, my + ry * 0.1, mx + rx * 0.55, my + ry * 0.8],
+            fill=TONGUE_PINK,
+        )
+        return
+    if viseme == "E":
+        # Wide stretched E / consonant mouth with teeth line
+        rx, ry = 0.38 * r, 0.15 * r
+        draw.rounded_rectangle(
+            [mx - rx, my - ry * 0.6, mx + rx, my + ry],
+            radius=max(3, int(0.08 * r)),
+            fill=MOUTH_DARK,
+            outline=OUTLINE,
+            width=line_w,
+        )
+        draw.line(
+            [(mx - rx * 0.78, my + ry * 0.1), (mx + rx * 0.78, my + ry * 0.1)],
+            fill=WHITE,
+            width=max(2, line_w - 1),
+        )
+        return
+    if viseme == "MBP":
+        # Closed bilabial consonant press
+        draw.line(
+            [(mx - 0.32 * r, my + 0.04 * r), (mx + 0.32 * r, my + 0.04 * r)],
+            fill=OUTLINE,
+            width=line_w + 1,
+        )
+        return
+
+    # REST state: render mood expression
+    if mood in ("shock", "shocked"):
+        draw.ellipse(
+            [mx - 0.16 * r, my - 0.2 * r, mx + 0.16 * r, my + 0.2 * r],
+            fill=MOUTH_DARK,
+            outline=OUTLINE,
+            width=line_w,
+        )
+    elif mood in ("excited", "hyped"):
+        draw.pieslice(
+            [mx - mw, my - 0.2 * r, mx + mw, my + 0.4 * r],
+            0,
+            180,
+            fill=MOUTH_DARK,
+            outline=OUTLINE,
+            width=line_w,
+        )
+    elif mood in ("angry", "worried"):
+        draw.arc([mx - mw, my, mx + mw, my + 0.5 * r], 180, 360, fill=OUTLINE, width=line_w)
+    elif mood in ("think", "thinking", "deadpan"):
+        draw.line(
+            [(mx - 0.65 * mw, my + 0.05 * r), (mx + 0.65 * mw, my + 0.05 * r)],
+            fill=OUTLINE,
+            width=line_w,
+        )
+    elif mood == "smug":
+        draw.arc(
+            [mx - 0.8 * mw, my - 0.18 * r, mx + 1.1 * mw, my + 0.32 * r],
+            10,
+            155,
+            fill=OUTLINE,
+            width=line_w,
+        )
+    else:
+        draw.arc([mx - mw, my - 0.2 * r, mx + mw, my + 0.4 * r], 0, 180, fill=OUTLINE, width=line_w)
 
 
 def draw_character(
@@ -188,10 +370,14 @@ def draw_character(
     mood: str = "happy",
     flip: int = 1,
     blink: bool = False,
+    viseme: str = "REST",
+    pointer_stick: bool = False,
+    is_speaking: bool = False,
 ) -> None:
-    """Draw a round-headed cartoon character; ``origin`` is the hip in pixels.
+    """Draw an articulated round-headed 2D character with real-time viseme lip-sync.
 
-    ``flip`` mirrors the pose left/right. ``mood`` sets the eyebrows and mouth.
+    ``origin`` is the hip in pixels. ``flip`` mirrors the pose left/right.
+    ``mood`` sets the eyebrows and resting mouth; ``viseme`` drives active speech shapes.
     """
     ox, oy = origin
     out = max(2, round(4 * scale))  # outline thickness
@@ -206,6 +392,17 @@ def draw_character(
     neck = p("neck")
     hx, hy = p("head")
     r = 30 * scale
+
+    # Optional active-speaker stage floor ring
+    if is_speaking:
+        foot_y = oy + 104 * scale
+        draw.ellipse(
+            [ox - 48 * scale, foot_y - 12 * scale, ox + 48 * scale, foot_y + 14 * scale],
+            fill=(255, 214, 40),
+            outline=OUTLINE,
+            width=max(2, out // 2),
+        )
+
     legs = [[(ox, oy), p(f"{s}_knee"), p(f"{s}_foot")] for s in ("l", "r")]
     arms = [[neck, p(f"{s}_elbow"), p(f"{s}_hand")] for s in ("l", "r")]
 
@@ -224,6 +421,21 @@ def draw_character(
         [ox - tw, neck[1] - 4 * scale, ox + tw, oy + 8 * scale],
         radius=round(10 * scale), fill=shirt, outline=OUTLINE, width=out,
     )  # fmt: skip
+
+    # Optional pointer stick extending from the pointing hand toward charts/diagrams
+    if pointer_stick:
+        rhx, rhy = p("r_hand")
+        tip_x = rhx + 95 * scale * flip
+        tip_y = rhy - 42 * scale
+        draw.line([(rhx, rhy), (tip_x, tip_y)], fill=OUTLINE, width=max(4, round(5 * scale)))
+        draw.line([(rhx, rhy), (tip_x, tip_y)], fill=YELLOW, width=max(2, round(2.5 * scale)))
+        draw.ellipse(
+            [tip_x - 6 * scale, tip_y - 6 * scale, tip_x + 6 * scale, tip_y + 6 * scale],
+            fill=PINK,
+            outline=OUTLINE,
+            width=2,
+        )
+
     for chain in arms:
         _blob(draw, chain[-1][0], chain[-1][1], 9 * scale, 9 * scale, skin, out)
     for s in ("l", "r"):
@@ -232,7 +444,13 @@ def draw_character(
 
     # Big round head with a small hair curl on top.
     draw.ellipse([hx - r, hy - r, hx + r, hy + r], fill=skin, outline=OUTLINE, width=out)
-    draw.arc([hx - 0.25 * r, hy - 1.28 * r, hx + 0.4 * r, hy - 0.86 * r], 200, 330, fill=hair, width=line_w + 2)
+    draw.arc(
+        [hx - 0.25 * r, hy - 1.28 * r, hx + 0.4 * r, hy - 0.86 * r],
+        200,
+        330,
+        fill=hair,
+        width=line_w + 2,
+    )
 
     eye_w, eye_h = 0.36 * r, 0.46 * r
     eye_y = hy - 0.02 * r
@@ -246,6 +464,16 @@ def draw_character(
                 [ex - eye_w / 2, eye_y - eye_h / 2, ex + eye_w / 2, eye_y + eye_h / 2],
                 fill=WHITE, outline=OUTLINE, width=max(2, line_w // 2),
             )  # fmt: skip
+            if mood == "deadpan":
+                # Half-lidded deadpan expression
+                draw.chord(
+                    [ex - eye_w / 2, eye_y - eye_h / 2, ex + eye_w / 2, eye_y + eye_h / 2],
+                    180,
+                    360,
+                    fill=skin,
+                    outline=OUTLINE,
+                    width=max(2, line_w // 2),
+                )
             pr = 0.15 * r
             px, py = ex + look, eye_y + 0.04 * r
             draw.ellipse([px - pr, py - pr, px + pr, py + pr], fill=OUTLINE)
@@ -257,23 +485,8 @@ def draw_character(
         )  # fmt: skip
 
     mx, my = hx, hy + 0.42 * r
-    mw = 0.36 * r
-    if mood == "shock":
-        draw.ellipse(
-            [mx - 0.16 * r, my - 0.2 * r, mx + 0.16 * r, my + 0.2 * r],
-            fill=MOUTH_DARK, outline=OUTLINE, width=line_w,
-        )  # fmt: skip
-    elif mood == "excited":
-        draw.pieslice(
-            [mx - mw, my - 0.2 * r, mx + mw, my + 0.4 * r], 0, 180,
-            fill=MOUTH_DARK, outline=OUTLINE, width=line_w,
-        )  # fmt: skip
-    elif mood in ("angry", "worried"):
-        draw.arc([mx - mw, my, mx + mw, my + 0.5 * r], 180, 360, fill=OUTLINE, width=line_w)
-    elif mood == "think":
-        draw.line([(mx - 0.6 * mw, my + 0.05 * r), (mx + 0.6 * mw, my + 0.05 * r)], fill=OUTLINE, width=line_w)
-    else:
-        draw.arc([mx - mw, my - 0.2 * r, mx + mw, my + 0.4 * r], 0, 180, fill=OUTLINE, width=line_w)
+    norm_viseme = viseme if viseme in VISEME_SHAPES else "REST"
+    _draw_mouth(draw, mx, my, r, line_w, mood, norm_viseme)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +556,7 @@ def _pop(age: float, life: float = 2.8) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Scenes: flat, bright sets painted once per scene and cached.
+# Scenes: flat sets painted once per scene and cached + dynamic genre engines.
 # ---------------------------------------------------------------------------
 def _box(
     d: ImageDraw.ImageDraw, box: Sequence[float], fill: tuple[int, int, int], radius: int = 18, width: int = 7
@@ -500,6 +713,21 @@ def _paint_money(img: Image.Image) -> None:
     d.text((800, 710), "$", font=load_font(140, True), fill=(60, 160, 80), anchor="mm")
 
 
+def _paint_parody(img: Image.Image) -> None:
+    _gradient(img, (0, 0, WIDTH, 760), (42, 28, 74), (24, 18, 44))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 760, WIDTH, HEIGHT], fill=(58, 38, 68))
+    # Paint-explainer style chalkboard / comedy studio backdrop
+    _box(d, (660, 185, 1260, 520), (248, 244, 228), radius=18, width=8)
+    d.line([(720, 420), (880, 320), (1020, 390), (1190, 250)], fill=PINK, width=10, joint="curve")
+    d.text((960, 230), "EXPECTATION vs REALITY", font=load_font(28, True), fill=OUTLINE, anchor="mm")
+
+
+def _paint_dark_studio(img: Image.Image) -> None:
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, WIDTH, HEIGHT], fill=(12, 16, 26))
+
+
 SCENE_PAINTERS = {
     "bedroom": _paint_bedroom,
     "gym": _paint_gym,
@@ -508,18 +736,36 @@ SCENE_PAINTERS = {
     "office": _paint_office,
     "beach": _paint_beach,
     "money": _paint_money,
+    "parody": _paint_parody,
+    "history": _paint_dark_studio,
+    "science": _paint_dark_studio,
+    "comparison": _paint_dark_studio,
+    "finance": _paint_dark_studio,
+    "motivation": _paint_dark_studio,
 }
 DEFAULT_SCENES = ("bedroom", "street", "gym", "office", "beach", "kitchen", "money")
 TOPIC_SCENES = {
-    "discipline": ("bedroom", "gym", "kitchen", "office", "street"),
-    "self_improvement": ("beach", "gym", "street", "bedroom", "office"),
-    "money": ("money", "office", "street", "kitchen", "beach"),
+    "discipline": ("motivation", "gym", "motivation", "office", "street"),
+    "self_improvement": ("motivation", "beach", "motivation", "bedroom", "office"),
+    "motivation": ("motivation", "gym", "motivation", "office", "motivation"),
+    "money": ("finance", "money", "finance", "office", "finance"),
+    "finance": ("finance", "office", "finance", "money", "finance"),
+    "science": ("science", "office", "science", "science", "science"),
+    "testosterone": ("science", "gym", "kitchen", "science", "bedroom"),
+    "history": ("history", "history", "history", "history", "history"),
+    "comparison": ("comparison", "comparison", "comparison", "comparison", "comparison"),
+    "parody": ("parody", "street", "parody", "office", "parody"),
 }
 
 
 def scenes_for_topic(topic: str) -> tuple[str, ...]:
-    """Scene order for a topic; consecutive sections always get different sets."""
-    return TOPIC_SCENES.get(topic, DEFAULT_SCENES)
+    """Scene order for a topic; routes custom topics through genre inference when needed."""
+    if topic in TOPIC_SCENES:
+        return TOPIC_SCENES[topic]
+    from autoshorts.longform.topics import infer_genre
+
+    genre, _ = infer_genre(topic)
+    return TOPIC_SCENES.get(genre, DEFAULT_SCENES)
 
 
 @lru_cache(maxsize=16)
@@ -536,28 +782,53 @@ _FONT_PATHS = {
     "bold": r"C:\Windows\Fonts\arialbd.ttf",
     "regular": r"C:\Windows\Fonts\arial.ttf",
 }
+_FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "bold": (
+        r"C:\Windows\Fonts\arialbd.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "Arial Bold",
+        "DejaVuSans-Bold",
+    ),
+    "regular": (
+        r"C:\Windows\Fonts\arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "Arial",
+        "DejaVuSans",
+    ),
+}
 _warned_font = False
 
 
 def load_font(size: int, bold: bool = True) -> Any:
-    """Load a Windows font, or fall back to PIL's default font (logged once)."""
+    """Load a system TrueType font (Windows, macOS, Linux), or fall back to PIL's default font."""
     return _load_font_cached(size, bold)
 
 
 @lru_cache(maxsize=64)
 def _load_font_cached(size: int, bold: bool) -> Any:
     global _warned_font
-    path = _FONT_PATHS["bold" if bold else "regular"]
-    try:
-        return ImageFont.truetype(path, size)
-    except OSError:
-        if not _warned_font:
-            logger.warning("Windows font %s missing; falling back to PIL default font", path)
-            _warned_font = True
+    key = "bold" if bold else "regular"
+    candidates = (_FONT_PATHS[key], *_FONT_CANDIDATES[key])
+    for path in dict.fromkeys(candidates):
         try:
-            return ImageFont.load_default(size=size)
-        except TypeError:  # very old Pillow
-            return ImageFont.load_default()
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    if not _warned_font:
+        logger.warning("System TrueType fonts missing; falling back to PIL default font")
+        _warned_font = True
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:  # very old Pillow
+        return ImageFont.load_default()
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, size: int, max_w: float, bold: bool = True) -> Any:
@@ -585,7 +856,7 @@ def _active_word(words: list[dict[str, Any]], t: float) -> int:
 
 
 def _draw_caption(d: ImageDraw.ImageDraw, words: list[dict[str, Any]], t: float) -> None:
-    d.rectangle([0, STAGE_BOTTOM, WIDTH, 1010], fill=CAPTION_BG)
+    d.rectangle([0, STAGE_BOTTOM, WIDTH, 1030], fill=CAPTION_BG)
     d.line([(0, STAGE_BOTTOM), (WIDTH, STAGE_BOTTOM)], fill=PINK, width=6)
     if not words:
         return
@@ -625,21 +896,21 @@ def _draw_chrome(
 def _draw_heading(img: Image.Image, heading: str, t: float) -> None:
     """Heading sticker: a tilted yellow card that bounces in from the left."""
     probe = ImageDraw.Draw(img)
-    font = _fit_font(probe, heading, 60, 1100)
-    w = int(probe.textlength(heading, font=font)) + 80
-    h = 118
+    font = _fit_font(probe, heading, 52, 900)
+    w = int(probe.textlength(heading, font=font)) + 72
+    h = 104
     card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     cd = ImageDraw.Draw(card)
-    cd.rounded_rectangle([0, 0, w - 1, h - 1], radius=22, fill=YELLOW, outline=OUTLINE, width=8)
-    cd.text((40, 22), heading, font=font, fill=OUTLINE)
+    cd.rounded_rectangle([0, 0, w - 1, h - 1], radius=20, fill=YELLOW, outline=OUTLINE, width=7)
+    cd.text((36, 18), heading, font=font, fill=OUTLINE)
     card = card.rotate(-2, resample=Image.BICUBIC, expand=True)
     k = ease_out_back(min(1.0, t / 0.55))
-    x = int(-w + (60 + w) * k)
-    img.paste(card, (x, 130), card)
+    x = int(-w + (44 + w) * k)
+    img.paste(card, (x, 114), card)
 
 
 # ---------------------------------------------------------------------------
-# Scene composition
+# Scene composition & Camera motion
 # ---------------------------------------------------------------------------
 def _blinking(t: float, offset: int) -> bool:
     return (t + offset * 0.37) % 3.4 < 0.12
@@ -664,6 +935,41 @@ def _sticker_plan(index: int, main_x: int) -> list[tuple[int, float, float, floa
     return [(n, x, y, 0.9 + n * 2.0) for n, (x, y) in enumerate(slots)]
 
 
+def _resolve_engine_kind(sa: SectionAudio, scene: str) -> str:
+    vm = getattr(sa.section, "visual_mode", "auto") or "auto"
+    if vm.startswith("history") or scene == "history":
+        return "history"
+    if vm.startswith("science") or scene == "science":
+        return "science"
+    if vm.startswith("comparison") or scene == "comparison":
+        return "comparison"
+    if vm.startswith("finance") or scene == "finance":
+        return "finance"
+    if vm.startswith("motivation") or scene == "motivation":
+        return "motivation"
+    if vm.startswith("parody") or scene == "parody" or getattr(sa.section, "speaker", "narrator") in ("skeptic", "cohost"):
+        return "parody"
+    return "classic"
+
+
+def _apply_camera_motion(img: Image.Image, t: float, dur: float, engine_kind: str, speaker: str) -> Image.Image:
+    """Apply subtle Ken-Burns zoom/pan or parody deadpan punch-in on the stage area."""
+    zoom = 1.0 + 0.032 * (0.5 - 0.5 * math.cos(t * 0.55))
+    focus_x, focus_y = WIDTH * 0.5, HEIGHT * 0.48
+    if engine_kind == "parody" and dur > 1.0 and (t > dur * 0.78 or speaker in ("skeptic", "cohost")):
+        # Deadpan punch-in toward the active speaker
+        zoom = 1.06
+        focus_x = 1360.0 if speaker in ("skeptic", "cohost") else 560.0
+    if zoom <= 1.002:
+        return img
+    crop_w = int(WIDTH / zoom)
+    crop_h = int(HEIGHT / zoom)
+    x0 = max(0, min(WIDTH - crop_w, int(focus_x - crop_w / 2)))
+    y0 = max(0, min(HEIGHT - crop_h, int(focus_y - crop_h / 2)))
+    cropped = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
+    return cropped.resize((WIDTH, HEIGHT), Image.BILINEAR)
+
+
 def _draw_scene(
     sa: SectionAudio,
     title: str,
@@ -676,42 +982,135 @@ def _draw_scene(
 ) -> Image.Image:
     img = _scene_background(scene).copy()
     d = ImageDraw.Draw(img)
-    _draw_sparkles(d, t)
+    engine_kind = _resolve_engine_kind(sa, scene)
+    active_viseme = viseme_at(sa.words, t)
+    speaker = (getattr(sa.section, "speaker", "narrator") or "narrator").lower()
+    sub_domain = getattr(sa.section, "sub_domain", "") or ""
+    callout = getattr(sa.section, "hook_callout", "") or ""
+    comp_data = getattr(sa.section, "comparison_data", None)
+    bob = math.sin(t * 3.5) * 6.0
 
-    main_x, flip, friend = _layout(index)
-    direction = (main_x > 960) - (main_x < 960)  # +1 enters from the right, -1 from the left
-    enter = ease_out_back(min(1.0, t / 0.6))
-    mx = main_x + (1 - enter) * 700 * direction
-    my = 640 + math.sin(t * 2.2) * 5
-    if direction == 0:
-        my -= (1 - enter) * 260  # centred character drops in from above
+    if engine_kind in ("history", "science", "comparison", "finance", "motivation"):
+        if engine_kind == "history":
+            draw_history_canvas(img, d, t, index, sa.section.heading, callout, sub_domain, load_font)
+        elif engine_kind == "science":
+            draw_science_canvas(img, d, t, index, sa.section.heading, callout, sub_domain, load_font)
+        elif engine_kind == "comparison":
+            draw_comparison_canvas(img, d, t, index, sa.section.heading, comp_data, sub_domain, load_font)
+        elif engine_kind == "finance":
+            draw_finance_canvas(img, d, t, index, sa.section.heading, callout, load_font)
+        else:
+            draw_motivation_canvas(img, d, t, index, sa.section.heading, callout, sub_domain, load_font)
 
-    if friend:
-        fenter = ease_out_back(min(1.0, (t - 0.25) / 0.6))
-        fx = 520 - (1 - fenter) * 600
-        fy = 600 + math.sin(t * 2.0 + 1.0) * 4
+        # Articulated presenter character on the left stage pointing at the live canvas
+        enter = ease_out_back(min(1.0, t / 0.55))
+        mx = 265 - (1.0 - enter) * 360
+        my = 655 + bob
+        cur_pose = pose_at(("present", "point", "think", "present", "stand"), t + index * 0.7)
         draw_character(
-            d, pose_at(FRIEND_CYCLE, t + index * 0.5), (fx, fy),
-            shirt=SHIRT_TEAL, skin=BROWN_SKIN, hair=HAIR_BLACK,
-            mood="shock" if index % 2 else "happy", flip=1, blink=_blinking(t, index + 3),
-        )  # fmt: skip
-    draw_character(
-        d, pose_at(POSE_CYCLE, t + index * 0.9), (mx, my),
-        shirt=MAIN_SHIRTS[index % len(MAIN_SHIRTS)], mood=MOODS[index % len(MOODS)],
-        flip=flip, blink=_blinking(t, index),
-    )
+            d,
+            cur_pose,
+            (mx, my),
+            scale=1.85,
+            shirt=MAIN_SHIRTS[index % len(MAIN_SHIRTS)],
+            mood=MOODS[index % len(MOODS)],
+            flip=1,
+            blink=_blinking(t, index),
+            viseme=active_viseme,
+            pointer_stick=True,
+            is_speaking=active_viseme != "REST",
+        )
+    elif engine_kind == "parody":
+        _draw_sparkles(d, t)
+        enter = ease_out_back(min(1.0, t / 0.55))
+        # Two-Character Banter Stage: Character A (Narrator) on left, Character B (Skeptic) on right
+        narr_speaking = speaker not in ("skeptic", "cohost", "friend")
+        lx = 440 - (1.0 - enter) * 450
+        ly = 648 + bob
+        rx = 1480 + (1.0 - enter) * 450
+        ry = 648 + math.sin(t * 3.5 + 1.4) * 5.0
 
-    for slot, sx, sy, start in _sticker_plan(index, main_x):
-        if t < start:
-            continue
-        age = (t - start) % STICKER_CYCLE
-        cycle_no = int((t - start) // STICKER_CYCLE)
-        j = index * 2 + slot + cycle_no
-        size = STICKER_SIZE * _pop(age)
-        if size >= 2:
-            kind = STICKER_KINDS[j % len(STICKER_KINDS)]
-            draw_sticker(d, kind, sx, sy, size, STICKER_LABELS[j % len(STICKER_LABELS)])
+        draw_character(
+            d,
+            pose_at(BANTER_CYCLE_A, t + index * 0.6),
+            (lx, ly),
+            scale=1.9,
+            shirt=SHIRT_BLUE,
+            skin=PEACH,
+            hair=HAIR_BROWN,
+            mood="smug" if narr_speaking else "shocked",
+            flip=1,
+            blink=_blinking(t, index),
+            viseme=active_viseme if narr_speaking else "REST",
+            is_speaking=narr_speaking and active_viseme != "REST",
+        )
+        draw_character(
+            d,
+            pose_at(BANTER_CYCLE_B, t + index * 0.8),
+            (rx, ry),
+            scale=1.9,
+            shirt=SHIRT_TEAL,
+            skin=BROWN_SKIN,
+            hair=HAIR_BLACK,
+            mood="deadpan" if not narr_speaking else "thinking",
+            flip=-1,
+            blink=_blinking(t, index + 3),
+            viseme=active_viseme if not narr_speaking else "REST",
+            is_speaking=(not narr_speaking) and active_viseme != "REST",
+        )
+    else:
+        _draw_sparkles(d, t)
+        main_x, flip, friend = _layout(index)
+        direction = (main_x > 960) - (main_x < 960)
+        enter = ease_out_back(min(1.0, t / 0.6))
+        mx = main_x + (1 - enter) * 700 * direction
+        my = 640 + bob
+        if direction == 0:
+            my -= (1 - enter) * 260
 
+        if friend:
+            fenter = ease_out_back(min(1.0, (t - 0.25) / 0.6))
+            fx = 520 - (1 - fenter) * 600
+            fy = 600 + math.sin(t * 3.2 + 1.0) * 4
+            friend_speaking = speaker in ("skeptic", "cohost", "friend")
+            draw_character(
+                d,
+                pose_at(FRIEND_CYCLE, t + index * 0.5),
+                (fx, fy),
+                shirt=SHIRT_TEAL,
+                skin=BROWN_SKIN,
+                hair=HAIR_BLACK,
+                mood="shocked" if index % 2 else "deadpan",
+                flip=1,
+                blink=_blinking(t, index + 3),
+                viseme=active_viseme if friend_speaking else "REST",
+                is_speaking=friend_speaking and active_viseme != "REST",
+            )
+        main_speaking = speaker not in ("skeptic", "cohost", "friend")
+        draw_character(
+            d,
+            pose_at(POSE_CYCLE, t + index * 0.9),
+            (mx, my),
+            shirt=MAIN_SHIRTS[index % len(MAIN_SHIRTS)],
+            mood=MOODS[index % len(MOODS)],
+            flip=flip,
+            blink=_blinking(t, index),
+            viseme=active_viseme if main_speaking else "REST",
+            is_speaking=main_speaking and active_viseme != "REST",
+        )
+
+        for slot, sx, sy, start in _sticker_plan(index, main_x):
+            if t < start:
+                continue
+            age = (t - start) % STICKER_CYCLE
+            cycle_no = int((t - start) // STICKER_CYCLE)
+            j = index * 2 + slot + cycle_no
+            size = STICKER_SIZE * _pop(age)
+            if size >= 2:
+                kind = STICKER_KINDS[j % len(STICKER_KINDS)]
+                draw_sticker(d, kind, sx, sy, size, STICKER_LABELS[j % len(STICKER_LABELS)])
+
+    img = _apply_camera_motion(img, t, sa.duration, engine_kind, speaker)
     _draw_heading(img, sa.section.heading, t)
     d = ImageDraw.Draw(img)
     frac = min(1.0, (elapsed_before + t) / total) if total > 0 else 0.0

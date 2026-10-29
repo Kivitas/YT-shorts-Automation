@@ -7,6 +7,8 @@ Spark import parsing, and video previews.
 from __future__ import annotations
 
 import asyncio
+import copy
+import inspect
 import json
 import logging
 import math
@@ -129,7 +131,7 @@ class LocalOnlyGuardMiddleware:
 
 
 def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
-    """Augment job dictionary with SEO title, full description, tags, and video ID."""
+    """Augment job dictionary with SEO title, full description, tags, video ID, origin, and QC telemetry."""
     data = job.model_dump()
 
     # YouTube short ID if uploaded
@@ -137,6 +139,53 @@ def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
         job.upload_result.video_id if (job.upload_result and job.upload_result.video_id) else None
     )
     data["youtube_video_id"] = yt_id
+
+    # Explicit origin kind
+    data["origin_kind"] = getattr(job, "origin_kind", None) or data.get("origin_kind")
+
+    # YouTube upload verification kind (e.g. api_confirmed, studio_dom, local_export, unverified)
+    v_kind = None
+    if job.upload_result:
+        v_kind = getattr(job.upload_result, "verification_kind", None)
+        if not v_kind and isinstance(data.get("upload_result"), dict):
+            v_kind = data["upload_result"].get("verification_kind")
+    data["verification_kind"] = v_kind
+
+    # Comprehensive diagnostics payload (delivery QC, edit_plan source, subtitle_timing source)
+    raw_diag = dict(getattr(job, "diagnostics", {}) or {})
+    diag = copy.deepcopy(raw_diag)
+
+    # Delivery QC status
+    if "delivery" in raw_diag:
+        diag["delivery"] = raw_diag["delivery"]
+    elif job.rendered_video_path or getattr(job, "status", None) in (JobStatus.COMPLETED, JobStatus.CLEANED):
+        diag["delivery"] = {"ok": True, "issues": []}
+
+    # Edit plan source
+    edl_src = (
+        (raw_diag.get("editing", {}).get("edl_source"))
+        or (raw_diag.get("edit_plan", {}).get("source") if isinstance(raw_diag.get("edit_plan"), dict) else raw_diag.get("edit_plan"))
+        or (getattr(job.edl, "source", None) if job.edl else None)
+        or "heuristic"
+    )
+    if "edit_plan" not in diag:
+        diag["edit_plan"] = {"source": edl_src}
+    elif isinstance(diag["edit_plan"], str):
+        diag["edit_plan"] = {"source": diag["edit_plan"]}
+
+    # Subtitle timing source
+    sub_timing = (
+        (raw_diag.get("subtitles", {}).get("timing_source"))
+        or (raw_diag.get("subtitle_timing", {}).get("source") if isinstance(raw_diag.get("subtitle_timing"), dict) else raw_diag.get("subtitle_timing"))
+        or raw_diag.get("subtitle_timing_source")
+        or "whisper"
+    )
+    if "subtitle_timing" not in diag:
+        diag["subtitle_timing"] = {"source": sub_timing}
+    elif isinstance(diag["subtitle_timing"], str):
+        diag["subtitle_timing"] = {"source": diag["subtitle_timing"]}
+
+    data["diagnostics"] = diag
 
     # Formatting attributes
     channel = job.video_metadata.channel if job.video_metadata else "AutoShorts"
@@ -505,8 +554,10 @@ class StoryJobRequest(BaseModel):
 
 class LongformRequest(BaseModel):
     topic: str
-    minutes: float = 2.5
+    genre: str = "auto"
+    minutes: float = Field(default=3.0, ge=0.5, le=15.0)
     provider: str = "api"
+    visual_style: str = "kinetic_dark"
     publish: bool = False
 
 
@@ -982,13 +1033,100 @@ def create_app(
             "provider": provider,
         }
 
+    @app.get("/api/longform/genres")
+    def list_longform_genres() -> dict[str, Any]:
+        """Return available longform genres and sample topic ideas."""
+        genres = [
+            {
+                "id": "parody",
+                "label": "🎭 Parody & Moving Character Skit",
+                "description": "Satirical stick-figure sketches, character banter, and workplace drama.",
+                "sample_topics": [
+                    "Tech Startup Pitch Gone Wrong",
+                    "If AI Ran The Government",
+                    "The Corporate Meeting That Could Have Been An Email",
+                ],
+            },
+            {
+                "id": "history",
+                "label": "🏛️ History & Geopolitics Explainer",
+                "description": "Deep-dives into historical conflicts, empires, and geopolitical turning points.",
+                "sample_topics": [
+                    "Rome vs Mongols",
+                    "How The Silk Road Shaped Modern Trade",
+                    "The Fall of Constantinople Explained",
+                ],
+            },
+            {
+                "id": "science",
+                "label": "🔬 Science & STEM (Chem, Physics, Bio, Astrophysics)",
+                "description": "Astrophysics wonders, physics paradoxes, and cutting-edge biology.",
+                "sample_topics": [
+                    "How Black Holes Bend Time",
+                    "CRISPR and The Future of Gene Editing",
+                    "Why Quantum Mechanics Defies Common Sense",
+                ],
+            },
+            {
+                "id": "comparison",
+                "label": "⚔️ VS Comparison & S-F Tier List",
+                "description": "Head-to-head match-ups, strategic versus battles, and structured tier lists.",
+                "sample_topics": [
+                    "Spartans vs Samurai: Battle Analysis",
+                    "Electric vs Hydrogen: The Future of Transport",
+                    "Productivity Systems Tier List",
+                ],
+            },
+            {
+                "id": "finance",
+                "label": "📈 Finance, Investing & Wealth Charts",
+                "description": "Actionable wealth principles, index investing, and exponential compounding.",
+                "sample_topics": [
+                    "The $100/Day Compounding Rule",
+                    "Index Funds vs Stock Picking",
+                    "How Inflation Actually Destroys Cash",
+                ],
+            },
+            {
+                "id": "self_improvement",
+                "label": "🧠 Self-Improvement, Motivation & Habits",
+                "description": "Habit loops, mental discipline, focus architectures, and peak performance.",
+                "sample_topics": [
+                    "The 2-Minute Rule to Stop Procrastination",
+                    "Dopamine Detox: Resetting Focus",
+                    "Deep Work: How to Focus for 4 Hours Daily",
+                ],
+            },
+        ]
+        return {
+            "genres": genres,
+            "genre_keys": [g["id"] for g in genres],
+            "sample_topics": {g["id"]: g["sample_topics"] for g in genres},
+        }
+
     @app.post("/api/longform")
     def create_longform(req: LongformRequest) -> dict[str, Any]:
         """Render a long-form stick-figure video (runs in a worker thread: plain def)."""
         from autoshorts.longform.render import render_longform
 
+        sig = inspect.signature(render_longform)
+        kwargs: dict[str, Any] = {}
+        if "config" in sig.parameters:
+            kwargs["config"] = cfg
+        if "genre" in sig.parameters:
+            kwargs["genre"] = req.genre
+        if "visual_style" in sig.parameters:
+            kwargs["visual_style"] = req.visual_style
+        has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if has_var_kw:
+            kwargs.setdefault("genre", req.genre)
+            kwargs.setdefault("visual_style", req.visual_style)
+
         try:
-            result = render_longform(req.topic, req.minutes, req.provider, cfg)
+            if not kwargs and len(sig.parameters) >= 4:
+                result = render_longform(req.topic, req.minutes, req.provider, cfg)
+            else:
+                result = render_longform(req.topic, req.minutes, req.provider, **kwargs)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except RuntimeError as e:
@@ -1001,7 +1139,10 @@ def create_app(
             try:
                 youtube_url = publish_longform(result, config=cfg, state_manager=state_mgr)
             except RuntimeError as e:
-                raise HTTPException(status_code=429, detail=str(e)) from e
+                err_msg = str(e).lower()
+                if "cap" in err_msg or "quota" in err_msg or "limit" in err_msg:
+                    raise HTTPException(status_code=429, detail=str(e)) from e
+                raise HTTPException(status_code=503, detail=str(e)) from e
 
         return {
             "success": True,
@@ -2134,22 +2275,92 @@ def create_app(
     # Settings & YouTube Data API v3 Management API
     # -------------------------------------------------------------------------
 
+    def _enrich_public_settings(active_cfg: Settings, payload: dict[str, Any]) -> dict[str, Any]:
+        from autoshorts.core.paths import PROJECT_ROOT
+        from autoshorts.core.settings_manager import mask_secret, read_env_file
+
+        env_vars = read_env_file(PROJECT_ROOT / ".env")
+        sec = payload.setdefault("secrets", {})
+
+        eachlabs_key = (
+            (active_cfg.get_eachlabs_api_key_str() if hasattr(active_cfg, "get_eachlabs_api_key_str") else None)
+            or os.environ.get("EACHLABS_API_KEY")
+            or env_vars.get("EACHLABS_API_KEY")
+        )
+        pexels_key = (
+            (active_cfg.get_pexels_api_key_str() if hasattr(active_cfg, "get_pexels_api_key_str") else None)
+            or os.environ.get("PEXELS_API_KEY")
+            or env_vars.get("PEXELS_API_KEY")
+        )
+        pixabay_key = (
+            (active_cfg.get_pixabay_api_key_str() if hasattr(active_cfg, "get_pixabay_api_key_str") else None)
+            or os.environ.get("PIXABAY_API_KEY")
+            or env_vars.get("PIXABAY_API_KEY")
+        )
+
+        sec["eachlabs_api_key_set"] = bool(eachlabs_key)
+        sec["eachlabs_api_key_masked"] = mask_secret(eachlabs_key)
+        sec["pexels_api_key_set"] = bool(pexels_key)
+        sec["pexels_api_key_masked"] = mask_secret(pexels_key)
+        sec["pixabay_api_key_set"] = bool(pixabay_key)
+        sec["pixabay_api_key_masked"] = mask_secret(pixabay_key)
+
+        payload["eachlabs_api_key_set"] = sec["eachlabs_api_key_set"]
+        payload["eachlabs_api_key_masked"] = sec["eachlabs_api_key_masked"]
+        payload["pexels_api_key_set"] = sec["pexels_api_key_set"]
+        payload["pexels_api_key_masked"] = sec["pexels_api_key_masked"]
+        payload["pixabay_api_key_set"] = sec["pixabay_api_key_set"]
+        payload["pixabay_api_key_masked"] = sec["pixabay_api_key_masked"]
+        return payload
+
     @app.get("/api/settings")
     async def get_settings() -> dict[str, Any]:
         """Return current application settings with masked secrets."""
         active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
-        return get_public_settings_payload(active_cfg)
+        return _enrich_public_settings(active_cfg, get_public_settings_payload(active_cfg))
 
     @app.post("/api/settings")
     async def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
         """Apply updates to config.yaml and .env, reloading subsystems in place."""
         nonlocal cfg
+        from pydantic import SecretStr
+
+        from autoshorts.core.paths import PROJECT_ROOT
+        from autoshorts.core.settings_manager import update_env_file
+
+        sec_in = payload.get("secrets") if isinstance(payload.get("secrets"), dict) else {}
+        extra_env: dict[str, str] = {}
+        for k_alias, env_k in [
+            ("eachlabs_api_key", "EACHLABS_API_KEY"),
+            ("EACHLABS_API_KEY", "EACHLABS_API_KEY"),
+            ("pexels_api_key", "PEXELS_API_KEY"),
+            ("PEXELS_API_KEY", "PEXELS_API_KEY"),
+            ("pixabay_api_key", "PIXABAY_API_KEY"),
+            ("PIXABAY_API_KEY", "PIXABAY_API_KEY"),
+        ]:
+            val = sec_in.get(k_alias) if k_alias in sec_in else payload.get(k_alias)
+            if val and isinstance(val, str) and "•" not in val and val.strip():
+                extra_env[env_k] = val.strip()
+                os.environ[env_k] = val.strip()
+
+        if extra_env:
+            try:
+                update_env_file(PROJECT_ROOT / ".env", extra_env)
+            except Exception as env_err:
+                logger.warning("Could not update extra keys in .env: %s", env_err)
 
         try:
             new_settings = apply_settings_update(payload)
         except Exception as e:
             logger.error("Failed to apply settings update: %s", e)
             raise HTTPException(status_code=400, detail=f"Failed to update settings: {e}") from e
+
+        if "EACHLABS_API_KEY" in extra_env and hasattr(new_settings, "eachlabs_api_key"):
+            new_settings.eachlabs_api_key = SecretStr(extra_env["EACHLABS_API_KEY"])
+        if "PEXELS_API_KEY" in extra_env and hasattr(new_settings, "pexels_api_key"):
+            new_settings.pexels_api_key = SecretStr(extra_env["PEXELS_API_KEY"])
+        if "PIXABAY_API_KEY" in extra_env and hasattr(new_settings, "pixabay_api_key"):
+            new_settings.pixabay_api_key = SecretStr(extra_env["PIXABAY_API_KEY"])
 
         cfg = new_settings
         if pipe:
@@ -2204,7 +2415,7 @@ def create_app(
         active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
         return {
             "success": True,
-            "settings": get_public_settings_payload(active_cfg),
+            "settings": _enrich_public_settings(active_cfg, get_public_settings_payload(active_cfg)),
         }
 
     @app.post("/api/settings/youtube-client-secret")

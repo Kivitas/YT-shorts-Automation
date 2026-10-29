@@ -66,6 +66,7 @@ class StudioStepError(UploadError, RuntimeError):
     """Upload failed at a named Studio step (file select, details, visibility, publish)."""
 
 
+_PROFILE_LOCK = threading.Lock()
 _LOGIN_STATE_LOCK = threading.Lock()
 LOGIN_SESSION_STATE: dict[str, Any] = {
     "status": "idle",
@@ -182,38 +183,39 @@ class PlaywrightStudioUploader:
                         pass
             return
 
-        sync_playwright = self._get_playwright()
-        self.edge_profile_dir.mkdir(parents=True, exist_ok=True)
-        with sync_playwright() as p:
-            context = None
-            if self.channel:
-                try:
+        with _PROFILE_LOCK:
+            sync_playwright = self._get_playwright()
+            self.edge_profile_dir.mkdir(parents=True, exist_ok=True)
+            with sync_playwright() as p:
+                context = None
+                if self.channel:
+                    try:
+                        context = p.chromium.launch_persistent_context(
+                            user_data_dir=str(self.edge_profile_dir),
+                            channel=self.channel,
+                            headless=headless,
+                            args=args,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to launch browser with channel=%r: %s. Falling back to default chromium.",
+                            self.channel,
+                            e,
+                        )
+                        context = None
+
+                if context is None:
                     context = p.chromium.launch_persistent_context(
                         user_data_dir=str(self.edge_profile_dir),
-                        channel=self.channel,
                         headless=headless,
                         args=args,
                     )
-                except Exception as e:
-                    logger.warning(
-                        "Failed to launch browser with channel=%r: %s. Falling back to default chromium.",
-                        self.channel,
-                        e,
-                    )
-                    context = None
 
-            if context is None:
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(self.edge_profile_dir),
-                    headless=headless,
-                    args=args,
-                )
-
-            try:
-                page = context.pages[0] if context.pages else context.new_page()
-                yield context, page
-            finally:
-                context.close()
+                try:
+                    page = context.pages[0] if context.pages else context.new_page()
+                    yield context, page
+                finally:
+                    context.close()
 
     def _extract_channel_name(self, page: Any) -> str | None:
         """Attempt to extract YouTube channel or creator name from Studio DOM."""
@@ -528,6 +530,7 @@ class PlaywrightStudioUploader:
         related_video_url: str | None = None,
         publish_at: str | None = None,
         profile_dir: Path | str | None = None,
+        thumbnail_path: Path | str | None = None,
         **kwargs: Any,
     ) -> UploadResult:
         """Upload video via YouTube Studio web interface using MS Edge persistent profile.
@@ -582,6 +585,8 @@ class PlaywrightStudioUploader:
         for attempt in range(1, _MAX_UPLOAD_ATTEMPTS + 1):
             logger.info("Studio upload attempt %d/%d", attempt, _MAX_UPLOAD_ATTEMPTS)
             try:
+                effective_thumbnail = thumbnail_path or kwargs.get("thumbnail_path")
+                is_short = kwargs.get("is_short", True)
                 return self._upload_attempt(
                     target_path,
                     title,
@@ -591,6 +596,8 @@ class PlaywrightStudioUploader:
                     altered_content,
                     related_video_url,
                     publish_at,
+                    thumbnail_path=effective_thumbnail,
+                    is_short=is_short,
                 )
             except UploadError:
                 raise
@@ -623,6 +630,8 @@ class PlaywrightStudioUploader:
         altered_content: bool,
         related_video_url: str | None,
         publish_at: str | None,
+        thumbnail_path: Path | str | None = None,
+        is_short: bool = True,
     ) -> UploadResult:
         """Run one upload attempt; the browser context is closed on exit (success or failure)."""
         with self._launch_browser_session(headless=self.headless) as (_context, page):
@@ -722,6 +731,37 @@ class PlaywrightStudioUploader:
                         alt_radio.click()
                 except Exception as ex:
                     logger.debug("Altered content selection warning: %s", ex)
+
+                # Custom thumbnail file upload when thumbnail_path is provided
+                if thumbnail_path:
+                    try:
+                        thumb_file = Path(thumbnail_path).resolve()
+                        if thumb_file.is_file():
+                            thumb_input = page.locator("input#file-loader").first
+                            if hasattr(thumb_input, "set_input_files"):
+                                thumb_input.set_input_files(str(thumb_file))
+                                wait_for_idle(page, 400)
+                    except Exception as ex:
+                        logger.debug("Thumbnail file loader warning: %s", ex)
+
+                # Best-effort tags entry when tags are provided
+                if effective_tags:
+                    try:
+                        toggle_btn = page.locator(
+                            "#toggle-button, ytcp-button#toggle-button, button:has-text('Show more')"
+                        ).first
+                        if hasattr(toggle_btn, "is_visible") and toggle_btn.is_visible(timeout=1500):
+                            toggle_btn.click()
+                            wait_for_idle(page, 400)
+
+                        tags_input = page.locator("#tags-container input#text-input").first
+                        if hasattr(tags_input, "is_visible") and tags_input.is_visible(timeout=3000):
+                            tags_text = ",".join(str(t) for t in effective_tags if t)
+                            tags_input.fill(tags_text)
+                            if hasattr(page, "keyboard") and hasattr(page.keyboard, "press"):
+                                page.keyboard.press("Enter")
+                    except Exception as ex:
+                        logger.debug("Tags container input warning: %s", ex)
 
                 # Step 1: Advance to Video elements step
                 next_btn = page.locator("#next-button").first
@@ -892,9 +932,14 @@ class PlaywrightStudioUploader:
                     "was parsed from the Studio DOM, not confirmed by the Data API.",
                     video_id,
                 )
+                video_url = (
+                    f"https://youtube.com/shorts/{video_id}"
+                    if is_short
+                    else f"https://youtube.com/watch?v={video_id}"
+                )
                 return UploadResult(
                     video_id=video_id,
-                    url=f"https://youtube.com/shorts/{video_id}",
+                    url=video_url,
                     status="uploaded_unconfirmed",
                     verified=False,
                     privacy_status=ret_privacy,

@@ -631,11 +631,10 @@ class ShortsPipeline:
         else:
             jobs = list(jobs_or_links)  # type: ignore[arg-type]
 
-        results: list[Job] = []
-        for job in jobs:
+        def _process_single(j: Job) -> Job:
             try:
-                processed = self.process_job(
-                    job,
+                return self.process_job(
+                    j,
                     auto_upload=auto_upload,
                     immediate_upload=immediate_upload,
                     background_category=background_category,
@@ -643,11 +642,18 @@ class ShortsPipeline:
                     style_preset=style_preset,
                     privacy_status=privacy_status,
                 )
-                results.append(processed)
             except Exception as err:
-                logger.warning("Batch processing encountered error on job %s: %s", job.id, err)
-                reloaded = self.state_manager.get_job(job.id) or job
-                results.append(reloaded)
+                logger.warning("Batch processing encountered error on job %s: %s", j.id, err)
+                return self.state_manager.get_job(j.id) or j
+
+        if len(jobs) > 1 and getattr(self, "concurrency", 1) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = max(1, int(self.concurrency))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                results = list(executor.map(_process_single, jobs))
+        else:
+            results = [_process_single(j) for j in jobs]
 
         return results
 
@@ -940,7 +946,29 @@ class ShortsPipeline:
     def _run_semif_stage(self, job: Job, background_category: str | None = None) -> None:
         stage_id = self.state_manager.record_stage_start(job.id, "semif_evaluation")
         try:
+            guidance = ""
+            try:
+                from autoshorts.analytics.attribution import (
+                    PerformanceAttributionEngine,
+                    get_winning_guidance_summary,
+                )
+
+                if self.state_manager:
+                    engine = PerformanceAttributionEngine(self.state_manager)
+                    guidance = engine.get_winning_guidance_summary()
+                else:
+                    guidance = get_winning_guidance_summary()
+            except Exception as g_err:
+                logger.debug("Failed retrieving winning guidance summary: %s", g_err)
+
             prompt = job.custom_instructions or self.config.job_defaults.focus_prompt
+            if guidance:
+                prompt = (
+                    f"{prompt}\n\n[Channel Winning Styles Guidance]: {guidance}"
+                    if prompt
+                    else guidance
+                )
+
             scored = self.decider.score_candidates(job.candidate_windows, instructions=prompt)
             job.candidate_windows = scored
 
@@ -1127,6 +1155,21 @@ class ShortsPipeline:
                 instructions=job.custom_instructions,
             )
             job.edl = edl
+
+            # Wire LayaRhythmEngine if BGM track exists
+            if getattr(job, "bgm_path", None) and job.edl and job.edl.zoom_punch_ins:
+                try:
+                    from autoshorts.media.rhythm_engine import LayaRhythmEngine
+
+                    rhythm_engine = LayaRhythmEngine()
+                    grid = rhythm_engine.analyze_rhythm(job.bgm_path)
+                    job.edl.zoom_punch_ins = rhythm_engine.snap_zoom_punch_ins(
+                        job.edl.zoom_punch_ins,
+                        beats=grid.beats,
+                        confidence=grid.confidence,
+                    )
+                except Exception as re_err:
+                    logger.debug("Rhythm engine beat snapping skipped in EDL stage: %s", re_err)
 
             # Route the edit: countdown clips get the ranking edit (no gameplay panel).
             try:
@@ -1618,6 +1661,30 @@ class ShortsPipeline:
                 comp_kwargs["background_path"] = None
                 comp_kwargs["subtitles_path"] = ranking_subs
                 layout_mode = "full_center_crop"
+            bgm_file = getattr(job, "bgm_path", None)
+            duck_release_ms: int | None = None
+            if bgm_file:
+                try:
+                    from autoshorts.media.rhythm_engine import LayaRhythmEngine
+
+                    rhythm_engine = LayaRhythmEngine()
+                    grid = rhythm_engine.analyze_rhythm(bgm_file)
+                    duck_release_ms = int(grid.ducking_release_ms)
+                    if job.edl and job.edl.zoom_punch_ins:
+                        job.edl.zoom_punch_ins = rhythm_engine.snap_zoom_punch_ins(
+                            job.edl.zoom_punch_ins,
+                            beats=grid.beats,
+                            confidence=grid.confidence,
+                        )
+                    job.record_diagnostic(
+                        "rhythm",
+                        duck_release_ms=duck_release_ms,
+                        bpm=grid.bpm,
+                        confidence=grid.confidence,
+                    )
+                except Exception as r_err:
+                    logger.debug("LayaRhythmEngine analysis skipped: %s", r_err)
+
             extra_comp: dict[str, Any] = {
                 "layout_mode": layout_mode,
                 "color_grading": color_grading,
@@ -1630,7 +1697,9 @@ class ShortsPipeline:
                 "target_lufs": target_lufs,
                 "bg_music_volume": getattr(job, "bgm_volume", None),
                 "crop_focus": crop_focus,
-                "bg_music_path": getattr(job, "bgm_path", None),
+                "bg_music_path": bgm_file,
+                "rhythm_ducking_release": duck_release_ms,
+                "duck_release_ms": duck_release_ms,
             }
             try:
                 c_sig = inspect.signature(self.compositor.compose)

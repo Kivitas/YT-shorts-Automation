@@ -434,11 +434,13 @@ def shift_jump_cuts_for_hook(
 def remap_words_for_jump_cuts(
     words: Sequence[TimedWord | dict[str, Any]],
     jump_cuts: Sequence[JumpCut] | None = None,
+    fps: float | None = None,
 ) -> list[TimedWord]:
     """Remap word timestamps when jump cuts excise dead air intervals.
 
     Removes words that fall inside a jump cut ([cut_start, cut_end]).
     Shifts all subsequent word timestamps earlier by the cumulative duration of preceding jump cuts.
+    Optionally quantizes timestamps to frame boundaries when fps is provided.
     """
     if not words:
         return []
@@ -449,6 +451,23 @@ def remap_words_for_jump_cuts(
                 res.append(w)
             else:
                 res.append(TimedWord.from_dict(w))
+        if fps is not None and fps > 0:
+            frame_dur = 1.0 / fps
+            return [
+                TimedWord(
+                    word=w.word,
+                    start=round(round(w.start / frame_dur) * frame_dur, 3),
+                    end=round(
+                        max(
+                            round(w.start / frame_dur) * frame_dur + frame_dur,
+                            round(w.end / frame_dur) * frame_dur,
+                        ),
+                        3,
+                    ),
+                    probability=w.probability,
+                )
+                for w in res
+            ]
         return res
 
     sorted_cuts = sorted(
@@ -456,7 +475,25 @@ def remap_words_for_jump_cuts(
         key=lambda c: c.cut_start,
     )
     if not sorted_cuts:
-        return [w if isinstance(w, TimedWord) else TimedWord.from_dict(w) for w in words]
+        res = [w if isinstance(w, TimedWord) else TimedWord.from_dict(w) for w in words]
+        if fps is not None and fps > 0:
+            frame_dur = 1.0 / fps
+            return [
+                TimedWord(
+                    word=w.word,
+                    start=round(round(w.start / frame_dur) * frame_dur, 3),
+                    end=round(
+                        max(
+                            round(w.start / frame_dur) * frame_dur + frame_dur,
+                            round(w.end / frame_dur) * frame_dur,
+                        ),
+                        3,
+                    ),
+                    probability=w.probability,
+                )
+                for w in res
+            ]
+        return res
 
     remapped: list[TimedWord] = []
     for item in words:
@@ -488,16 +525,52 @@ def remap_words_for_jump_cuts(
         new_start = max(0.0, w_start - cum_shift)
         new_end = max(new_start + 0.05, w_end - cum_shift)
 
+        if fps is not None and fps > 0:
+            frame_dur = 1.0 / fps
+            q_start = round(round(new_start / frame_dur) * frame_dur, 3)
+            q_end = round(max(q_start + frame_dur, round(new_end / frame_dur) * frame_dur), 3)
+            new_start = q_start
+            new_end = q_end
+        else:
+            new_start = round(new_start, 3)
+            new_end = round(new_end, 3)
+
         remapped.append(
             TimedWord(
                 word=w.word,
-                start=round(new_start, 3),
-                end=round(new_end, 3),
+                start=new_start,
+                end=new_end,
                 probability=w.probability,
             )
         )
 
     return remapped
+
+
+def build_spring_bounce_tags(
+    scale_overshoot: int = 125,
+    scale_rebound: int = 96,
+    t_rise_ms: int = 70,
+    t_rebound_ms: int = 130,
+    t_settle_ms: int = 180,
+    rot_tilt: int = -2,
+) -> str:
+    """Generate ASS override tags for spring-physics overshoot bounce animation.
+
+    Phases:
+    1. Rise (0 -> t_rise_ms): Fast scale pop overshoot past target.
+    2. Rebound (t_rise_ms -> t_rebound_ms): Spring recoil dip below 100%.
+    3. Settle (t_rebound_ms -> t_settle_ms): Return smoothly to 100% rest.
+    """
+    tilt_str = f"\\frz{rot_tilt}" if rot_tilt != 0 else ""
+    settle_rot = f"\\t({t_rise_ms},{t_settle_ms},\\frz0)" if rot_tilt != 0 else ""
+    return (
+        f"{tilt_str}"
+        f"\\t(0,{t_rise_ms},\\fscx{scale_overshoot}\\fscy{scale_overshoot})"
+        f"\\t({t_rise_ms},{t_rebound_ms},\\fscx{scale_rebound}\\fscy{scale_rebound})"
+        f"\\t({t_rebound_ms},{t_settle_ms},\\fscx100\\fscy100)"
+        f"{settle_rot}"
+    )
 
 
 def build_ass_script(
@@ -676,6 +749,10 @@ def build_ass_script(
         (
             f"Style: DopamineYellow,{resolved_font_name},{resolved_font_size},{resolved_primary_color},{resolved_active_color},"
             f"{resolved_outline_color},{back_color},-1,0,0,0,100,100,2,0,{border_style},{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
+        ),
+        (
+            f"Style: ActiveBox,{resolved_font_name},{resolved_font_size},{resolved_active_color},{resolved_primary_color},"
+            f"&HA0000000,&HA0000000,-1,0,0,0,100,100,2,0,3,6,0,2,{margin_l},{margin_r},{margin_v},1"
         ),
         hook_style_def,
         (

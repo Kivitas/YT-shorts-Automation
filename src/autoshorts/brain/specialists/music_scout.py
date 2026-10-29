@@ -7,6 +7,8 @@ and musical mood, matches against the viral BGM catalog, and resolves local musi
 from __future__ import annotations
 
 import logging
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -60,12 +62,29 @@ class MusicScoutAgent:
         # Rhythmic eighth-note sidechain release: 30000 / BPM (in ms)
         ducking_release_ms = round(30000.0 / target_bpm)
 
+        norm_niche = (niche or "").strip().lower()
+
+        # Optional provider: each::labs AI generated music track
+        eachlabs_path = self._try_eachlabs_music(mood, target_bpm, norm_niche, eff_duration)
+        if eachlabs_path is not None:
+            return AudioPlan(
+                bgm_track_id=f"eachlabs_{mood}_{target_bpm}",
+                bgm_title=f"AI Generated {mood.replace('_', ' ').title()}",
+                bgm_path=str(eachlabs_path),
+                tempo_bpm=target_bpm,
+                target_bpm=target_bpm,
+                words_per_second=wps,
+                mood=mood,
+                volume=base_volume,
+                ducking_release_ms=ducking_release_ms,
+                confidence=0.92,
+            )
+
         # Query catalog
         catalog = get_viral_bgm_catalog()
         best_track = None
         min_distance = 999
 
-        norm_niche = (niche or "").strip().lower()
         for track in catalog:
             bpm_diff = abs(track.bpm - target_bpm)
             niche_bonus = -15 if (norm_niche and norm_niche in track.best_fit_niches) else 0
@@ -130,3 +149,40 @@ class MusicScoutAgent:
                 return matches[0]
 
         return None
+
+    def _try_eachlabs_music(
+        self,
+        mood: str,
+        target_bpm: int,
+        niche: str,
+        duration: float,
+    ) -> Path | None:
+        """Attempt to fetch and cache an AI-generated track via each::labs."""
+        api_key = os.environ.get("EACHLABS_API_KEY", "").strip()
+        flag = os.environ.get("AUTOSHORTS_EACHLABS_ENABLED", "").lower() in ("1", "true", "yes")
+        if not (api_key and flag):
+            return None
+
+        cache_dir = get_assets_dir() / "music" / "eachlabs"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        slug_niche = re.sub(r"[^a-zA-Z0-9_-]+", "_", (niche or "general").strip().lower())
+        cache_file = cache_dir / f"{mood}_{target_bpm}bpm_{slug_niche}.mp3"
+        if cache_file.is_file() and cache_file.stat().st_size > 0:
+            logger.info("Found cached eachlabs music track: %s", cache_file)
+            return cache_file
+
+        from autoshorts.research_agent import eachlabs_client as ec
+
+        prompt = (
+            f"Background music for short video, {mood.replace('_', ' ')} style, "
+            f"{target_bpm} BPM, niche: {niche or 'general'}"
+        )
+        dur_int = max(5, min(300, round(duration)))
+        try:
+            url = ec.generate_music(prompt, duration_sec=dur_int)
+            downloaded = ec.download_asset(url, cache_file)
+            logger.info("Generated and cached eachlabs music track: %s", downloaded)
+            return downloaded
+        except Exception as exc:
+            logger.warning("eachlabs music generation failed (%s); falling back to catalog.", exc)
+            return None

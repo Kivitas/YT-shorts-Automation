@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable, Coroutine
 from typing import Any, Literal
 from uuid import uuid4
@@ -69,10 +70,12 @@ class MasterBrainOrchestrator:
         config: Settings | None = None,
         pipeline_runner: Any = None,
         max_concurrent_swarm: int = 2,
+        llm_provider: Any = None,
     ) -> None:
         self.config = config or load_config()
         self._pipeline_runner = pipeline_runner
         self._swarm_semaphore = asyncio.Semaphore(max_concurrent_swarm)
+        self.llm_provider = llm_provider
 
         # Specialist swarm
         self.info_researcher = InfoResearcherAgent(config=self.config)
@@ -400,7 +403,39 @@ class MasterBrainOrchestrator:
         topic: str,
         research: ResearchIntel,
     ) -> str:
-        """Compose 40-second viral narrative structure."""
+        """Compose 40-second viral narrative structure with optional LLM generation."""
+        if self.llm_provider is not None and hasattr(self.llm_provider, "complete"):
+            try:
+                insights = "\n- ".join(research.key_insights[:3]) if research.key_insights else "N/A"
+                prompt = f"""[ROLE: VIRAL SHORT-FORM SCRIPTWRITER]
+Topic: {topic}
+Opening Hook: {hook}
+Key Insights:
+- {insights}
+
+Write a high-retention 40-second YouTube Short / TikTok narrative (~100-140 words).
+Structure requirements:
+1. 0-3s Opening: Use or build upon the opening hook with a high-stakes pattern interrupt.
+2. 4-6s Retention Reset: Deliver a surprise, counter-intuitive insight, or curiosity spike every 5 seconds.
+3. Flow: Zero throat-clearing, fast conversational cadence.
+4. Ending: Craft a seamless loopable ending whose final sentence naturally loops back into the opening hook line.
+
+Return ONLY the plain narration script text with no stage directions, emojis, or markdown headings.
+"""
+                generated = self.llm_provider.complete(prompt).strip()
+                if generated and len(generated.split()) >= 30:
+                    if generated.startswith("```"):
+                        lines = generated.splitlines()
+                        if lines[0].startswith("```"):
+                            lines = lines[1:]
+                        if lines and lines[-1].startswith("```"):
+                            lines = lines[:-1]
+                        generated = "\n".join(lines).strip()
+                    generated = generated.strip('"\'')
+                    return generated
+            except Exception as e:
+                logger.warning("LLM script generation failed (%s); using deterministic script.", e)
+
         insights_str = " ".join(research.key_insights[:2]) if research.key_insights else ""
         return (
             f"{hook} "
@@ -411,8 +446,9 @@ class MasterBrainOrchestrator:
 
     def _replace_hook_in_script(self, original_script: str, approved_hook: str) -> str:
         """Replace the first sentence of the script with the calibrated hook."""
-        parts = original_script.split(".", 1)
+        parts = re.split(r"(?<=[.!?])\s+", original_script.strip(), maxsplit=1)
         if len(parts) > 1:
             rest = parts[1].strip()
-            return f"{approved_hook.rstrip('.')} {rest}"
-        return approved_hook
+            hook_clean = approved_hook.strip()
+            return f"{hook_clean} {rest}"
+        return approved_hook.strip()

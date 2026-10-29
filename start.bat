@@ -168,6 +168,10 @@ if not exist "data\logs" mkdir "data\logs"
 if not exist "work" mkdir "work"
 if not exist "inbox" mkdir "inbox"
 if not exist "output" mkdir "output"
+if not exist "output\export" mkdir "output\export"
+if not exist "output\longform" mkdir "output\longform"
+if not exist "data\edge_profile" mkdir "data\edge_profile"
+if not exist "assets\broll_cache" mkdir "assets\broll_cache"
 
 rem ----------------------------------------------------------------------------- modes
 if "%MODE%"=="test" goto run_test

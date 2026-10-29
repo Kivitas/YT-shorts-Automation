@@ -95,3 +95,38 @@ def test_publish_passes_thumbnail_and_survives_corrupt_counter(counter, tmp_path
     pub.publish_longform(res, config=cfg, state_manager=object())
     assert seen["thumbnail_path"] == res.thumbnail_path
     assert pub.longform_uploads_today() == 1
+
+
+def test_publish_respects_studio_and_local_modes(counter, tmp_path, monkeypatch):
+    import autoshorts.uploader.local_exporter as le
+    import autoshorts.uploader.studio_playwright as sp
+
+    modes_used = []
+
+    class FakeStudioUploader:
+        def __init__(self, **kw):
+            modes_used.append("studio")
+
+        def upload(self, **kw):
+            return SimpleNamespace(url="https://youtube.com/watch?v=studio1")
+
+    class FakeLocalUploader:
+        def __init__(self, **kw):
+            modes_used.append("local")
+
+        def upload(self, **kw):
+            return SimpleNamespace(url="file:///exported/v.mp4")
+
+    monkeypatch.setattr(sp, "PlaywrightStudioUploader", FakeStudioUploader)
+    monkeypatch.setattr(le, "LocalExportUploader", FakeLocalUploader)
+
+    cfg_studio = SimpleNamespace(
+        upload=SimpleNamespace(mode="studio", default_privacy_status="unlisted", category_id="27")
+    )
+    cfg_local = SimpleNamespace(
+        upload=SimpleNamespace(mode="local", default_privacy_status="unlisted", category_id="27")
+    )
+    assert pub.publish_longform(_result(tmp_path), config=cfg_studio) == "https://youtube.com/watch?v=studio1"
+    assert pub.publish_longform(_result(tmp_path), config=cfg_local) == "file:///exported/v.mp4"
+    assert modes_used == ["studio", "local"]
+    assert pub.longform_uploads_today() == 2

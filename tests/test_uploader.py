@@ -1068,3 +1068,212 @@ def test_studio_publish_click_failure_raises(dummy_video: Path):
     uploader = PlaywrightStudioUploader(context_factory=lambda **kw: mock_ctx)
     with pytest.raises(StudioStepError, match="publish"):
         uploader.upload(path=dummy_video, title="T", description="d")
+
+
+# =============================================================================
+# Track 4 Hardening & Regression Tests
+# =============================================================================
+
+
+def test_youtube_api_quota_exhausted_error_resolves_upload_bucket_daily(dummy_video: Path):
+    from autoshorts.core.exceptions import QuotaExhaustedError
+    """Verify line 612 fallback prevents AttributeError when daily_upload_budget is absent."""
+    tracker = MagicMock()
+    tracker.can_upload.return_value = False
+    tracker.get_upload_spend.return_value = 100
+    # Simulate QuotaTracker that only has upload_bucket_daily, NOT daily_upload_budget
+    tracker.upload_bucket_daily = 100
+    del tracker.daily_upload_budget
+
+    uploader = YouTubeApiUploader(quota_tracker=tracker)
+    with pytest.raises(QuotaExhaustedError) as exc_info:
+        uploader.upload(
+            path=dummy_video,
+            title="Exhausted Test",
+            description="desc",
+            tags=[],
+        )
+    assert exc_info.value.limit == 100
+    assert exc_info.value.bucket == "upload"
+
+
+def test_mark_upload_quota_exhausted_also_exhausts_general_quota(state_mgr: StateManager):
+    """Verify _mark_upload_quota_exhausted consumes both upload and general remaining quotas."""
+    tracker = QuotaTracker(state_mgr)
+    uploader = YouTubeApiUploader(quota_tracker=tracker)
+
+    assert tracker.get_upload_remaining() > 0
+    assert tracker.get_general_remaining() > 0
+
+    uploader._mark_upload_quota_exhausted()
+
+    assert tracker.get_upload_remaining() == 0
+    assert tracker.get_general_remaining() == 0
+
+
+def test_youtube_api_verify_skips_when_can_verify_is_false():
+    """Verify verify() returns False without executing videos.list when can_verify is False."""
+    tracker = MagicMock()
+    tracker.can_verify.return_value = False
+
+    mock_service = MagicMock()
+    uploader = YouTubeApiUploader(quota_tracker=tracker, youtube_service=mock_service)
+
+    result = uploader.verify("any_vid")
+    assert result is False
+    assert mock_service.videos().list.call_count == 0
+
+
+def test_youtube_api_verify_scheduled_upload_tolerates_private_privacy():
+    """Verify verify() accepts privacyStatus='private' when publishAt is set on scheduled videos."""
+    mock_service = MagicMock()
+    mock_list_req = MagicMock()
+    mock_list_req.execute.return_value = {
+        "items": [
+            {
+                "id": "vid_sched",
+                "status": {
+                    "uploadStatus": "uploaded",
+                    "privacyStatus": "private",
+                    "publishAt": "2026-11-01T12:00:00Z",
+                },
+                "processingDetails": {"processingStatus": "succeeded"},
+            }
+        ]
+    }
+    mock_service.videos().list.return_value = mock_list_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    # Expected privacy was public, but publishAt forced private
+    assert uploader.verify("vid_sched", expected_privacy="public") is True
+
+
+def test_youtube_api_verify_tolerates_omitted_processing_details():
+    """Verify verify() accepts uploadStatus in ('uploaded', 'processed') when processingDetails is omitted."""
+    mock_service = MagicMock()
+    mock_list_req = MagicMock()
+    mock_list_req.execute.return_value = {
+        "items": [
+            {
+                "id": "vid_no_proc",
+                "status": {"uploadStatus": "uploaded", "privacyStatus": "unlisted"},
+                # processingDetails completely omitted
+            }
+        ]
+    }
+    mock_service.videos().list.return_value = mock_list_req
+
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    assert uploader.verify("vid_no_proc") is True
+
+
+def test_local_exporter_upload_accepts_video_path_and_kwargs(tmp_path: Path, dummy_video: Path):
+    """Verify LocalExportUploader.upload accepts video_path keyword and arbitrary kwargs."""
+    exporter = LocalExportUploader(export_dir=tmp_path / "exp")
+    res = exporter.upload(
+        video_path=dummy_video,
+        title="Custom Title",
+        description="Custom Desc",
+        privacy_status="private",
+        extra_arbitrary_kwarg="some_value",
+        another_kwarg=123,
+    )
+    assert res.video_id.startswith("local_")
+    assert (tmp_path / "exp" / f"{res.video_id}.mp4").exists() or any(
+        res.video_id in f.name for f in (tmp_path / "exp").iterdir()
+    )
+
+
+def test_studio_playwright_upload_tags_and_thumbnail(dummy_video: Path, tmp_path: Path):
+    """Verify tags entry and custom thumbnail file loader are attempted during Studio upload."""
+    dummy_thumb = tmp_path / "thumb.jpg"
+    dummy_thumb.write_bytes(b"\xff\xd8\xff\xe0" + b"dummy thumbnail")
+
+    mock_ctx = MagicMock()
+    page = MagicMock()
+    page.url = "https://studio.youtube.com"
+
+    loc_dict = {}
+
+    def locator_side_effect(sel, *args, **kwargs):
+        loc = MagicMock()
+        loc.first = loc
+        loc.nth.return_value = loc
+        loc.is_visible.return_value = True
+        loc.get_attribute.return_value = "https://youtu.be/edgeVidTags"
+        loc_dict[sel] = loc
+        return loc
+
+    page.locator.side_effect = locator_side_effect
+    mock_ctx.pages = [page]
+
+    uploader = PlaywrightStudioUploader(context_factory=lambda **kw: mock_ctx)
+    result = uploader.upload(
+        video_path=dummy_video,
+        title="Tags & Thumb Short",
+        description="Testing tags and thumb",
+        tags=["ai", "tech"],
+        thumbnail_path=dummy_thumb,
+        privacy_status="unlisted",
+    )
+
+    assert result.video_id == "edgeVidTags"
+    # Verify thumbnail file loader was invoked
+    assert any("input#file-loader" in k for k in loc_dict)
+    thumb_mock = next(v for k, v in loc_dict.items() if "input#file-loader" in k)
+    thumb_mock.set_input_files.assert_called_once_with(str(dummy_thumb.resolve()))
+
+    # Verify tags input was filled
+    assert any("#tags-container input#text-input" in k for k in loc_dict)
+    tags_mock = next(v for k, v in loc_dict.items() if "#tags-container input#text-input" in k)
+    tags_mock.fill.assert_called_once_with("ai,tech")
+
+
+def test_studio_playwright_is_short_formats_watch_url(dummy_video: Path):
+    """Verify upload with is_short=False returns watch?v= URL instead of shorts/ URL."""
+    mock_ctx = MagicMock()
+    page = MagicMock()
+    page.url = "https://studio.youtube.com"
+
+    mock_loc = MagicMock()
+    mock_loc.first = mock_loc
+    mock_loc.nth.return_value = mock_loc
+    mock_loc.is_visible.return_value = True
+    mock_loc.get_attribute.return_value = "https://youtu.be/longVid1234"
+    page.locator.return_value = mock_loc
+    mock_ctx.pages = [page]
+
+    uploader = PlaywrightStudioUploader(context_factory=lambda **kw: mock_ctx)
+    result = uploader.upload(
+        video_path=dummy_video,
+        title="Longform Video",
+        description="Longform desc",
+        is_short=False,
+    )
+    assert result.video_id == "longVid1234"
+    assert result.url == "https://youtube.com/watch?v=longVid1234"
+
+
+def test_run_youtube_oauth_flow_default_scopes(tmp_path: Path):
+    """Verify default OAuth scopes in run_youtube_oauth_flow include full required set."""
+    from autoshorts.core.settings_manager import run_youtube_oauth_flow
+
+    client_secret = tmp_path / "client_secret.json"
+    client_secret.write_text('{"installed": {"client_id": "test", "client_secret": "test"}}')
+    token_path = tmp_path / "token.json"
+
+    with patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file") as mock_flow_cls:
+        mock_flow = MagicMock()
+        mock_creds = MagicMock()
+        mock_creds.to_json.return_value = '{"token": "test"}'
+        mock_flow.run_local_server.return_value = mock_creds
+        mock_flow_cls.return_value = mock_flow
+
+        run_youtube_oauth_flow(client_secret, token_path)
+
+        called_scopes = mock_flow_cls.call_args.kwargs.get("scopes") or mock_flow_cls.call_args[1].get("scopes")
+        assert "https://www.googleapis.com/auth/youtube" in called_scopes
+        assert "https://www.googleapis.com/auth/youtube.force-ssl" in called_scopes
+        assert "https://www.googleapis.com/auth/yt-analytics.readonly" in called_scopes
+        assert "https://www.googleapis.com/auth/youtube.upload" in called_scopes
+        assert "https://www.googleapis.com/auth/youtube.readonly" in called_scopes

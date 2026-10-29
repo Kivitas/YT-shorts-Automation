@@ -258,6 +258,13 @@ class SpreadScheduler:
         if not slot:
             raise AutoShortsError(f"Job {job_id} not found in pending scheduler queue.")
 
+        slot_id = slot.get("id") or slot.get("job_id")
+        if hasattr(self.state_manager, "claim_scheduled_slot"):
+            if not self.state_manager.claim_scheduled_slot(slot_id):
+                raise AutoShortsError(
+                    f"Job {job_id} slot {slot_id} could not be claimed (already uploading or completed)."
+                )
+
         return self._dispatch_slot(slot)
 
     # -------------------------------------------------------------------------
@@ -395,6 +402,13 @@ class SpreadScheduler:
             return None
 
         # Dispatch the upload
+        # Atomically claim slot to prevent concurrent duplicate uploads
+        slot_id = next_slot.get("id") or next_slot.get("job_id")
+        if hasattr(self.state_manager, "claim_scheduled_slot"):
+            if not self.state_manager.claim_scheduled_slot(slot_id):
+                logger.info("Slot %s already claimed by another worker; skipping.", slot_id)
+                return None
+
         return self._dispatch_slot(next_slot)
 
     def _dispatch_slot(self, slot: dict[str, Any]) -> UploadResult:
@@ -601,7 +615,7 @@ class SpreadScheduler:
                 self.state_manager.save_job(job)
 
             # Post-upload cleanup: delete video files from PC once verified
-            if verified and self.cleaner:
+            if result.verified and self.cleaner:
                 try:
                     self.cleaner.cleanup_job(job_id, verified=True, upload_result=result)
                     job = self.state_manager.get_job(job_id)
@@ -623,6 +637,10 @@ class SpreadScheduler:
                 # The channel's daily upload limit is not a failure of this video. Keep the slot
                 # queued and leave the job alone; the exhausted bucket stops dispatch until the reset.
                 self.state_manager.update_scheduled_slot_status(job_id, "SCHEDULED")
+                job = self.state_manager.get_job(job_id)
+                if job:
+                    job.status = JobStatus.SCHEDULED
+                    self.state_manager.save_job(job)
                 logger.warning(
                     "Upload limit reached for job %s; slot kept queued until the quota resets: %s",
                     job_id,

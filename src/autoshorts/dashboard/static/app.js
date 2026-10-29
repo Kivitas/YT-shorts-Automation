@@ -606,11 +606,39 @@ function renderJobs(jobs) {
       ? `<div style="color: var(--accent-red); font-size: 0.75rem; margin-top: 0.35rem;">⚠️ ${escapeHtml(job.error_message)}</div>`
       : "";
 
+    // Provenance Pills: API Confirmed / Studio DOM / Local File
+    let provenanceHtml = "";
+    const vKind = job.verification_kind || (job.upload_result && job.upload_result.verification_kind);
+    const originKind = job.origin_kind;
+    if (vKind === "api_confirmed") {
+      provenanceHtml = `<span class="provenance-pill pill-api" title="Verified via YouTube Data API v3">API Confirmed</span>`;
+    } else if (vKind === "studio_dom") {
+      provenanceHtml = `<span class="provenance-pill pill-studio" title="Verified via YouTube Studio Web DOM">Studio DOM</span>`;
+    } else if (vKind === "local_export" || originKind === "local_file") {
+      provenanceHtml = `<span class="provenance-pill pill-local" title="Local file clip / export">Local File</span>`;
+    }
+
+    // Delivery QC Badge: QC Passed / QC Issues
+    let qcBadgeHtml = "";
+    const delivery = (job.diagnostics && job.diagnostics.delivery) || job.delivery_qc;
+    if (delivery && (job.rendered_video_path || job.status === "COMPLETED" || job.status === "READY_FOR_REVIEW" || job.status === "SCHEDULED" || job.status === "CLEANED")) {
+      if (delivery.ok) {
+        qcBadgeHtml = `<span class="qc-badge qc-passed" title="FFmpeg delivery quality check passed">QC Passed</span>`;
+      } else {
+        const issues = Array.isArray(delivery.issues) && delivery.issues.length ? delivery.issues.join(", ") : "Quality issues detected";
+        qcBadgeHtml = `<span class="qc-badge qc-issues" title="${escapeHtml(issues)}">QC Issues</span>`;
+      }
+    }
+
     return `
       <div class="job-card" id="job-${job.id}">
         <div class="job-header">
           <span class="job-id">#${job.id}</span>
-          <span class="status-badge status-${job.status}">${job.status}</span>
+          <div class="job-header-badges">
+            ${qcBadgeHtml}
+            ${provenanceHtml}
+            <span class="status-badge status-${job.status}">${job.status}</span>
+          </div>
         </div>
         <div class="job-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
         <div class="job-meta">
@@ -1987,9 +2015,37 @@ async function refreshLongformQuota() {
   }
 }
 
+function onLongformGenreChange() {
+  const genre = document.getElementById("longform-genre-select")?.value;
+  const customInput = document.getElementById("longform-custom-topic");
+  if (!customInput) return;
+  const suggestions = {
+    parody: "Tech Startup Pitch Gone Wrong",
+    history: "Rome vs Mongols",
+    science: "How Black Holes Bend Time",
+    comparison: "Spartans vs Samurai: Battle Analysis",
+    finance: "The $100/Day Compounding Rule",
+    self_improvement: "The 2-Minute Rule to Stop Procrastination",
+  };
+  if (suggestions[genre] && !customInput.value) {
+    customInput.placeholder = `e.g. '${suggestions[genre]}'`;
+  }
+}
+
+function onLongformPresetSelect() {
+  const sel = document.getElementById("longform-topic-select");
+  const customInput = document.getElementById("longform-custom-topic");
+  if (sel && customInput && sel.value) {
+    customInput.value = sel.options[sel.selectedIndex]?.text || sel.value;
+  }
+}
+
 async function generateLongform() {
-  const topic = document.getElementById("longform-topic-select").value;
-  const minutes = parseFloat(document.getElementById("longform-minutes-input").value);
+  const customTopic = document.getElementById("longform-custom-topic")?.value?.trim();
+  const presetTopic = document.getElementById("longform-topic-select")?.value;
+  const topic = customTopic || presetTopic || "science";
+  const genre = document.getElementById("longform-genre-select")?.value || "auto";
+  const minutesVal = parseFloat(document.getElementById("longform-minutes-input").value);
   const provider = document.getElementById("longform-provider-select").value;
   const statusEl = document.getElementById("longform-status");
   const btn = document.getElementById("longform-generate-btn");
@@ -1997,8 +2053,10 @@ async function generateLongform() {
   const publishToggle = document.getElementById("longform-publish-toggle");
   const payload = {
     topic: topic,
-    minutes: Number.isFinite(minutes) ? minutes : 2.5,
+    genre: genre,
+    minutes: Number.isFinite(minutesVal) ? minutesVal : 3.0,
     provider: provider,
+    visual_style: "kinetic_dark",
     publish: publishToggle ? publishToggle.checked : false,
   };
 
@@ -2277,6 +2335,16 @@ async function loadAllSettings() {
     if (document.getElementById("setting-openrouter-key") && cfg.openrouter_api_key_masked) {
       document.getElementById("setting-openrouter-key").placeholder = cfg.openrouter_api_key_masked;
     }
+    const sec = cfg.secrets || {};
+    if (document.getElementById("setting-eachlabs-key") && (cfg.eachlabs_api_key_masked || sec.eachlabs_api_key_masked)) {
+      document.getElementById("setting-eachlabs-key").placeholder = cfg.eachlabs_api_key_masked || sec.eachlabs_api_key_masked;
+    }
+    if (document.getElementById("setting-pexels-key") && (cfg.pexels_api_key_masked || sec.pexels_api_key_masked)) {
+      document.getElementById("setting-pexels-key").placeholder = cfg.pexels_api_key_masked || sec.pexels_api_key_masked;
+    }
+    if (document.getElementById("setting-pixabay-key") && (cfg.pixabay_api_key_masked || sec.pixabay_api_key_masked)) {
+      document.getElementById("setting-pixabay-key").placeholder = cfg.pixabay_api_key_masked || sec.pixabay_api_key_masked;
+    }
     if (document.getElementById("setting-local-gguf-path")) {
       document.getElementById("setting-local-gguf-path").value = llm.local_gguf_path || "";
     }
@@ -2479,6 +2547,18 @@ async function saveAllSettings() {
   const orKey = document.getElementById("setting-openrouter-key").value.trim();
   if (orKey) {
     payload.openrouter_api_key = orKey;
+  }
+  const eachlabsKey = document.getElementById("setting-eachlabs-key") ? document.getElementById("setting-eachlabs-key").value.trim() : "";
+  if (eachlabsKey) {
+    payload.eachlabs_api_key = eachlabsKey;
+  }
+  const pexelsKey = document.getElementById("setting-pexels-key") ? document.getElementById("setting-pexels-key").value.trim() : "";
+  if (pexelsKey) {
+    payload.pexels_api_key = pexelsKey;
+  }
+  const pixabayKey = document.getElementById("setting-pixabay-key") ? document.getElementById("setting-pixabay-key").value.trim() : "";
+  if (pixabayKey) {
+    payload.pixabay_api_key = pixabayKey;
   }
 
   try {
@@ -2706,7 +2786,7 @@ function syncPresetCardHighlight() {
   if (!select) return;
   const val = select.value || "neon";
 
-  ["neon", "hormozi", "mrbeast", "pill", "minimal", "cyberpunk", "cinematic"].forEach(p => {
+  ["neon", "hormozi", "mrbeast", "pill", "minimal", "cyberpunk", "cinematic", "rapid"].forEach(p => {
     const card = document.getElementById(`preset-card-${p}`);
     if (card) {
       card.classList.toggle("active", p === val);
@@ -3463,7 +3543,7 @@ function updatePhoneCanvasPreview() {
     ["pos-bottom_safe", "pos-center", "pos-top_safe"].forEach(c => captionsLayer.classList.remove(c));
     captionsLayer.classList.add(`pos-${subtitlePos}`);
 
-    ["preset-neon", "preset-hormozi", "preset-mrbeast", "preset-pill", "preset-minimal", "preset-cyberpunk", "preset-cinematic"].forEach(c => captionsLayer.classList.remove(c));
+    ["preset-neon", "preset-hormozi", "preset-mrbeast", "preset-pill", "preset-minimal", "preset-cyberpunk", "preset-cinematic", "preset-rapid"].forEach(c => captionsLayer.classList.remove(c));
     captionsLayer.classList.add(`preset-${stylePreset}`);
   }
 
@@ -3510,6 +3590,7 @@ function updatePhoneCanvasPreview() {
       minimal: "🎨 Minimalist",
       cyberpunk: "🎨 Cyberpunk",
       cinematic: "🎨 Cinematic",
+      rapid: "⚡ Rapid",
     };
     presetBadge.textContent = presetNames[stylePreset] || stylePreset;
   }

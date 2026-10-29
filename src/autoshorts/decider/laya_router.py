@@ -109,7 +109,7 @@ class LayaRouter:
                 verdict="rejected",
                 latency_ms=round(dt_ms, 3),
                 reasons=["Empty hook text"],
-                patch_suggestion="Stop scrolling: discover the truth!",
+                patch_suggestion="Stop scrolling: The #1 counter-intuitive secret will shock you!",
                 breakdown={"base": 0.0},
             )
 
@@ -220,7 +220,7 @@ class LayaRouter:
         """Fast hook sentence patch to elevate score into approved viral status (>=80.0)."""
         raw = (hook_text or "").strip()
         if not raw:
-            return "Stop scrolling: here is the 1 secret nobody told you!"
+            return "Stop scrolling: The #1 counter-intuitive secret nobody told you!"
 
         patched = raw
         lower = patched.lower()
@@ -236,15 +236,15 @@ class LayaRouter:
         has_curiosity = any(w in HOOK_KEYWORDS for w in words)
         has_number = bool(re.search(r"\d+", patched))
 
-        # Inject high-impact hook prefix if lacking curiosity
+        # Inject high-retention Pattern Interrupt (curiosity gap, counter-intuitive truth, high-stakes framing)
         if not has_curiosity:
             if not has_number:
-                patched = f"Stop scrolling: the 1 secret {patched[:1].lower() + patched[1:]}"
+                patched = f"Stop scrolling: The #1 counter-intuitive truth about {patched[:1].lower() + patched[1:]}"
             else:
-                patched = f"Stop scrolling: {patched[:1].lower() + patched[1:]}"
+                patched = f"Stop scrolling: What nobody tells you about {patched[:1].lower() + patched[1:]}"
         elif not has_number and len(words) < 12:
-            # Add numerical anchor if concise
-            patched = f"The #1 reason {patched[:1].lower() + patched[1:]}"
+            # Pattern interrupt with numerical curiosity anchor
+            patched = f"Stop scrolling: The #1 hidden reason {patched[:1].lower() + patched[1:]}"
 
         # Ensure terminal punctuation punch
         if not raw.endswith(("!", "?")):

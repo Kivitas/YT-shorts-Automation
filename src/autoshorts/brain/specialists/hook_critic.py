@@ -247,7 +247,7 @@ class HookCriticAgent:
         return max(15.0, min(95.0, round(score, 1)))
 
     def _fast_patch_hook(self, hook_text: str) -> str:
-        """Inject a high-tension pattern interrupt into a 70-79 tier hook."""
+        """Inject a high-retention pattern interrupt rewrite into a 70-79 tier hook."""
         clean = hook_text.strip()
         # Clean existing leading polite filler
         for weak in PASSIVE_WEAK_PHRASES:
@@ -260,5 +260,19 @@ class HookCriticAgent:
 
         # Uppercase first letter
         clean = clean[0].upper() + clean[1:] if len(clean) > 1 else clean.upper()
-        # Prepend high-urgency pattern interrupt
+
+        lower = clean.lower()
+        has_curiosity = any(
+            k in lower for k in ("secret", "truth", "why", "shock", "never", "nobody", "mistake", "warning", "trap")
+        )
+
+        if not has_curiosity:
+            if any(term in lower for term in ("safe", "easy", "simple", "best", "common", "regular")):
+                # Counter-intuitive truth pattern interrupt
+                clean = f"The counter-intuitive truth about why {clean[:1].lower() + clean[1:]}"
+            else:
+                # Curiosity gap / high-stakes pattern interrupt
+                clean = f"What 99% get completely wrong: {clean}"
+
+        # Prepend high-urgency pattern interrupt prefix
         return f"Stop scrolling: {clean}"

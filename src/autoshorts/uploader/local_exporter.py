@@ -9,6 +9,7 @@ import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from autoshorts.core.models import UploadResult
@@ -71,14 +72,20 @@ class LocalExportUploader:
 
     def upload(
         self,
-        path: Path,
-        title: str,
-        description: str,
-        tags: list[str],
+        path: Path | None = None,
+        title: str = "",
+        description: str = "",
+        tags: list[str] | None = None,
         privacy: str = "unlisted",
+        *,
+        video_path: Path | None = None,
+        **kwargs: Any,
     ) -> UploadResult:
         """Copy video to output/export and write metadata sidecar."""
-        src_path = Path(path).resolve()
+        target_path = video_path if video_path is not None else path
+        if target_path is None:
+            raise FileNotFoundError("Source video file not provided.")
+        src_path = Path(target_path).resolve()
         if not src_path.is_file():
             raise FileNotFoundError(f"Source video file not found: {src_path}")
 
@@ -98,12 +105,13 @@ class LocalExportUploader:
 
         # Write metadata sidecar JSON (never overwrite an existing sidecar)
         meta_path = _unique_path(self.export_dir / f"{dest_path.stem}_meta.json")
+        effective_privacy = kwargs.get("privacy_status", privacy)
         metadata = {
             "video_id": video_id,
             "title": title,
             "description": description,
-            "tags": tags or [],
-            "privacy_status": privacy,
+            "tags": list(tags) if tags is not None else [],
+            "privacy_status": effective_privacy,
             "exported_at": datetime.now(UTC).isoformat(),
             "source_path": str(src_path),
             "export_path": str(dest_path),
