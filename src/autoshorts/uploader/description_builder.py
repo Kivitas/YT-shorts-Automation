@@ -254,16 +254,21 @@ class DescriptionBuilder:
         formatted_end = format_timestamp_display(end)
         formatted_hashtags = normalize_hashtags(hashtags)
 
-        rendered = raw_tpl.format(
-            title=clean_title,
-            channel=clean_channel,
-            channel_url=clean_channel_url,
-            video_url=clean_video_url,
-            hook=clean_hook,
-            start=formatted_start,
-            end=formatted_end,
-            hashtags=formatted_hashtags,
-        ).strip()
+        fields = {
+            "title": clean_title,
+            "channel": clean_channel,
+            "channel_url": clean_channel_url,
+            "video_url": clean_video_url,
+            "hook": clean_hook,
+            "start": formatted_start,
+            "end": formatted_end,
+            "hashtags": formatted_hashtags,
+        }
+        try:
+            rendered = raw_tpl.format(**fields).strip()
+        except (KeyError, IndexError, ValueError, AttributeError):
+            # A malformed user template (unknown {field}, stray brace) must not crash the upload.
+            rendered = DEFAULT_DESCRIPTION_TEMPLATE.format(**fields).strip()
 
         # Ensure mandatory disclaimer phrase is present
         disclaimer_key_phrase = "All rights belong to"

@@ -112,6 +112,10 @@ def escape_ffmpeg_filter_path(file_path: PathLike) -> str:
     forward_str = raw_str.replace("\\", "/")
     # Escape colon (e.g. C: -> C\:)
     escaped_str = forward_str.replace(":", r"\:")
+    # An apostrophe would close the quoted filter argument early. Filter options are unescaped
+    # twice (filtergraph, then option), so close the quote, emit an apostrophe escaped for both
+    # levels (three backslashes), and reopen. A single backslash silently drops the apostrophe.
+    escaped_str = escaped_str.replace("'", "'" + "\\" * 3 + "''")
     return f"'{escaped_str}'"
 
 

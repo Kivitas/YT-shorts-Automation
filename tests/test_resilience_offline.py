@@ -658,3 +658,21 @@ def test_spread_scheduler_local_mode_bypasses_connectivity(
     result = scheduler.run_tick()
     assert result is not None
     assert len(fake_uploader.upload_calls) == 1
+
+
+def test_status_codes_must_match_whole_numbers():
+    """A file name or byte count containing 429/503 is not an HTTP status."""
+    from autoshorts.core.resilience import classify_network_or_outage_error
+
+    benign = classify_network_or_outage_error(
+        ValueError("cannot read job_14290_clip.mp4 (5031 bytes)")
+    )
+    assert benign["outage_type"] == "none"
+    assert (
+        classify_network_or_outage_error(RuntimeError("HTTP Error 429: Too Many"))["outage_type"]
+        == "rate_limited"
+    )
+    assert (
+        classify_network_or_outage_error(RuntimeError("HTTP Error 503"))["outage_type"]
+        == "youtube_outage"
+    )

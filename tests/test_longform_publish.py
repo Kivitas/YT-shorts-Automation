@@ -69,3 +69,29 @@ def test_publish_records_upload_and_returns_url(counter, tmp_path, monkeypatch):
     url = pub.publish_longform(_result(tmp_path), config=cfg, state_manager=object())
     assert url == "https://youtube.com/watch?v=abc"
     assert pub.longform_uploads_today() == 1
+
+
+def test_publish_passes_thumbnail_and_survives_corrupt_counter(counter, tmp_path, monkeypatch):
+    import autoshorts.quota.quota_tracker as qt
+    import autoshorts.uploader.youtube_api as yt
+
+    seen = {}
+
+    class FakeUploader:
+        def __init__(self, **kw):
+            pass
+
+        def upload(self, **kw):
+            seen.update(kw)
+            return SimpleNamespace(url="https://youtube.com/watch?v=abc")
+
+    counter.write_text('{"2020-01-01": "oops", "x": null}', encoding="utf-8")
+    cfg = SimpleNamespace(
+        upload=SimpleNamespace(default_privacy_status="unlisted", category_id="27")
+    )
+    monkeypatch.setattr(yt, "YouTubeApiUploader", FakeUploader)
+    monkeypatch.setattr(qt, "QuotaTracker", lambda **kw: object())
+    res = _result(tmp_path)
+    pub.publish_longform(res, config=cfg, state_manager=object())
+    assert seen["thumbnail_path"] == res.thumbnail_path
+    assert pub.longform_uploads_today() == 1

@@ -110,6 +110,8 @@ def _ffprobe_payload(target: Path) -> dict[str, Any] | None:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=FFPROBE_TIMEOUT_SEC,
             check=False,
         )
@@ -632,10 +634,33 @@ def count_decode_errors(media_path: Path | str, timeout_sec: float = 300.0) -> i
         [get_ffmpeg_path(), "-v", "error", "-i", str(media_path), "-f", "null", "-"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout_sec,
         check=False,
     )
     return len([line for line in proc.stderr.splitlines() if line.strip()])
+
+
+def _edl_on_trimmed_timeline(
+    edl: EditDecisionList | None, hook_in: float
+) -> EditDecisionList | None:
+    """Copy of ``edl`` whose jump cuts and zoom punch-ins are relative to a ``-ss hook_in`` input."""
+    if edl is None or hook_in <= 0:
+        return edl
+    from autoshorts.media.ass_styler import shift_jump_cuts_for_hook
+
+    punches = []
+    for p in edl.zoom_punch_ins:
+        if p.timestamp + p.duration <= hook_in:
+            continue
+        punches.append(p.model_copy(update={"timestamp": max(0.0, p.timestamp - hook_in)}))
+    return edl.model_copy(
+        update={
+            "jump_cuts": shift_jump_cuts_for_hook(edl.jump_cuts, hook_in),
+            "zoom_punch_ins": punches,
+        }
+    )
 
 
 def _discard_partial_output(path: Path) -> None:
@@ -919,6 +944,10 @@ class FFmpegCompositor:
             if isinstance(r_meta, dict):
                 effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
 
+        # EDL times are source-clip times, but the input is trimmed with -ss hook_in, so the filter
+        # graph sees a timeline starting at 0. Shift cuts and punch-ins to match.
+        graph_edl = _edl_on_trimmed_timeline(edl, hook_in)
+
         # Build complex filtergraph (subtitles path staged if it contains an apostrophe)
         staged_sub = stage_subtitles_for_filter(sub_path, dest, job_id)
         filtergraph, out_v, out_a = build_complex_filtergraph(
@@ -926,7 +955,7 @@ class FFmpegCompositor:
             subtitles_path=staged_sub or sub_path,
             duration_sec=target_duration,
             dopamine_preset=preset,
-            edl=edl,
+            edl=graph_edl,
             fonts_dir=fonts_param,
             has_background_video=has_bg_file,
             music_input_index=music_idx,

@@ -58,7 +58,7 @@ def test_config_loading_with_model_null():
     assert settings.edit_planner.model is None, "Edit planner model must be null by default"
 
     # Verify key default constraints
-    assert settings.scheduler.daily_upload_cap == 50
+    assert settings.scheduler.daily_upload_cap == 40
     assert settings.scheduler.max_per_rolling_hour == 7
     assert settings.scheduler.min_gap_minutes == 5
     assert settings.scheduler.max_gap_minutes == 25
@@ -285,6 +285,51 @@ def test_ffmpeg_filter_path_escaping():
     assert r"C\:/work/job123/subs.ass" in escaped
     assert escaped.startswith("'") and escaped.endswith("'")
     assert "\\" not in escaped.replace(r"\:", "")
+
+
+def test_ffmpeg_filter_path_escapes_apostrophe():
+    """An apostrophe in the path must not terminate the quoted filter argument."""
+    escaped = escape_ffmpeg_filter_path("subs/O'Brien.ass")
+    assert "O'" + "\\" * 3 + "''Brien" in escaped
+    assert escaped.startswith("'") and escaped.endswith("'")
+
+
+def test_ffmpeg_filter_path_apostrophe_survives_real_ffmpeg(tmp_path):
+    """The apostrophe must reach ffmpeg intact (a single backslash drops it silently)."""
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    d = tmp_path / "it's dir"
+    d.mkdir()
+    ass = d / "a.ass"
+    ass.write_text(
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 320\nPlayResY: 240\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize\nStyle: Default,Arial,20\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+        "Dialogue: 0,0:00:00.00,0:00:01.00,Default,hi\n",
+        encoding="utf-8",
+    )
+    r = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:d=1",
+            "-vf",
+            f"subtitles={escape_ffmpeg_filter_path(ass)}",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
 
 
 # -----------------------------------------------------------------------------

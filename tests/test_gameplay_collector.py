@@ -223,7 +223,8 @@ class TestSubprocessSearchAndDownload:
         target = tmp_path / "downloaded.mp4"
 
         def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
-            target.write_bytes(b"fake mp4 content" * 100)
+            # Downloads land under a temp name (the -o argument) and are renamed on success.
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"fake mp4 content" * 100)
             return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = fake_run
@@ -232,7 +233,22 @@ class TestSubprocessSearchAndDownload:
         assert res == target
         assert target.is_file()
         assert target.stat().st_size > 0
+        assert [p.name for p in tmp_path.iterdir()] == [target.name]
         mock_run.assert_called()
+
+    @patch("subprocess.run")
+    def test_download_source_video_failure_leaves_no_partial_file(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "downloaded.mp4"
+
+        def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"partial")
+            return MagicMock(returncode=1, stdout="", stderr="network down")
+
+        mock_run.side_effect = fake_run
+        assert download_source_video("https://youtube.com/watch?v=testvid", target) is None
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestSegmentCuttingAndIdempotency:

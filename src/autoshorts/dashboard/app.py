@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -597,6 +598,22 @@ class AnalyticsSyncPayload(BaseModel):
 
 
 _TRACK_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# Job ids name work/<job_id> folders, so only plain id characters are accepted.
+_SAFE_JOB_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,96}")
+# Background category names become folder names under assets/backgrounds/.
+_SAFE_CATEGORY_RE = re.compile(r"[a-z0-9_-]{1,40}")
+_SAFE_SNAPSHOT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+async def _read_json_object(request: Request) -> dict[str, Any]:
+    """Parse a JSON request body that must be an object; malformed bodies become HTTP 400."""
+    try:
+        body = await request.json()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}") from e
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+    return body
 
 
 def _is_valid_transcript_word(item: Any) -> bool:
@@ -679,8 +696,14 @@ def create_app(
                 inbox_dir = (
                     getattr(cfg.spark, "inbox_dir", "inbox") if hasattr(cfg, "spark") else "inbox"
                 )
+                from autoshorts.core.paths import PROJECT_ROOT
+
+                # A relative inbox dir would otherwise resolve against the CWD.
+                inbox_path = Path(inbox_dir)
+                if not inbox_path.is_absolute():
+                    inbox_path = PROJECT_ROOT / inbox_path
                 watcher = SparkInboxWatcher(
-                    inbox_dir=inbox_dir,
+                    inbox_dir=inbox_path,
                     state_manager=state_mgr,
                     poll_interval_sec=getattr(cfg.spark, "poll_interval_sec", 10)
                     if hasattr(cfg, "spark")
@@ -1137,8 +1160,8 @@ def create_app(
                 else "minecraft"
             )
             job.edl = EditDecisionList(
-                recommended_title=req.clip_title or "",
-                recommended_hook=req.hook_text or "",
+                recommended_title=(req.clip_title or "")[:60],
+                recommended_hook=(req.hook_text or "")[:100],
                 background_style_recommendation=bg_cat,
             )
 
@@ -1190,6 +1213,8 @@ def create_app(
         """Read aligned words or raw transcript for word-level editing."""
         from autoshorts.core.paths import get_work_dir
 
+        if not _SAFE_JOB_ID_RE.fullmatch(job_id):
+            raise HTTPException(status_code=400, detail="Invalid job id")
         work_dir = get_work_dir() / job_id
         aligned_cache = work_dir / "aligned_words.json"
         raw_cache = work_dir / "transcript.json"
@@ -1241,6 +1266,8 @@ def create_app(
         """Update aligned words transcript for a job."""
         from autoshorts.core.paths import get_work_dir
 
+        if not _SAFE_JOB_ID_RE.fullmatch(job_id):
+            raise HTTPException(status_code=400, detail="Invalid job id")
         work_dir = get_work_dir() / job_id
         work_dir.mkdir(parents=True, exist_ok=True)
         aligned_cache = work_dir / "aligned_words.json"
@@ -1280,6 +1307,10 @@ def create_app(
             raise HTTPException(
                 status_code=400, detail=f"start_sec and end_sec must be floats: {e}"
             ) from e
+
+        # NaN fails every comparison, so it must be rejected explicitly before the range check.
+        if not (math.isfinite(start_sec) and math.isfinite(end_sec)):
+            raise HTTPException(status_code=400, detail="start_sec and end_sec must be finite")
 
         if start_sec < 0 or start_sec >= end_sec:
             raise HTTPException(
@@ -1845,9 +1876,13 @@ def create_app(
         from autoshorts.media.background_fetcher import (
             download_preset_backgrounds,
             get_backgrounds_inventory,
+            normalize_category,
         )
 
         cats = req.categories if (req and req.categories) else ["minecraft", "subway"]
+        for cat in cats:
+            if not _SAFE_CATEGORY_RE.fullmatch(normalize_category(cat)):
+                raise HTTPException(status_code=400, detail=f"Invalid category name: {cat!r}")
         background_tasks.add_task(download_preset_backgrounds, categories=cats)
         inventory = get_backgrounds_inventory()
         return {
@@ -2725,13 +2760,18 @@ def create_app(
         if not payload.url or not payload.url.strip():
             raise HTTPException(status_code=400, detail="Video URL is required")
 
+        from autoshorts.core.exceptions import InvalidURLError
+
         focus_prompt = (
             payload.focus_prompt or f"Focus on peak high-impact insight in {payload.niche}"
         )
-        jobs = pipe.submit_links(
-            links_input=payload.url,
-            custom_instructions=focus_prompt,
-        )
+        try:
+            jobs = pipe.submit_links(
+                links_input=payload.url,
+                custom_instructions=focus_prompt,
+            )
+        except InvalidURLError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         for job in jobs:
             job.style_preset = payload.recommended_studio_profile
@@ -2938,6 +2978,8 @@ def create_app(
     def _resolve_job_work_dir(job_id: str) -> Path:
         from autoshorts.core.paths import get_work_dir
 
+        if not _SAFE_JOB_ID_RE.fullmatch(job_id):
+            raise HTTPException(status_code=400, detail="Invalid job id")
         # Same location the transcript/rerender endpoints use. AppConfig has no work_dir
         # field, so reading it from pipe.config raised AttributeError (HTTP 500).
         return get_work_dir() / job_id
@@ -2965,7 +3007,7 @@ def create_app(
         edl = job.edl or EditDecisionList()
         duration = 40.0
         if job.selected_clips:
-            duration = max(1.0, job.selected_clips[0].duration)
+            duration = max(1.0, job.selected_clips[0].candidate.duration)
         report = analyze_edit_rhythm(words, edl, duration)
         return {"success": True, "job_id": job_id, "audit": report.model_dump()}
 
@@ -2985,7 +3027,7 @@ def create_app(
         edl = job.edl or EditDecisionList()
         duration = 40.0
         if job.selected_clips:
-            duration = max(1.0, job.selected_clips[0].duration)
+            duration = max(1.0, job.selected_clips[0].candidate.duration)
 
         job_work = _resolve_job_work_dir(job_id)
         snap = save_workflow_snapshot(job_work, job_id, edl, words, label="pre_optimize")
@@ -3020,13 +3062,24 @@ def create_app(
         job = state_mgr.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
-        body = await request.json()
+        body = await _read_json_object(request)
         snapshot_id = str(body.get("snapshot_id", "")).strip()
         if not snapshot_id:
             raise HTTPException(status_code=400, detail="snapshot_id is required")
+        if not _SAFE_SNAPSHOT_ID_RE.fullmatch(snapshot_id):
+            raise HTTPException(status_code=400, detail="Invalid snapshot_id")
 
         job_work = _resolve_job_work_dir(job_id)
-        restored = restore_workflow_snapshot(job_work, snapshot_id)
+        try:
+            restored = restore_workflow_snapshot(job_work, snapshot_id)
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=404, detail=f"Snapshot '{snapshot_id}' not found"
+            ) from e
+        except (ValueError, KeyError, TypeError) as e:
+            raise HTTPException(
+                status_code=400, detail=f"Snapshot '{snapshot_id}' is unreadable: {e}"
+            ) from e
         job.edl = restored["edl"]
         state_mgr.save_job(job)
         return {
@@ -3047,7 +3100,7 @@ def create_app(
     @app.post("/api/brain/orchestrate")
     async def brain_orchestrate(request: Request) -> dict[str, Any]:
         """Execute multi-agent DAG orchestration for Mode A (link repurposing) or Mode B (generative)."""
-        body = await request.json()
+        body = await _read_json_object(request)
         video_url = body.get("video_url")
         raw_mode = body.get("mode")
         inferred_mode = raw_mode or ("mode_a" if video_url else "mode_b")
@@ -3095,21 +3148,29 @@ def create_app(
     @app.post("/api/brain/critic/evaluate")
     async def brain_critic_evaluate(request: Request) -> dict[str, Any]:
         """Directly invoke HookCriticAgent for sub-40ms hook triage or Mode A cut review."""
-        body = await request.json()
+        body = await _read_json_object(request)
         eval_mode = body.get("mode", "mode_b")
+        try:
+            start_sec = float(body.get("start_sec", 0.0))
+            end_sec = float(body.get("end_sec", 45.0))
+            candidate_index = int(body.get("candidate_index", 0))
+            candidate_count = int(body.get("candidate_count", 1))
+            attempt = int(body.get("attempt", 1))
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid numeric field: {e}") from e
 
         if eval_mode == "mode_a":
             review = await brain_orchestrator.hook_critic.evaluate_mode_a(
                 transcript_slice=body.get("transcript_slice", ""),
-                start_sec=float(body.get("start_sec", 0.0)),
-                end_sec=float(body.get("end_sec", 45.0)),
-                candidate_index=int(body.get("candidate_index", 0)),
-                candidate_count=int(body.get("candidate_count", 1)),
+                start_sec=start_sec,
+                end_sec=end_sec,
+                candidate_index=candidate_index,
+                candidate_count=candidate_count,
             )
         else:
             review = await brain_orchestrator.hook_critic.evaluate_mode_b(
                 hook_text=body.get("hook_text", ""),
-                attempt=int(body.get("attempt", 1)),
+                attempt=attempt,
             )
 
         return {

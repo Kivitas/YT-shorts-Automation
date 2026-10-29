@@ -568,7 +568,8 @@ function renderJobs(jobs) {
     actions += `<button class="btn btn-secondary btn-sm" onclick="openEditJobModal('${job.id}')" title="Edit timeline, transcript, layout, and studio re-burn">✏️ Edit &amp; Studio Re-Burn</button>`;
 
     if (hasVideo) {
-      actions += `<button class="btn btn-secondary btn-sm" onclick="openPreview('${job.id}', '${encodeURIComponent(title)}')">▶ Preview</button>`;
+      // encodeURIComponent leaves ' unencoded, so a title like x');... could break out of the JS string.
+      actions += `<button class="btn btn-secondary btn-sm" onclick="openPreview('${job.id}', '${encodeURIComponent(title).replace(/'/g, "%27")}')">▶ Preview</button>`;
     }
     if (ytId) {
       actions += `<a href="https://youtube.com/shorts/${ytId}" target="_blank" rel="noopener noreferrer" class="btn btn-yt btn-sm">▶ Open on YouTube ↗</a>`;
@@ -3768,7 +3769,7 @@ function renderTrendingVideos(videos) {
             💡 <strong>Suggested Clip Focus:</strong> ${escapeHtml(v.focus_prompt || 'Extract the most surprising insight')}
           </div>
           <div class="video-card-actions">
-            <button type="button" class="btn btn-primary btn-sm" style="width: 100%;" onclick="sendToPipeline('${escapeHtml(v.url)}', '${escapeHtml(v.focus_prompt || '')}', '${profileId}')">
+            <button type="button" class="btn btn-primary btn-sm" style="width: 100%;" onclick="sendToPipeline(${escapeHtml(JSON.stringify(v.url))}, ${escapeHtml(JSON.stringify(v.focus_prompt || ''))}, ${escapeHtml(JSON.stringify(profileId))})">
               ⚡ 1-Click Send to Pipeline
             </button>
           </div>
@@ -3779,16 +3780,9 @@ function renderTrendingVideos(videos) {
 }
 
 async function sendToPipeline(url, focusPrompt, profileId) {
-  // Try backend handoff endpoint if mounted
-  try {
-    await fetch("/api/research/pipeline-handoff", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, focus_prompt: focusPrompt, profile_id: profileId })
-    });
-  } catch (err) {
-    console.debug("Backend pipeline handoff API fallback:", err);
-  }
+  // The Studio ingestion box below is the only submission path. Also calling the
+  // pipeline-handoff endpoint queued a second job for the same URL, and that endpoint
+  // ignored profile_id anyway.
 
   // Populate Studio Ingestion Box
   const linksInput = document.getElementById("links-input");

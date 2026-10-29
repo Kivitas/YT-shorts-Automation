@@ -20,6 +20,7 @@ from autoshorts.core.exceptions import (
     CredentialInvalidError,
     CredentialRevokedError,
 )
+from autoshorts.core.logging_setup import redact
 from autoshorts.core.paths import PROJECT_ROOT, get_data_dir
 
 logger = logging.getLogger("autoshorts.credential_guardian")
@@ -326,7 +327,8 @@ def classify_api_error(
         requires_settings_action=True,
         settings_tab=tab,
         error_code=code_hint or (str(http_status) if http_status else None),
-        message=f"Credential error encountered for {norm_service}: {combined_text.strip()[:180]}",
+        # Raw error text can echo request URLs (?key=...); redact before it reaches UI or logs.
+        message=f"Credential error encountered for {norm_service}: {redact(combined_text.strip()[:180])}",
         remediation_steps=[
             f"Open ⚙️ Settings and check the credentials in {tab}.",
             "Verify network access and API service status.",

@@ -321,3 +321,48 @@ def test_api_post_backgrounds_upload_path_traversal(api_client: TestClient):
     resp = api_client.post("/api/backgrounds/upload", files=files, data=data)
     assert resp.status_code == 400
     assert "invalid category" in resp.json()["detail"].lower()
+
+
+def _fake_ytdlp(write_bytes: bytes, returncode: int = 0):
+    """subprocess.run stand-in that writes the file named after '-o'."""
+
+    def run(cmd, **kwargs):
+        out = Path(cmd[cmd.index("-o") + 1])
+        out.write_bytes(write_bytes)
+        return MagicMock(returncode=returncode, stdout="", stderr="boom")
+
+    return run
+
+
+def test_download_clip_discards_partial_file_on_failure(tmp_path: Path):
+    from autoshorts.media import background_fetcher as bf
+
+    dest = tmp_path / "minecraft_bg_01.mp4"
+    with patch.object(bf.subprocess, "run", _fake_ytdlp(b"partial", returncode=1)):
+        assert bf.download_clip_with_ytdlp("https://x/y", dest) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_clip_rejects_unreadable_video_and_never_caches_it(tmp_path: Path):
+    from autoshorts.media import background_fetcher as bf
+
+    dest = tmp_path / "minecraft_bg_01.mp4"
+    with (
+        patch.object(bf.subprocess, "run", _fake_ytdlp(b"not a video")),
+        patch.object(bf, "has_video_stream", return_value=False),
+    ):
+        assert bf.download_clip_with_ytdlp("https://x/y", dest) is None
+    assert not dest.exists() and list(tmp_path.iterdir()) == []
+
+
+def test_download_clip_publishes_validated_file(tmp_path: Path):
+    from autoshorts.media import background_fetcher as bf
+
+    dest = tmp_path / "minecraft_bg_01.mp4"
+    with (
+        patch.object(bf.subprocess, "run", _fake_ytdlp(b"video-bytes")),
+        patch.object(bf, "has_video_stream", return_value=True),
+    ):
+        assert bf.download_clip_with_ytdlp("https://x/y", dest) == dest.resolve()
+    assert dest.read_bytes() == b"video-bytes"
+    assert [p.name for p in tmp_path.iterdir()] == [dest.name]

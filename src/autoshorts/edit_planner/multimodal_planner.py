@@ -50,7 +50,9 @@ def probe_clip_duration(video_path: Path | str, default: float = 45.0) -> float:
             "default=noprint_wrappers=1:nokey=1",
             str(target),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
+        )
         if result.returncode == 0:
             val = float(result.stdout.strip())
             if val > 0:

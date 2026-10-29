@@ -904,3 +904,27 @@ def test_api_post_settings_noop_keeps_config_file_byte_identical(
     import yaml
 
     assert yaml.safe_load(cfg_file.read_text(encoding="utf-8"))["llm"]["temperature"] == 0.3
+
+
+def test_api_post_settings_rejected_value_writes_neither_config_nor_env(
+    settings_client: dict[str, Any],
+) -> None:
+    """A value the schema rejects must not reach config.yaml, or the next start fails to load it."""
+    client: TestClient = settings_client["client"]
+    cfg_file: Path = settings_client["cfg_file"]
+    env_file: Path = settings_client["env_file"]
+    before_yaml = cfg_file.read_bytes()
+    env_before = env_file.read_bytes() if env_file.exists() else None
+
+    res = client.post(
+        "/api/settings",
+        json={
+            "upload": {"mode": "bogus"},
+            "secrets": {"gemini_api_key": "AIzaSyBrandNewKey1234567890"},
+        },
+    )
+    assert res.status_code == 400, res.text
+
+    assert cfg_file.read_bytes() == before_yaml
+    env_after = env_file.read_bytes() if env_file.exists() else None
+    assert env_after == env_before

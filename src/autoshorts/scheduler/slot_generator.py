@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta, tzinfo
+from zoneinfo import ZoneInfo
 
 from autoshorts.core.config import ActiveWindowConfig, SchedulerConfig
 
@@ -56,28 +57,59 @@ class SlotGenerator:
         parts = [int(p) for p in time_str.split(":")]
         return time(hour=parts[0], minute=parts[1])
 
+    def _zone(self) -> tzinfo | None:
+        """Return the window timezone, or None for the system-local zone."""
+        name = str(getattr(self.active_window, "timezone", "local") or "local").strip()
+        if name.lower() == "local":
+            return None
+        if name.upper() == "UTC":
+            return UTC
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            return None
+
+    def _to_window_tz(self, dt: datetime) -> datetime:
+        """Express an aware datetime in the active-window timezone (naive stays as-is)."""
+        if dt.tzinfo is None:
+            return dt
+        zone = self._zone()
+        return dt.astimezone() if zone is None else dt.astimezone(zone)
+
+    def _localize(self, naive: datetime) -> datetime:
+        """Attach the window timezone to a naive wall-clock datetime (DST-aware)."""
+        zone = self._zone()
+        return naive.astimezone() if zone is None else naive.replace(tzinfo=zone)
+
     def is_within_active_window(self, dt: datetime | None = None) -> bool:
-        """Return True if given datetime (or clock now) falls inside active window."""
-        target = dt or self.clock()
-        target_time = target.time()
-        return self.start_time <= target_time <= self.end_time
+        """Return True if given datetime (or clock now) falls inside active window.
+
+        Aware datetimes are converted to the window's configured timezone first; the
+        default clock is UTC, so comparing its raw wall time ignored ``timezone``.
+        """
+        target = self._to_window_tz(dt or self.clock())
+        return self.start_time <= target.time().replace(tzinfo=None) <= self.end_time
 
     def get_window_bounds_for_date(self, target_date: datetime) -> tuple[datetime, datetime]:
-        """Return (window_start, window_end) datetimes for the given date."""
-        tz = target_date.tzinfo
-        w_start = target_date.replace(
-            hour=self.start_time.hour,
-            minute=self.start_time.minute,
-            second=0,
-            microsecond=0,
-            tzinfo=tz,
-        )
-        w_end = target_date.replace(
-            hour=self.end_time.hour,
-            minute=self.end_time.minute,
-            second=59,
-            microsecond=999999,
-            tzinfo=tz,
+        """Return (window_start, window_end) datetimes for the window-local date."""
+        if target_date.tzinfo is None:
+            w_start = target_date.replace(
+                hour=self.start_time.hour,
+                minute=self.start_time.minute,
+                second=0,
+                microsecond=0,
+            )
+            w_end = target_date.replace(
+                hour=self.end_time.hour,
+                minute=self.end_time.minute,
+                second=59,
+                microsecond=999999,
+            )
+            return w_start, w_end
+        day = self._to_window_tz(target_date).date()
+        w_start = self._localize(datetime.combine(day, self.start_time))
+        w_end = self._localize(
+            datetime.combine(day, self.end_time).replace(second=59, microsecond=999999)
         )
         return w_start, w_end
 
@@ -95,15 +127,23 @@ class SlotGenerator:
         if candidate < w_start:
             # Before today's window start: align to window start plus a small random gap
             first_gap_sec = self.rng.uniform(self.min_gap_minutes * 60, self.max_gap_minutes * 60)
-            return w_start + timedelta(seconds=first_gap_sec)
+            result = w_start + timedelta(seconds=first_gap_sec)
         elif candidate > w_end:
             # Past today's window end: rollover to tomorrow's window start plus random gap
-            tomorrow = candidate + timedelta(days=1)
+            if candidate.tzinfo is None:
+                tomorrow = candidate + timedelta(days=1)
+            else:
+                day = self._to_window_tz(candidate).date() + timedelta(days=1)
+                tomorrow = self._localize(datetime.combine(day, time(12, 0)))
             next_start, _ = self.get_window_bounds_for_date(tomorrow)
             first_gap_sec = self.rng.uniform(self.min_gap_minutes * 60, self.max_gap_minutes * 60)
-            return next_start + timedelta(seconds=first_gap_sec)
+            result = next_start + timedelta(seconds=first_gap_sec)
         else:
-            return candidate
+            result = candidate
+        # Return in the caller's timezone so stored ISO strings sort consistently.
+        if after.tzinfo is not None and result.tzinfo is not None:
+            result = result.astimezone(after.tzinfo)
+        return result
 
     def generate_slots(
         self,

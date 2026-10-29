@@ -924,10 +924,12 @@ def discover_trending_sources(
 
     discovered: list[TrendingSourceVideo] = []
     try:
+        # yt-dlp emits UTF-8 JSON; the Windows locale codec (cp1252) cannot decode many titles.
         proc = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_sec,
             check=False,
         )

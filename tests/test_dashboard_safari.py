@@ -8,7 +8,11 @@ They guard against regressions in known Safari 15 gaps; see the README
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "src" / "autoshorts" / "dashboard"
 STYLE_CSS = DASHBOARD_DIR / "static" / "style.css"
@@ -75,3 +79,35 @@ def test_no_raw_space_separated_timestamps_fed_to_new_date() -> None:
     assert re.search(r's\.replace\(/\\s\+/,\s*"T"\)', js), (
         "space-to-T conversion missing in parseSafariSafeDate"
     )
+
+
+def test_card_onclick_args_survive_js_string_parsing() -> None:
+    """Titles and focus prompts inside onclick attributes must not break out of the JS string.
+
+    encodeURIComponent leaves apostrophes alone, and HTML-escaping turns ' into &#039;, which
+    the HTML parser decodes before the JS runs. Both broke handlers for titles like "Sam's".
+    """
+    js = _read(APP_JS)
+    assert r"encodeURIComponent(title).replace(/'/g" in js
+    assert "JSON.stringify(v.focus_prompt" in js
+    assert "'${escapeHtml(v.focus_prompt" not in js
+
+
+def test_send_to_pipeline_has_a_single_submission_path() -> None:
+    """The handoff POST queued a second job next to the Studio ingestion box submit."""
+    js = _read(APP_JS)
+    assert "/api/research/pipeline-handoff" not in js
+
+
+def test_app_js_parses() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    result = subprocess.run(
+        [node, "--check", str(APP_JS)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

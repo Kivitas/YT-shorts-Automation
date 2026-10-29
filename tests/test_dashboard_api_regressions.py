@@ -20,7 +20,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from autoshorts.core.config import load_config
-from autoshorts.core.models import Job, JobStatus
+from autoshorts.core.exceptions import InvalidURLError
+from autoshorts.core.models import ClipCandidate, ClipSelection, Job, JobStatus
 from autoshorts.core.parallel_runner import ParallelJobExecutor
 from autoshorts.core.state_manager import StateManager
 from autoshorts.dashboard import app as dashboard_app
@@ -88,9 +89,11 @@ upload:
     return {
         "client": client,
         "state_mgr": state_mgr,
+        "pipeline": pipeline,
         "cfg_file": cfg_file,
         "work_dir": work_dir,
         "assets_dir": assets_dir,
+        "tmp_path": tmp_path,
     }
 
 
@@ -229,3 +232,158 @@ def test_retry_only_accepts_failed_jobs(
     ok = client.post("/api/jobs/job_failed_001/retry")
     assert ok.status_code == 200
     assert submitted == ["job_failed_001"]
+
+
+def _save_job_with_clip(state_mgr: StateManager, job_id: str, status: JobStatus) -> None:
+    cand = ClipCandidate(start=0.0, end=40.0, text="hello world again", score=0.9)
+    state_mgr.save_job(
+        Job(
+            id=job_id,
+            source_url="https://youtube.com/watch?v=regress12345",
+            status=status,
+            selected_clips=[ClipSelection(candidate=cand, clip_index=0)],
+        )
+    )
+
+
+def test_pipeline_handoff_invalid_link_returns_400(api: dict[str, Any]) -> None:
+    """submit_links raises InvalidURLError for bad links; the handoff route returned 500."""
+    api["pipeline"].submit_links.side_effect = InvalidURLError("not a YouTube link")
+    client: TestClient = api["client"]
+    res = client.post("/api/research/pipeline-handoff", json={"url": "https://example.com/x"})
+    assert res.status_code == 400, res.text
+    assert "not a YouTube link" in res.json()["detail"]
+
+
+def test_patch_long_title_on_job_without_edl_is_truncated(api: dict[str, Any]) -> None:
+    """EditDecisionList caps recommended_title at 60 and recommended_hook at 100; longer input gave 500."""
+    job_id = "job_long_title"
+    _save_job(api["state_mgr"], job_id, JobStatus.READY_FOR_REVIEW)
+    client: TestClient = api["client"]
+    res = client.patch(f"/api/jobs/{job_id}", json={"clip_title": "T" * 80, "hook_text": "H" * 120})
+    assert res.status_code == 200, res.text
+    stored = api["state_mgr"].get_job(job_id)
+    assert stored is not None and stored.edl is not None
+    assert len(stored.edl.recommended_title) == 60
+    assert len(stored.edl.recommended_hook) == 100
+
+
+def test_pacing_audit_and_optimize_work_for_job_with_selected_clip(api: dict[str, Any]) -> None:
+    """ClipSelection has no duration attribute, so both endpoints raised AttributeError (500)."""
+    job_id = "job_pacing_clip"
+    _save_job_with_clip(api["state_mgr"], job_id, JobStatus.SUBTITLES_GENERATED)
+    job_dir = api["work_dir"] / job_id
+    job_dir.mkdir(parents=True)
+    words = [
+        {"word": "Hello", "start": 0.0, "end": 0.4, "probability": 0.99},
+        {"word": "world", "start": 0.4, "end": 0.9, "probability": 0.99},
+    ]
+    (job_dir / "aligned_words.json").write_text(json.dumps(words), encoding="utf-8")
+    client: TestClient = api["client"]
+
+    audit = client.get(f"/api/jobs/{job_id}/pacing-audit")
+    assert audit.status_code == 200, audit.text
+    assert audit.json()["audit"]["word_count"] == 2
+
+    optimized = client.post(f"/api/jobs/{job_id}/optimize-edl")
+    assert optimized.status_code == 200, optimized.text
+
+
+def test_trim_rejects_non_finite_times_and_keeps_job(api: dict[str, Any]) -> None:
+    """Python's json accepts NaN/Infinity; NaN passed the range checks and broke the JSON response."""
+    job_id = "job_trim_nan"
+    _save_job_with_clip(api["state_mgr"], job_id, JobStatus.READY_FOR_REVIEW)
+    client: TestClient = api["client"]
+    headers = {"Content-Type": "application/json"}
+    for body in (
+        b'{"start_sec": NaN, "end_sec": 5}',
+        b'{"start_sec": 0, "end_sec": NaN}',
+        b'{"start_sec": -Infinity, "end_sec": 5}',
+    ):
+        res = client.post(f"/api/jobs/{job_id}/trim", content=body, headers=headers)
+        assert res.status_code == 400, body
+    stored = api["state_mgr"].get_job(job_id)
+    assert stored is not None
+    assert stored.selected_clips[0].candidate.end == 40.0
+
+
+def test_malformed_json_bodies_return_400_not_500(api: dict[str, Any]) -> None:
+    client: TestClient = api["client"]
+    headers = {"Content-Type": "application/json"}
+
+    assert (
+        client.post("/api/brain/orchestrate", content=b"{not json", headers=headers).status_code
+        == 400
+    )
+    assert (
+        client.post("/api/brain/orchestrate", content=b"[1, 2]", headers=headers).status_code == 400
+    )
+    assert (
+        client.post("/api/brain/critic/evaluate", content=b"{not json", headers=headers).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/brain/critic/evaluate",
+            content=b'{"mode": "mode_a", "start_sec": "soon"}',
+            headers=headers,
+        ).status_code
+        == 400
+    )
+
+    _save_job(api["state_mgr"], "job_restore_json", JobStatus.READY_FOR_REVIEW)
+    restore_url = "/api/jobs/job_restore_json/snapshots/restore"
+    assert client.post(restore_url, content=b"{bad", headers=headers).status_code == 400
+    assert client.post(restore_url, content=b"[1]", headers=headers).status_code == 400
+
+
+def test_restore_snapshot_rejects_bad_ids_and_reports_missing(api: dict[str, Any]) -> None:
+    _save_job(api["state_mgr"], "job_restore_ids", JobStatus.READY_FOR_REVIEW)
+    client: TestClient = api["client"]
+    restore_url = "/api/jobs/job_restore_ids/snapshots/restore"
+
+    traversal = client.post(restore_url, json={"snapshot_id": "../../escape"})
+    assert traversal.status_code == 400
+    missing = client.post(restore_url, json={"snapshot_id": "snap_missing_1"})
+    assert missing.status_code == 404, missing.text
+
+
+def test_transcript_rejects_job_ids_that_are_not_work_dir_names(api: dict[str, Any]) -> None:
+    """PUT created work/<any id> directories and wrote files there without checking the job."""
+    client: TestClient = api["client"]
+    words = [{"word": "x", "start": 0.0, "end": 0.5}]
+    res = client.put("/api/jobs/bad.id/transcript", json={"words": words})
+    assert res.status_code == 400, res.text
+    assert not (api["work_dir"] / "bad.id").exists()
+    assert client.get("/api/jobs/bad.id/transcript").status_code == 400
+
+
+def test_background_download_rejects_path_like_categories(
+    api: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Categories went straight into the assets path, so '../' could create folders outside it."""
+    from autoshorts.media import background_fetcher
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        background_fetcher,
+        "download_preset_backgrounds",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+    client: TestClient = api["client"]
+    res = client.post("/api/backgrounds/download", json={"categories": ["../../escape"]})
+    assert res.status_code == 400, res.text
+    assert calls == []
+
+
+def test_log_stream_records_each_message_once() -> None:
+    """The stream handler was attached to both root and 'autoshorts', so every line appeared twice."""
+    import logging
+
+    from autoshorts.core.logging_setup import get_log_stream_handler
+
+    handler = get_log_stream_handler()
+    handler.clear()
+    logging.getLogger("autoshorts.regress.dup").warning("dup-check-%s", "marker")
+    lines = [m for m in handler.get_history() if "dup-check-marker" in m]
+    assert len(lines) == 1

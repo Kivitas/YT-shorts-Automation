@@ -59,7 +59,9 @@ def test_top_five_with_digit_countdown_reasons():
 
 
 def test_list_of_two_is_watching():
-    d = classify_format("Number two was funny, but number one was a total disaster. Top two moments.", 30.0)
+    d = classify_format(
+        "Number two was funny, but number one was a total disaster. Top two moments.", 30.0
+    )
     assert d.kind == "watching"
     assert d.rank_count is None
 
@@ -70,7 +72,9 @@ def test_cue_without_countdown_is_watching():
 
 
 def test_zigzag_numbers_without_cue_is_watching():
-    d = classify_format("Number three is fine. Number one is odd. Number four is long. Number two ends.", 30.0)
+    d = classify_format(
+        "Number three is fine. Number one is odd. Number four is long. Number two ends.", 30.0
+    )
     assert d.kind == "watching"
 
 

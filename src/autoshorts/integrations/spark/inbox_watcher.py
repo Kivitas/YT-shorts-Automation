@@ -302,6 +302,7 @@ class SparkInboxWatcher:
         self._running = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._poll_lock = threading.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -323,59 +324,87 @@ class SparkInboxWatcher:
         if not self.inbox_dir.exists():
             return results
 
-        # Exclude processed/ and failed/ subfolders
-        entries = sorted(
-            [
-                p
-                for p in self.inbox_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in valid_extensions
-            ],
-            key=lambda p: p.stat().st_mtime if p.exists() else 0,
-        )
-
-        for file_path in entries:
+        def _mtime(p: Path) -> float:
             try:
-                content = file_path.read_text(encoding="utf-8")
-                hints = parse_spark_import(content)
+                return p.stat().st_mtime
+            except OSError:
+                # Vanished between listing and sorting; it is skipped in the loop below.
+                return 0.0
 
-                # Auto-enqueue to state manager if provided
-                if self.state_manager is not None:
-                    for hint in hints:
-                        job = Job(
-                            source_url=hint.source_url,
-                            custom_instructions=hint.to_custom_instructions(),
-                            status=JobStatus.QUEUED,
-                        )
-                        self.state_manager.save_job(job)
-
-                # Invoke custom callback if provided
-                if self.on_jobs_parsed is not None:
-                    try:
-                        self.on_jobs_parsed(hints, file_path)
-                    except Exception as cb_err:
-                        logger.error("Callback error during inbox processing: %s", cb_err)
-
-                # Move file to inbox/processed/
-                dest_path = self._move_file_safe(file_path, self.processed_dir)
-                results.append((dest_path, hints))
-                logger.info("Successfully ingested Spark file: %s -> %s", file_path.name, dest_path)
-
-            except Exception as err:
-                logger.warning("Failed to parse inbox file '%s': %s", file_path.name, err)
-                # Move to failed/ and write reason file
-                dest_path = self._move_file_safe(file_path, self.failed_dir)
-                reason_file = self.failed_dir / f"{dest_path.name}.reason.txt"
-                try:
-                    reason_content = (
-                        f"Timestamp: {datetime.now(UTC).isoformat()}\n"
-                        f"File: {file_path.name}\n"
-                        f"Error: {err}\n"
-                    )
-                    reason_file.write_text(reason_content, encoding="utf-8")
-                except Exception as write_err:
-                    logger.debug("Could not write failure reason file: %s", write_err)
-
+        # Serialize sweeps so an overlapping caller cannot parse and enqueue the same file twice.
+        with self._poll_lock:
+            # Exclude processed/ and failed/ subfolders
+            entries = sorted(
+                [
+                    p
+                    for p in self.inbox_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in valid_extensions
+                ],
+                key=_mtime,
+            )
+            for file_path in entries:
+                self._process_entry(file_path, results)
         return results
+
+    def _process_entry(
+        self,
+        file_path: Path,
+        results: list[tuple[Path, list[SparkClipHint]]],
+    ) -> None:
+        """Parse and route one inbox file; a file removed mid-sweep is skipped, never fatal."""
+        if not file_path.is_file():
+            logger.info("Inbox file vanished before processing, skipping: %s", file_path.name)
+            return
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            hints = parse_spark_import(content)
+
+            # Auto-enqueue to state manager if provided
+            if self.state_manager is not None:
+                for hint in hints:
+                    job = Job(
+                        source_url=hint.source_url,
+                        custom_instructions=hint.to_custom_instructions(),
+                        status=JobStatus.QUEUED,
+                    )
+                    self.state_manager.save_job(job)
+
+            # Invoke custom callback if provided
+            if self.on_jobs_parsed is not None:
+                try:
+                    self.on_jobs_parsed(hints, file_path)
+                except Exception as cb_err:
+                    logger.error("Callback error during inbox processing: %s", cb_err)
+
+            # Move file to inbox/processed/
+            dest_path = self._move_file_safe(file_path, self.processed_dir)
+            results.append((dest_path, hints))
+            logger.info("Successfully ingested Spark file: %s -> %s", file_path.name, dest_path)
+
+        except Exception as err:
+            if not file_path.exists():
+                # Removed or moved by someone else mid-processing; nothing left to quarantine.
+                logger.info(
+                    "Inbox file '%s' disappeared during processing: %s", file_path.name, err
+                )
+                return
+            logger.warning("Failed to parse inbox file '%s': %s", file_path.name, err)
+            # Move to failed/ and write reason file
+            try:
+                dest_path = self._move_file_safe(file_path, self.failed_dir)
+            except OSError as move_err:
+                logger.warning("Could not quarantine inbox file '%s': %s", file_path.name, move_err)
+                return
+            reason_file = self.failed_dir / f"{dest_path.name}.reason.txt"
+            try:
+                reason_content = (
+                    f"Timestamp: {datetime.now(UTC).isoformat()}\n"
+                    f"File: {file_path.name}\n"
+                    f"Error: {err}\n"
+                )
+                reason_file.write_text(reason_content, encoding="utf-8")
+            except Exception as write_err:
+                logger.debug("Could not write failure reason file: %s", write_err)
 
     def _move_file_safe(self, source: Path, destination_dir: Path) -> Path:
         """Safely move a file into destination_dir, avoiding name collisions."""

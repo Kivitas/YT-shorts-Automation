@@ -426,3 +426,140 @@ def test_openrouter_complete():
     provider = OpenRouterProvider(api_key="mock_or_key", http_client=client)
     res = provider.complete("Create a title")
     assert res == "Shorts Title #Shorts"
+
+
+# -----------------------------------------------------------------------------
+# Regression: null / empty model output must never surface as the string "None"
+# -----------------------------------------------------------------------------
+
+
+def test_openrouter_complete_null_content_returns_empty_string():
+    """JSON null message content (refusal / tool-only turn) yields '', not 'None'."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "mock-model"}]})
+        if request.url.path == "/api/v1/chat/completions":
+            return httpx.Response(200, json={"choices": [{"message": {"content": None}}]})
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenRouterProvider(api_key="mock_or_key", http_client=client)
+    assert provider.complete("Create a title") == ""
+
+
+def test_gemini_complete_null_text_returns_empty_string():
+    """A part with JSON null text yields '', not 'None'."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1beta/models":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/mock-flash",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/v1beta/models/mock-flash:generateContent":
+            return httpx.Response(
+                200,
+                json={"candidates": [{"content": {"parts": [{"text": None}]}}]},
+            )
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = GeminiProvider(api_key="mock_key", http_client=client)
+    assert provider.complete("Create a title") == ""
+
+
+def test_local_provider_empty_top_logprobs_does_not_crash():
+    """An empty top_logprobs list in the completion fallback yields uniform scores."""
+
+    class _FakeLlama:
+        def create_completion(self, prompt, **kwargs):
+            return {"choices": [{"text": "", "logprobs": {"top_logprobs": []}}]}
+
+    provider = LocalProvider(model_instance=_FakeLlama())
+    dist = provider.score_options("Pick one", ["Yes", "No"])
+    assert set(dist) == {"A", "B"}
+    assert abs(sum(dist.values()) - 1.0) < 1e-9
+    assert dist["A"] == pytest.approx(dist["B"])
+
+
+# -----------------------------------------------------------------------------
+# Regression: scoring must not look like a real answer when the API call failed
+# -----------------------------------------------------------------------------
+
+
+def test_gemini_score_options_raises_when_every_request_fails():
+    """A revoked/rate-limited key must raise, not return a uniform (fake) distribution."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1beta/models":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/mock-model",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+            )
+        if ":generateContent" in request.url.path:
+            return httpx.Response(401, json={"error": {"message": "API key not valid"}})
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = GeminiProvider(api_key="mock_key", http_client=client)
+    with pytest.raises(ProviderError):
+        provider.score_options("Rate window", {"A": "Keep", "B": "Drop"})
+
+
+def test_gemini_score_options_unparseable_reply_stays_uniform():
+    """A reply that names no option is still a uniform distribution, not an error."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1beta/models":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "models/mock-model",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+            )
+        if ":generateContent" in request.url.path:
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": "zzz"}]}}]}
+            )
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = GeminiProvider(api_key="mock_key", http_client=client)
+    probs = provider.score_options("Rate window", {"A": "Keep", "B": "Drop"})
+    assert probs == {"A": 0.5, "B": 0.5}
+
+
+def test_openrouter_score_options_raises_on_http_failure():
+    """An HTTP failure during OpenRouter scoring must surface as ProviderError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "mock-model"}]})
+        if request.url.path == "/api/v1/chat/completions":
+            return httpx.Response(401, json={"error": {"message": "Invalid API key"}})
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = OpenRouterProvider(api_key="mock_or_key", http_client=client)
+    with pytest.raises(ProviderError):
+        provider.score_options("Rate candidate", {"A": "Viral", "B": "Dull"})

@@ -474,3 +474,43 @@ def test_dashboard_orchestrate_preflight_422_on_missing_credentials(
         data = resp.json()
         assert "detail" in data
         assert data["detail"]["missing_key_name"] == "GEMINI_API_KEY"
+
+
+def test_info_researcher_consumes_real_strategy_brief(monkeypatch: pytest.MonkeyPatch) -> None:
+    """InfoResearcher must map the real ViralStrategyBrief fields, not silently fall back."""
+    from autoshorts.research_agent import research_brief_agent
+    from autoshorts.research_agent.models import TrendingSourceVideo, ViralStrategyBrief
+
+    source = TrendingSourceVideo(
+        video_id="abc123DEF45",
+        url="https://www.youtube.com/watch?v=abc123DEF45",
+        title="Deep dive",
+        channel="Channel",
+        viral_score=64.5,
+    )
+    brief = ViralStrategyBrief(
+        brief_id="brief_test000001",
+        created_at="2026-10-28T00:00:00+00:00",
+        niche="ai_tech",
+        target_audience="Developers exploring AI tooling.",
+        recommended_source=source,
+        clipping_strategy="Open on the sharpest claim, then cut to the proof.",
+        three_hook_variants=["Hook alpha here", "Hook beta here", "Hook gamma here"],
+        recommended_bgm="Dark Synthwave (120 BPM)",
+        projected_earnings={
+            "projected_views": 500000,
+            "total_revenue_usd": 123.45,
+            "effective_blended_rpm": 0.25,
+        },
+        reasoning="Retention psychology explained.",
+    )
+    monkeypatch.setattr(research_brief_agent, "generate_viral_strategy_brief", lambda **_: brief)
+
+    intel = InfoResearcherAgent()._sync_research("ai_tech", None, True)
+
+    assert intel.sources == ["https://www.youtube.com/watch?v=abc123DEF45"]
+    assert intel.trending_score == pytest.approx(64.5)
+    assert intel.viral_angles == ["Hook alpha here", "Hook beta here", "Hook gamma here"]
+    assert "Open on the sharpest claim, then cut to the proof." in intel.key_insights
+    assert any("123.45" in insight for insight in intel.key_insights)
+    assert intel.topic == "ai_tech"

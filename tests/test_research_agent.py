@@ -1029,3 +1029,175 @@ def test_faceless_llm_malformed_optional_fields_keep_llm_script():
     assert res.script_sentences == ["Kept sentence."]
     assert res.hashtags  # template fallback, never empty
     assert res.title  # template fallback, never empty
+
+
+# =============================================================================
+# 7. Regression: LLM output handling and TTS timeout (audit fixes)
+# =============================================================================
+
+
+def _brief_llm_provider(text: str) -> MagicMock:
+    provider = MagicMock()
+    provider.complete.return_value = text
+    return provider
+
+
+def test_brief_llm_non_string_fields_do_not_crash(monkeypatch: pytest.MonkeyPatch):
+    """A list-valued target_audience from the LLM must not break brief validation."""
+    import json as _json
+
+    from autoshorts.research_agent import research_brief_agent as rba
+
+    monkeypatch.setattr(rba, "discover_trending_sources", lambda **_: [])
+    payload = {
+        "target_audience": ["developers", "creators"],
+        "clipping_strategy": 42,
+        "three_hook_variants": ["Hook one is here", "Hook two is here", "Hook three is here"],
+        "reasoning": "Retention psychology.",
+    }
+    provider = _brief_llm_provider(_json.dumps(payload))
+    with patch("autoshorts.core.providers.get_provider", return_value=provider):
+        brief = generate_viral_strategy_brief(niche="ai_tech", config=MagicMock())
+
+    assert isinstance(brief.target_audience, str) and brief.target_audience
+    assert brief.clipping_strategy != "42"
+    assert brief.three_hook_variants == [
+        "Hook one is here",
+        "Hook two is here",
+        "Hook three is here",
+    ]
+    assert brief.reasoning == "Retention psychology."
+
+
+def test_brief_llm_json_after_prose_and_fence_is_parsed(monkeypatch: pytest.MonkeyPatch):
+    """JSON wrapped in a fence that follows a prose preamble is still used."""
+    from autoshorts.research_agent import research_brief_agent as rba
+
+    monkeypatch.setattr(rba, "discover_trending_sources", lambda **_: [])
+    raw = (
+        "Here is the plan:\n```json\n"
+        '{"target_audience": "Founders chasing growth", "clipping_strategy": "Open cold.", '
+        '"three_hook_variants": ["A one", "B two", "C three"], "reasoning": "Because."}'
+        "\n```"
+    )
+    with patch("autoshorts.core.providers.get_provider", return_value=_brief_llm_provider(raw)):
+        brief = generate_viral_strategy_brief(niche="business", config=MagicMock())
+    assert brief.target_audience == "Founders chasing growth"
+    assert brief.clipping_strategy == "Open cold."
+
+
+def test_faceless_script_json_after_prose_and_fence_is_parsed():
+    """Faceless script JSON after a prose preamble and an opening fence is parsed."""
+    raw = (
+        "Sure, here you go.\n```json\n"
+        '{"hook": "Your phone is lying to you about battery life tonight.", '
+        '"script_sentences": ["One.", "Two.", "Three.", "Four.", "Five."], '
+        '"title": "Battery Myths", "description": "Short.", '
+        '"hashtags": ["#shorts"], "search_keywords": ["battery"]}'
+        "\n```"
+    )
+    with patch("autoshorts.core.providers.get_provider", return_value=_brief_llm_provider(raw)):
+        res = generate_faceless_script(niche="ai_tech", topic="Battery", config=MagicMock())
+    assert res.hook == "Your phone is lying to you about battery life tonight."
+    assert res.title == "Battery Myths"
+
+
+def test_neural_tts_timeout_falls_back_when_called_from_running_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A hung edge-tts call must time out even when called inside a running event loop."""
+    import asyncio
+    import time
+
+    from autoshorts.research_agent import moneyprinter as mp
+
+    async def _hung(*_args, **_kwargs):
+        await asyncio.sleep(5)
+        raise AssertionError("edge-tts should have been cancelled by the timeout")
+
+    fallback_calls: list[Path] = []
+
+    def _fake_fallback(text, audio_path, words_path):
+        fallback_calls.append(audio_path)
+        return audio_path, [], 1.0
+
+    monkeypatch.setattr(mp, "_async_synthesize_edge_tts", _hung)
+    monkeypatch.setattr(mp, "_TTS_TIMEOUT_SEC", 0.3)
+    monkeypatch.setattr(mp, "_try_kokoro_tts", lambda *a, **k: None)
+    monkeypatch.setattr(mp, "_fallback_synthesize_audio", _fake_fallback)
+
+    async def _run() -> float:
+        start = time.monotonic()
+        mp.synthesize_neural_tts(
+            text="hello there",
+            voice="en-US-GuyNeural",
+            output_audio_path=tmp_path / "v.mp3",
+            output_words_path=tmp_path / "w.json",
+        )
+        return time.monotonic() - start
+
+    elapsed = asyncio.run(_run())
+    assert fallback_calls, "timeout should route to the offline fallback"
+    assert elapsed < 3.0, f"timeout not enforced (took {elapsed:.2f}s)"
+
+
+def test_neural_tts_timeout_falls_back_without_running_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The synchronous path is bounded by the same timeout."""
+    import asyncio
+    import time
+
+    from autoshorts.research_agent import moneyprinter as mp
+
+    async def _hung(*_args, **_kwargs):
+        await asyncio.sleep(5)
+
+    fallback_calls: list[Path] = []
+
+    def _fake_fallback(text, audio_path, words_path):
+        fallback_calls.append(audio_path)
+        return audio_path, [], 1.0
+
+    monkeypatch.setattr(mp, "_async_synthesize_edge_tts", _hung)
+    monkeypatch.setattr(mp, "_TTS_TIMEOUT_SEC", 0.3)
+    monkeypatch.setattr(mp, "_try_kokoro_tts", lambda *a, **k: None)
+    monkeypatch.setattr(mp, "_fallback_synthesize_audio", _fake_fallback)
+
+    start = time.monotonic()
+    mp.synthesize_neural_tts(
+        text="hello there",
+        voice="en-US-GuyNeural",
+        output_audio_path=tmp_path / "v.mp3",
+        output_words_path=tmp_path / "w.json",
+    )
+    assert fallback_calls
+    assert time.monotonic() - start < 3.0
+
+
+def test_yt_dlp_search_decodes_utf8_titles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """yt-dlp JSON with non-ASCII titles must parse on every locale (Windows is cp1252)."""
+    import subprocess
+    import sys
+
+    from autoshorts.research_agent import trending_sources as ts
+
+    # Child process emits UTF-8 bytes exactly as yt-dlp does; real subprocess decoding applies.
+    fake_ytdlp = tmp_path / "fake_ytdlp.py"
+    child_source = (
+        "import json, sys\n"
+        "line = json.dumps({'id': 'abc123DEF45', 'title': 'Тест 😀 Новости',"
+        " 'channel': 'Канал', 'duration': 600, 'view_count': 5000}, ensure_ascii=False)\n"
+        "sys.stdout.buffer.write(line.encode('utf-8') + b'\\n')\n"
+    )
+    fake_ytdlp.write_text(child_source, encoding="utf-8")
+    real_run = subprocess.run
+
+    def _fake_run(cmd, *args, **kwargs):
+        return real_run([sys.executable, str(fake_ytdlp)], *args, **kwargs)
+
+    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    monkeypatch.setattr(ts.subprocess, "run", _fake_run)
+    results = ts.discover_trending_sources(niche="ai_tech", api_key="", allow_seed_fallback=False)
+    titles = [v.title for v in results]
+    assert "Тест 😀 Новости" in titles

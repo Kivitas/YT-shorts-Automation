@@ -401,7 +401,8 @@ def test_watermark_drawtext_filter():
 
     # Escaping special characters: colons, quotes
     wm_str = build_watermark_filter("@Channel:Live's", position="top_right", opacity=0.75)
-    assert r"@Channel\:Live\'s" in wm_str
+    # Two-level escaping without surrounding quotes: colon -> 2 backslashes, apostrophe -> 3 backslashes.
+    assert "text=@Channel" + "\\" * 2 + ":Live" + "\\" * 3 + "'s:expansion=none" in wm_str
     assert "white@0.75" in wm_str
     assert "x=w-tw-60:y=180" in wm_str
 
@@ -425,7 +426,7 @@ def test_watermark_drawtext_filter():
         watermark_text="@AutoShorts",
         watermark_position="top_right",
     )
-    assert "drawtext=text='@AutoShorts'" in fg
+    assert "drawtext=text=@AutoShorts" in fg
     assert "[watermarked]subtitles=" in fg
 
 
@@ -548,7 +549,7 @@ def test_compositor_single_source_full_blur_bg(tmp_path: Path):
     # Filtergraph should contain full_blur_bg elements
     assert "boxblur=40:5" in cmd_str
     assert "eq=saturation=1.28" in cmd_str
-    assert "drawtext=text='@AutoShorts'" in cmd_str
+    assert "drawtext=text=@AutoShorts" in cmd_str
 
 
 # -----------------------------------------------------------------------------
@@ -1409,3 +1410,41 @@ def test_hardware_encoder_format_fallback(tmp_path: Path):
     assert len(ffmpeg_calls) == 2
     assert "h264_qsv" in ffmpeg_calls[0]
     assert "libx264" in ffmpeg_calls[1]
+
+
+def test_watermark_filter_parses_in_real_ffmpeg_with_awkward_text():
+    """Apostrophes, colons, commas and brackets must not swallow the drawtext options."""
+    import subprocess
+
+    from autoshorts.media.encoder_probe import get_ffmpeg_path
+
+    ffmpeg = get_ffmpeg_path()
+    for text in ("it's a", "@it's:50% a", "a,b;c[d]", r"C:\x\y's", "%{pts} 'q'"):
+        wm = build_watermark_filter(text)
+        # An unknown trailing option is only reported when the text was parsed correctly.
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=320x240:d=0.2",
+                "-vf",
+                wm + ":bogus_option=1",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        assert "bogus_option" in proc.stderr or "Option not found" in proc.stderr, (
+            text,
+            proc.stderr,
+        )

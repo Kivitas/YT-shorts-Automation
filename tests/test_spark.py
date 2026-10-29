@@ -259,3 +259,60 @@ def test_spark_docstring_unverified_future_notice():
     assert "UNVERIFIED" in watcher_module.__doc__
     assert "FUTURE" in watcher_module.__doc__
     assert "NO public REST API" in watcher_module.__doc__
+
+
+def test_inbox_watcher_file_removed_mid_sweep_does_not_abort_batch(tmp_path: Path):
+    """A file deleted by someone else during a sweep is skipped; the rest still process."""
+    inbox_dir = tmp_path / "inbox"
+    removed: list[str] = []
+
+    def _remove_others(hints, file_path: Path) -> None:
+        # Simulate a concurrent consumer taking the other pending file mid-sweep.
+        for other in inbox_dir.glob("*.json"):
+            if other.name != file_path.name and other.exists():
+                removed.append(other.name)
+                other.unlink()
+
+    watcher = SparkInboxWatcher(inbox_dir=inbox_dir, on_jobs_parsed=_remove_others)
+    payload = json.dumps({"source_url": "https://www.youtube.com/watch?v=abc123DEF45"})
+    (inbox_dir / "task_a.json").write_text(payload, encoding="utf-8")
+    (inbox_dir / "task_b.json").write_text(payload, encoding="utf-8")
+
+    results = watcher.poll_once()  # must not raise
+
+    assert len(results) == 1
+    assert len(removed) == 1
+    assert results[0][0].parent == watcher.processed_dir
+    assert not list(watcher.failed_dir.glob("*.json"))
+
+
+def test_inbox_watcher_poll_is_serialized(tmp_path: Path):
+    """Overlapping poll_once calls must not enqueue the same file twice."""
+    import threading
+
+    inbox_dir = tmp_path / "inbox"
+    enqueued: list[str] = []
+
+    class _Recorder:
+        def save_job(self, job) -> None:
+            enqueued.append(job.source_url)
+
+    watcher = SparkInboxWatcher(inbox_dir=inbox_dir, state_manager=_Recorder())
+    (inbox_dir / "task_once.json").write_text(
+        json.dumps({"source_url": "https://www.youtube.com/watch?v=abc123DEF45"}),
+        encoding="utf-8",
+    )
+
+    barrier = threading.Barrier(2)
+
+    def _sweep() -> None:
+        barrier.wait()
+        watcher.poll_once()
+
+    threads = [threading.Thread(target=_sweep) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert enqueued == ["https://www.youtube.com/watch?v=abc123DEF45"]

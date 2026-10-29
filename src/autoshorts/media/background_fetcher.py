@@ -8,14 +8,18 @@ Provides:
 
 from __future__ import annotations
 
+import glob
 import logging
+import os
+import re
 import subprocess
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from autoshorts.core.paths import get_assets_dir, resolve_yt_dlp_binary
-from autoshorts.media.compositor import probe_media_duration
+from autoshorts.media.compositor import has_video_stream, probe_media_duration
 
 logger = logging.getLogger(__name__)
 
@@ -143,13 +147,23 @@ def download_clip_with_ytdlp(
     except Exception:
         pass
 
+    # Download beside the target under a temp name and only publish a validated file, so a
+    # timeout, crash or truncated download can never be cached as a good background.
+    tmp_path = output_path.with_name(f".dl_{uuid.uuid4().hex[:8]}_{output_path.name}")
     cmd.extend(
         [
             "-o",
-            str(output_path),
+            str(tmp_path),
             url,
         ]
     )
+
+    def _cleanup() -> None:
+        for leftover in output_path.parent.glob(f"{glob.escape(tmp_path.stem)}*"):
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
 
     logger.info("Downloading background sample: %s -> %s", url, output_path.name)
     try:
@@ -157,6 +171,8 @@ def download_clip_with_ytdlp(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_sec,
         )
         if proc.returncode != 0:
@@ -166,31 +182,49 @@ def download_clip_with_ytdlp(
                 url,
                 proc.stderr.strip() if proc.stderr else proc.stdout.strip(),
             )
-            if output_path.is_file() and output_path.stat().st_size > 0:
-                return output_path
+            _cleanup()
             return None
 
-        if output_path.is_file() and output_path.stat().st_size > 0:
-            logger.info("Successfully fetched background sample: %s", output_path)
-            return output_path
+        produced: Path | None = None
+        if tmp_path.is_file() and tmp_path.stat().st_size > 0:
+            produced = tmp_path
+        else:
+            for candidate in output_path.parent.glob(f"{glob.escape(tmp_path.stem)}*"):
+                if (
+                    candidate.is_file()
+                    and candidate.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}
+                    and not re.search(r"\.f\d+\.", candidate.name)
+                    and candidate.stat().st_size > 0
+                ):
+                    produced = candidate
+                    break
 
-        # Check for possible format-suffixed file in the same directory
-        stem_candidates = list(output_path.parent.glob(f"{output_path.stem}*"))
-        for candidate in stem_candidates:
-            if (
-                candidate.is_file()
-                and candidate.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}
-                and candidate.stat().st_size > 0
-            ):
-                return candidate
+        if produced is None:
+            logger.warning("yt-dlp exited with 0 but output file %s not found", output_path)
+            _cleanup()
+            return None
 
-        logger.warning("yt-dlp exited with 0 but output file %s not found", output_path)
-        return None
+        if not has_video_stream(produced):
+            logger.warning("Downloaded background %s is not a readable video; discarding", url)
+            _cleanup()
+            return None
+
+        final = (
+            output_path
+            if produced.suffix.lower() == output_path.suffix.lower()
+            else (output_path.with_suffix(produced.suffix.lower()))
+        )
+        os.replace(produced, final)
+        _cleanup()
+        logger.info("Successfully fetched background sample: %s", final)
+        return final
     except subprocess.TimeoutExpired:
         logger.warning("yt-dlp download timed out for %s (timeout=%.1fs)", url, timeout_sec)
+        _cleanup()
         return None
     except Exception as exc:
         logger.warning("Error invoking yt-dlp for %s: %s", url, exc)
+        _cleanup()
         return None
 
 

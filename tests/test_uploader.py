@@ -568,13 +568,13 @@ def test_youtube_api_server_side_scheduling_publish_at(dummy_video: Path):
         title="Scheduled Video",
         description="desc",
         tags=["test"],
-        publish_at="2026-10-25T15:00:00Z",
+        publish_at="2099-10-25T15:00:00Z",
     )
 
     assert res.video_id == "sched_vid_123"
     call_body = mock_service.videos().insert.call_args[1]["body"]
     assert call_body["status"]["privacyStatus"] == "private"
-    assert call_body["status"]["publishAt"] == "2026-10-25T15:00:00Z"
+    assert call_body["status"]["publishAt"] == "2099-10-25T15:00:00Z"
 
 
 def test_youtube_api_altered_content_and_languages(dummy_video: Path):
@@ -683,7 +683,7 @@ def test_studio_playwright_related_video_and_schedule(dummy_video: Path):
         description="Studio automation schedule test",
         altered_content=True,
         related_video_url="https://youtube.com/watch?v=longVideo999",
-        publish_at="2026-10-25T16:00:00Z",
+        publish_at="2099-10-25T16:00:00Z",
     )
 
     assert result.video_id == "schedEdge11"
@@ -990,3 +990,81 @@ def test_youtube_api_token_refresh_persisted(tmp_path: Path):
             token_file.read_text(encoding="utf-8")
             == '{"token": "new_refreshed_token", "refresh_token": "valid_refresh"}'
         )
+
+
+def test_build_upload_description_strips_brackets_and_caps_bytes():
+    from autoshorts.uploader.youtube_api import build_upload_description
+
+    assert build_upload_description("a <b> c") == "a b c"
+    # 3-byte chars: 2000 chars = 6000 bytes, must be cut to <= 5000 bytes, never mid-character.
+    out = build_upload_description("\u0928" * 2000)
+    assert len(out.encode("utf-8")) <= 5000
+    assert out and set(out) == {"\u0928"}
+    assert build_upload_description(None) == ""
+
+
+def test_long_title_is_bounded_and_sanitized(dummy_video: Path):
+    from autoshorts.uploader.youtube_api import build_long_title
+
+    assert build_long_title("") == "Untitled video"
+    t = build_long_title("Word " * 50 + "<x>\n")
+    assert len(t) <= 100 and "<" not in t and "\n" not in t
+
+    mock_service = MagicMock()
+    req = MagicMock()
+    req.next_chunk.return_value = (
+        None,
+        {"id": "longvid1", "status": {"privacyStatus": "unlisted"}},
+    )
+    mock_service.videos().insert.return_value = req
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    uploader.upload(path=dummy_video, title="L" * 300, description="d", is_short=False)
+    body = mock_service.videos().insert.call_args[1]["body"]
+    assert len(body["snippet"]["title"]) <= 100
+
+
+def test_publish_at_in_past_is_ignored(dummy_video: Path):
+    mock_service = MagicMock()
+    req = MagicMock()
+    req.next_chunk.return_value = (None, {"id": "pastvid01", "status": {"privacyStatus": "public"}})
+    mock_service.videos().insert.return_value = req
+    uploader = YouTubeApiUploader(youtube_service=mock_service)
+    uploader.upload(
+        path=dummy_video,
+        title="T",
+        description="d",
+        privacy="public",
+        publish_at="2020-01-01T00:00:00Z",
+    )
+    status = mock_service.videos().insert.call_args[1]["body"]["status"]
+    assert "publishAt" not in status and status["privacyStatus"] == "public"
+
+
+def test_local_export_verify_empty_id_is_false(tmp_path: Path, dummy_video: Path):
+    exporter = LocalExportUploader(export_dir=tmp_path / "exp")
+    res = exporter.upload(dummy_video, "t", "d", [])
+    assert exporter.verify(res.video_id) is True
+    assert exporter.verify("") is False
+    assert LocalExportUploader(export_dir=tmp_path / "exp").verify("") is False
+
+
+def test_studio_publish_click_failure_raises(dummy_video: Path):
+    from autoshorts.uploader.studio_playwright import StudioStepError
+
+    mock_ctx = MagicMock()
+    page = MagicMock()
+    page.url = "https://studio.youtube.com/channel/x"
+    done = MagicMock()
+    done.click.side_effect = RuntimeError("button disabled")
+    done.is_visible.return_value = True
+
+    def locator(sel, *a, **k):
+        m = MagicMock()
+        m.first = done if "#done-button" in sel else MagicMock()
+        return m
+
+    page.locator.side_effect = locator
+    mock_ctx.pages = [page]
+    uploader = PlaywrightStudioUploader(context_factory=lambda **kw: mock_ctx)
+    with pytest.raises(StudioStepError, match="publish"):
+        uploader.upload(path=dummy_video, title="T", description="d")

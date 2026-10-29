@@ -130,3 +130,34 @@ def test_composition_frames_use_ceil_for_fractional_duration(tmp_path: Path):
     plan = write_caption_plan(tmp_path / "p.json", [], duration_sec=2.05)
     data = json.loads(plan.read_text(encoding="utf-8"))
     assert math.ceil(data["durationSec"] * data["fps"]) == 62
+
+
+# (f) Jump cuts are stored in source-clip time; the render trims with -ss hook_in first.
+def test_jump_cuts_shifted_onto_hook_trimmed_timeline():
+    from autoshorts.core.models import EditDecisionList, JumpCut, ZoomPunchIn
+    from autoshorts.media.ass_styler import shift_jump_cuts_for_hook
+    from autoshorts.media.compositor import _edl_on_trimmed_timeline
+
+    cuts = [JumpCut(cut_start=1.0, cut_end=1.5), JumpCut(cut_start=4.0, cut_end=5.0)]
+    shifted = shift_jump_cuts_for_hook(cuts, 2.0)
+    assert [(c.cut_start, c.cut_end) for c in shifted] == [(2.0, 3.0)]
+
+    # Words: the one at clip time 4.2-4.5 sits right after the cut [4,5)? no, inside; 5.5 is after.
+    words = [TimedWord("IN", 4.2, 4.6), TimedWord("AFTER", 5.5, 6.0)]
+    out, dur = build_caption_timeline(
+        words, hook_in_sec=2.0, jump_cuts=cuts, total_duration_sec=10.0
+    )
+    assert [w.word for w in out] == ["AFTER"]
+    assert out[0].start == pytest.approx(5.5 - 2.0 - 1.0)
+    assert dur == pytest.approx(9.0)
+
+    edl = EditDecisionList(
+        hook_in_sec=2.0,
+        hook_out_sec=12.0,
+        jump_cuts=cuts,
+        zoom_punch_ins=[ZoomPunchIn(timestamp=1.0, duration=0.5), ZoomPunchIn(timestamp=6.0)],
+    )
+    local = _edl_on_trimmed_timeline(edl, 2.0)
+    assert [(c.cut_start, c.cut_end) for c in local.jump_cuts] == [(2.0, 3.0)]
+    assert [p.timestamp for p in local.zoom_punch_ins] == [4.0]
+    assert _edl_on_trimmed_timeline(edl, 0.0) is edl

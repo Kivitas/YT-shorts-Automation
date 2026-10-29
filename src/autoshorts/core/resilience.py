@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import logging
+import re
 import socket
 import time
 from datetime import UTC, datetime, timedelta
@@ -159,7 +160,7 @@ def classify_network_or_outage_error(exc: BaseException | str) -> dict[str, Any]
     # 1. Rate limiting (429 or quota limit)
     if (
         status_code == 429
-        or "429" in msg
+        or re.search(r"\b429\b", msg) is not None
         or "too many requests" in msg
         or "rate limit" in msg
         or "quotaexceeded" in msg
@@ -175,13 +176,11 @@ def classify_network_or_outage_error(exc: BaseException | str) -> dict[str, Any]
     # 2. YouTube service outage / 5xx server errors
     if (
         (status_code in (500, 502, 503, 504))
-        or "503" in msg
-        or "502" in msg
-        or "504" in msg
+        or re.search(r"\b50[234]\b", msg) is not None
         or "service unavailable" in msg
         or "bad gateway" in msg
         or "gateway timeout" in msg
-        or ("500" in msg and "server" in msg)
+        or (re.search(r"\b500\b", msg) is not None and "server" in msg)
         or "youtube_outage" in msg
         or "youtube outage" in msg
     ):

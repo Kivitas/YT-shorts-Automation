@@ -143,8 +143,12 @@ def draw_figure(
     # Torso, legs, arms.
     draw.line([hip, neck], fill=color, width=width)
     for side in ("l", "r"):
-        draw.line([hip, p(f"{side}_knee"), p(f"{side}_foot")], fill=color, width=width, joint="curve")
-        draw.line([neck, p(f"{side}_elbow"), p(f"{side}_hand")], fill=color, width=width, joint="curve")
+        draw.line(
+            [hip, p(f"{side}_knee"), p(f"{side}_foot")], fill=color, width=width, joint="curve"
+        )
+        draw.line(
+            [neck, p(f"{side}_elbow"), p(f"{side}_hand")], fill=color, width=width, joint="curve"
+        )
     hx, hy = p("head")
     r = 26 * scale
     draw.ellipse([hx - r, hy - r, hx + r, hy + r], outline=color, fill=BG, width=width)
@@ -199,7 +203,9 @@ def _background() -> Image.Image:
     return img
 
 
-def _fit_font(draw: ImageDraw.ImageDraw, text: str, size: int, max_w: int, bold: bool = True) -> Any:
+def _fit_font(
+    draw: ImageDraw.ImageDraw, text: str, size: int, max_w: int, bold: bool = True
+) -> Any:
     while size > 18:
         font = load_font(size, bold)
         if draw.textlength(text, font=font) <= max_w:
@@ -208,7 +214,9 @@ def _fit_font(draw: ImageDraw.ImageDraw, text: str, size: int, max_w: int, bold:
     return load_font(18, bold)
 
 
-def _caption_chunk(words: list[dict[str, Any]], active: int, per_line: int = 7) -> tuple[int, list[dict[str, Any]]]:
+def _caption_chunk(
+    words: list[dict[str, Any]], active: int, per_line: int = 7
+) -> tuple[int, list[dict[str, Any]]]:
     start = (max(active, 0) // per_line) * per_line
     return start, words[start : start + per_line]
 
@@ -276,7 +284,10 @@ def _draw_scene(
     if x >= 0:
         img.paste(Image.blend(region, layer, k), (x, 150))
     else:
-        img.paste(Image.blend(img.crop((0, 150, card_w, 270)), layer, k).crop((-x, 0, card_w, 120)), (0, 150))
+        img.paste(
+            Image.blend(img.crop((0, 150, card_w, 270)), layer, k).crop((-x, 0, card_w, 120)),
+            (0, 150),
+        )
 
     # Figure.
     pose = pose_at(cycle, t + index * 0.9)

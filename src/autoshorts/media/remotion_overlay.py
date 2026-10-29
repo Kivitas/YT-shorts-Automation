@@ -20,7 +20,9 @@ from autoshorts.media.ass_styler import (
     TimedWord,
     offset_words_for_hook,
     remap_words_for_jump_cuts,
+    shift_jump_cuts_for_hook,
 )
+from autoshorts.media.downloader import run_command_with_cleanup
 
 logger = logging.getLogger("autoshorts.remotion_overlay")
 
@@ -62,6 +64,8 @@ def build_caption_timeline(
     """
     timed = offset_words_for_hook(words, hook_in_sec) if hook_in_sec > 0 else list(words)
     duration = total_duration_sec
+    if jump_cuts and hook_in_sec > 0:
+        jump_cuts = shift_jump_cuts_for_hook(jump_cuts, hook_in_sec)
     if jump_cuts:
         timed = remap_words_for_jump_cuts(timed, jump_cuts)
         if duration is not None:
@@ -129,16 +133,17 @@ def render_caption_overlay(
         "--log=error",
     ]
     try:
-        proc = subprocess.run(
+        # run_command_with_cleanup kills the whole process tree on timeout; subprocess.run would
+        # only kill remotion.cmd and leave node and headless Chrome running on Windows.
+        proc = run_command_with_cleanup(
             cmd,
-            cwd=str(project_dir),
-            capture_output=True,
-            text=True,
             timeout=timeout_sec,
-            check=False,
+            cwd=str(project_dir),
         )
     except subprocess.TimeoutExpired as exc:
         raise RemotionRenderError(f"Remotion render timed out after {timeout_sec:.0f}s") from exc
+    except OSError as exc:
+        raise RemotionUnavailableError(f"Remotion CLI could not be started: {exc}") from exc
     if proc.returncode != 0 or not output_path.is_file():
         tail = (proc.stderr or proc.stdout or "").strip()[-800:]
         raise RemotionRenderError(f"Remotion render failed (exit {proc.returncode}): {tail}")
@@ -155,6 +160,8 @@ def overlay_captions(
 ) -> Path:
     """Composite the transparent caption track over the finished Short. Audio is copied as-is."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if Path(output_path).resolve() == Path(base_video).resolve():
+        raise RemotionRenderError("Caption overlay output must differ from the base video")
     cmd = [
         ffmpeg_path,
         "-y",
@@ -170,7 +177,7 @@ def overlay_captions(
         "-i",
         str(caption_track),
         "-filter_complex",
-        "[0:v][1:v]overlay=0:0:format=auto,format=yuv420p[v]",
+        "[0:v][1:v]overlay=0:0:format=auto:eof_action=pass,format=yuv420p[v]",
         "-map",
         "[v]",
         "-map",
@@ -192,6 +199,8 @@ def overlay_captions(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_sec,
             check=False,
         )

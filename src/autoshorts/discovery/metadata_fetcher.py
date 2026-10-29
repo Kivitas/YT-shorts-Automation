@@ -222,12 +222,12 @@ class MetadataFetcher:
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
-            "--",
-            canonical_url,
         ]
 
+        # Options must come before "--": everything after it is treated as a URL.
         if self.cookies_from_browser:
             cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+        cmd.extend(["--", canonical_url])
 
         logger.debug("Executing yt-dlp metadata fetch: %s", " ".join(cmd))
         try:

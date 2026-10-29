@@ -21,6 +21,7 @@ from autoshorts.core.config import Settings
 from autoshorts.core.exceptions import UploadError
 from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import get_data_dir
+from autoshorts.uploader.youtube_api import build_upload_title
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,15 @@ def _playwright_timeout_types() -> tuple[type[BaseException], ...]:
         return (PlaywrightTimeoutError,)
     except ImportError:
         return ()
+
+
+def _sanitize_description(description: str) -> str:
+    """Strip '<'/'>' and cap at YouTube's 5000 UTF-8 byte description limit."""
+    text = (description or "").replace("<", "").replace(">", "")
+    raw = text.encode("utf-8")
+    if len(raw) <= 5000:
+        return text
+    return raw[:5000].decode("utf-8", "ignore").rstrip()
 
 
 class StudioStepError(UploadError, RuntimeError):
@@ -586,10 +596,12 @@ class PlaywrightStudioUploader:
                 raise
             except Exception as e:
                 step = getattr(e, "studio_step", "file select")
+                # Never retry once the publish click was attempted: the video may already exist.
                 if (
                     timeout_types
                     and isinstance(e, timeout_types)
                     and attempt < _MAX_UPLOAD_ATTEMPTS
+                    and step != "publish"
                 ):
                     logger.warning(
                         "Studio upload timed out at step '%s' (attempt %d); retrying once: %s",
@@ -652,9 +664,9 @@ class PlaywrightStudioUploader:
 
                 step = "details"
                 # Ensure #Shorts is in title
-                shorts_title = (
-                    title if ("#Shorts" in title or "#shorts" in title) else f"{title} #Shorts"
-                )
+                # Studio rejects titles over 100 chars and '<'/'>' characters.
+                shorts_title = build_upload_title(title)
+                description = _sanitize_description(description)
 
                 # Fill title textbox (first #textbox)
                 title_box = page.locator("#textbox").nth(0)
@@ -866,7 +878,10 @@ class PlaywrightStudioUploader:
                         done_btn.click()
                     wait_for_idle(page, 1500)
                 except Exception as ex:
-                    logger.warning("Error clicking done/publish button: %s", ex)
+                    # Never report success when the publish click failed (button disabled,
+                    # missing, or timed out): the video would be left as an unpublished draft.
+                    logger.error("Error clicking done/publish button: %s", ex)
+                    raise
 
                 ret_privacy = "scheduled" if is_scheduled else effective_privacy
                 # Studio automation is a WEAKER success signal than the Data API.

@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from autoshorts.core.paths import get_data_dir
+from autoshorts.core.paths import atomic_write, get_data_dir
 from autoshorts.longform.types import LongformResult
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,15 @@ def _load_counts() -> dict[str, int]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for k, v in data.items():
+        try:
+            counts[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue  # a corrupt entry must not crash every later publish
+    return counts
 
 
 def longform_uploads_today() -> int:
@@ -56,7 +64,7 @@ def _record_upload() -> None:
         counts.pop(day, None)
     path = _counter_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(counts, indent=2), encoding="utf-8")
+    atomic_write(path, json.dumps(counts, indent=2), encoding="utf-8")
 
 
 def publish_longform(result: LongformResult, config=None, state_manager=None) -> str:
@@ -87,6 +95,7 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
             privacy_status=cfg.upload.default_privacy_status,
             category_id=cfg.upload.category_id,
             is_short=False,
+            thumbnail_path=getattr(result, "thumbnail_path", None),
         )
         if not getattr(upload_result, "url", None):
             raise RuntimeError("YouTube upload did not return a video URL.")

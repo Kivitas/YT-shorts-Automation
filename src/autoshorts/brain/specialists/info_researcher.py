@@ -52,33 +52,38 @@ class InfoResearcherAgent:
                 config=self.config,
             )
 
-            sources: list[str] = []
-            top_score = 75.0
-            if brief.trending_sources:
-                sources = [s.url for s in brief.trending_sources if getattr(s, "url", None)]
-                first_s = brief.trending_sources[0]
-                if getattr(first_s, "viral_score", None) and hasattr(
-                    first_s.viral_score, "total_score"
-                ):
-                    top_score = float(first_s.viral_score.total_score)
+            # ViralStrategyBrief exposes one recommended source, flat strategy fields,
+            # and a projected_earnings dict (not nested payout/source objects).
+            source = brief.recommended_source
+            sources: list[str] = [source.url] if source is not None and source.url else []
+            top_score = float(source.viral_score) if source is not None else 75.0
 
             insights: list[str] = []
-            if brief.clip_strategy:
-                insights.append(brief.clip_strategy)
+            if brief.clipping_strategy:
+                insights.append(brief.clipping_strategy)
             if brief.reasoning:
                 insights.append(brief.reasoning)
-            if brief.estimated_payout:
+            payout = brief.projected_earnings or {}
+            if payout.get("total_revenue_usd") is not None and (
+                payout.get("effective_blended_rpm") is not None
+            ):
                 insights.append(
-                    f"Projected payout: ${brief.estimated_payout.estimated_creator_pool_payout_usd:.2f} per 500k views "
-                    f"with RPM ${brief.estimated_payout.effective_rpm:.2f}"
+                    f"Projected payout: ${float(payout['total_revenue_usd']):.2f} per "
+                    f"{payout.get('projected_views', 500_000)} views with RPM "
+                    f"${float(payout['effective_blended_rpm']):.2f}"
                 )
+
+            hooks = (
+                list(brief.three_hook_variants)
+                or self._build_resilient_fallback(norm_niche, clean_topic).viral_angles
+            )
 
             return ResearchIntel(
                 niche=norm_niche,
-                topic=clean_topic or brief.target_niche,
+                topic=clean_topic or brief.niche,
                 target_audience=brief.target_audience,
                 key_insights=insights,
-                viral_angles=list(brief.hooks),
+                viral_angles=hooks,
                 sources=sources,
                 trending_score=top_score,
                 projected_views=500_000,

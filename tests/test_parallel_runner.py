@@ -231,3 +231,32 @@ def test_api_submit_and_retry_uses_parallel_runner(tmp_path: Path):
         assert res_batch.status_code == 200
         assert res_batch.json()["success"] is True
         assert res_batch.json()["count"] >= 1
+
+
+def test_executor_survives_non_numeric_concurrency_env(monkeypatch):
+    monkeypatch.setenv("AUTOSHORTS_CONCURRENCY", "lots")
+    pipeline = MagicMock()
+    ex = ParallelJobExecutor(pipeline=pipeline, state_manager=MagicMock())
+    assert ex.max_workers == 3
+    ex.shutdown()
+
+
+def test_submit_after_shutdown_does_not_leave_job_marked_active():
+    pipeline = MagicMock()
+    ex = ParallelJobExecutor(pipeline=pipeline, state_manager=MagicMock(), max_workers=1)
+    ex.shutdown()
+    with pytest.raises(RuntimeError):
+        ex.submit_job("job_after_shutdown")
+    assert not ex.is_job_active("job_after_shutdown")
+
+
+def test_finished_job_leaves_no_stale_future():
+    pipeline = MagicMock()
+    ex = ParallelJobExecutor(pipeline=pipeline, state_manager=MagicMock(), max_workers=1)
+    fut = ex.submit_job("job_fast")
+    fut.result(timeout=5)
+    deadline = time.time() + 2
+    while ex.is_job_active("job_fast") and time.time() < deadline:
+        time.sleep(0.01)
+    assert "job_fast" not in ex._futures
+    ex.shutdown()

@@ -11,7 +11,7 @@ import random
 import re
 import time
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +111,7 @@ def build_compliant_tags(
     shorts_tag = "Shorts"
 
     for tag in cleaned_tags:
-        cost = len(tag) + (1 if compliant else 0)
+        cost = len(tag) + (2 if " " in tag else 0) + (1 if compliant else 0)
         if current_len + cost <= 500:
             compliant.append(tag)
             current_len += cost
@@ -122,7 +122,7 @@ def build_compliant_tags(
     if not any(t.lower() in ("shorts", "#shorts") for t in compliant):
         while compliant and (current_len + len(shorts_tag) + 1 > 500):
             removed = compliant.pop()
-            current_len -= len(removed) + 1
+            current_len -= len(removed) + (2 if " " in removed else 0) + 1
         compliant.append(shorts_tag)
 
     return compliant
@@ -147,6 +147,46 @@ def build_upload_title(title: str) -> str:
         head = truncate_on_word(cleaned, max_core - 3).rstrip(" -|:,.!?")
         cleaned = f"{head or cleaned[: max_core - 3]}..."
     return f"{cleaned}{_SHORTS_SUFFIX}"
+
+
+def build_upload_description(description: str | None) -> str:
+    """Return a YouTube-valid description: no '<' or '>', at most 5000 UTF-8 bytes.
+
+    YouTube's 5000 limit is in bytes, not characters, so non-ASCII text (emoji, Hindi,
+    accented letters) must be measured as UTF-8 or the API rejects it with invalidDescription.
+    """
+    text = str(description or "").replace("<", "").replace(">", "")
+    text = text.replace("\x00", "")
+    if len(text.encode("utf-8")) <= MAX_DESCRIPTION_CHARS:
+        return text
+    cut = text.encode("utf-8")[:MAX_DESCRIPTION_CHARS].decode("utf-8", "ignore")
+    ws = max(cut.rfind(" "), cut.rfind("\n"))
+    if ws >= len(cut) // 2:
+        cut = cut[:ws]
+    return cut.rstrip()
+
+
+def build_long_title(title: str | None) -> str:
+    """Return a YouTube-valid non-Shorts title: <=100 chars, no '<'/'>' or newlines, never empty."""
+    cleaned = str(title or "").replace("<", "").replace(">", "")
+    cleaned = re.sub(r"[\x00-\x1f\x7f\s]+", " ", cleaned).strip()
+    if not cleaned:
+        return "Untitled video"
+    if len(cleaned) > MAX_TITLE_CHARS:
+        head = truncate_on_word(cleaned, MAX_TITLE_CHARS - 3).rstrip(" -|:,.!?")
+        cleaned = f"{head or cleaned[: MAX_TITLE_CHARS - 3]}..."
+    return cleaned
+
+
+def _publish_at_is_past(publish_at: str) -> bool:
+    """True when an ISO-8601 publish_at parses and is within 60s of now or earlier."""
+    try:
+        when = datetime.fromisoformat(str(publish_at))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when <= datetime.now(UTC) + timedelta(seconds=60)
 
 
 def _read_thumbnail_mimetype(path: Path) -> str | None:
@@ -493,128 +533,8 @@ class YouTubeApiUploader:
         items = resp.get("items", [])
         return items if isinstance(items, list) else []
 
-    def upload(
-        self,
-        path: Path | None = None,
-        title: str = "",
-        description: str = "",
-        tags: list[str] | Sequence[str] | None = None,
-        privacy: str = "unlisted",
-        category_id: str | None = None,
-        default_language: str | None = None,
-        altered_content: bool | None = None,
-        publish_at: str | None = None,
-        playlist_id: str | None = None,
-        auto_pin_comment: bool | None = None,
-        pin_comment_text: str | None = None,
-        thumbnail_path: Path | str | None = None,
-        *,
-        video_path: Path | None = None,
-        privacy_status: str | None = None,
-        custom_tags: Sequence[str] | None = None,
-        is_short: bool = True,
-        **kwargs: Any,
-    ) -> UploadResult:
-        """Upload a video MP4 using chunked resumable insert with advanced metadata & scheduling."""
-        target_path = Path(video_path if video_path is not None else (path or "")).resolve()
-        if not target_path.is_file():
-            raise FileNotFoundError(f"Video file not found for upload: {target_path}")
-
-        if self.quota_tracker is not None and not self.quota_tracker.can_upload():
-            raise QuotaExhaustedError(
-                bucket="upload",
-                spent=self.quota_tracker.get_upload_spend(),
-                limit=self.quota_tracker.daily_upload_budget,
-            )
-
-        # Title: <=100 chars, no < or >, single trailing #Shorts, never empty
-        final_title = build_upload_title(title) if is_short else title.strip()
-
-        service = self.get_service()
-        _, _, _, _, _, MediaFileUpload = _get_google_libraries()
-
-        effective_privacy = (
-            privacy_status or privacy or getattr(self.config, "privacy_status", "unlisted")
-        )
-        effective_category = (
-            category_id or self.category_id or getattr(self.config, "category_id", None) or "24"
-        )
-        if custom_tags is not None or kwargs.get("custom_tags") is not None:
-            effective_tags = build_compliant_tags(
-                tags, custom_tags=custom_tags or kwargs.get("custom_tags")
-            )
-        else:
-            # Sanitize tags and enforce YouTube API's 500-character combined length cap
-            raw_tags = list(tags) if tags is not None else []
-            effective_tags = []
-            curr_len = 0
-            for t in raw_tags:
-                cleaned = str(t).replace("<", "").replace(">", "").strip()
-                if not cleaned:
-                    continue
-                cost = len(cleaned) + (1 if effective_tags else 0)
-                if curr_len + cost <= 500:
-                    effective_tags.append(cleaned)
-                    curr_len += cost
-
-        # Enforce YouTube API's 5000-character description cap (word-boundary cut)
-        final_description = truncate_on_word(description or "", MAX_DESCRIPTION_CHARS)
-
-        snippet: dict[str, Any] = {
-            "title": final_title,
-            "description": final_description,
-            "tags": effective_tags,
-            "categoryId": str(effective_category),
-        }
-
-        lang = default_language or getattr(self.config, "default_language", None)
-        if lang:
-            snippet["defaultLanguage"] = lang
-            snippet["defaultAudioLanguage"] = (
-                getattr(self.config, "default_audio_language", None) or lang
-            )
-
-        status: dict[str, Any] = {
-            "privacyStatus": effective_privacy,
-            "selfDeclaredMadeForKids": False,
-        }
-
-        eff_altered = (
-            altered_content
-            if altered_content is not None
-            else getattr(self.config, "altered_content", None)
-        )
-        if eff_altered is not None:
-            status["containsSyntheticMedia"] = bool(eff_altered)
-
-        # Native Server-Side Scheduling (publish_at ISO-8601 UTC string)
-        # YouTube Data API v3 requires privacyStatus to be 'private' when publishAt is set
-        if publish_at:
-            status["privacyStatus"] = "private"
-            status["publishAt"] = str(publish_at)
-
-        body = {
-            "snippet": snippet,
-            "status": status,
-        }
-
-        media = MediaFileUpload(
-            str(target_path),
-            mimetype="video/mp4",
-            chunksize=self.chunk_size_bytes,
-            resumable=True,
-        )
-
-        insert_request = service.videos().insert(
-            part="snippet,status",
-            body=body,
-            media_body=media,
-        )
-
-        logger.info(
-            f"Initiating resumable upload for '{final_title}' ({target_path.stat().st_size} bytes)..."
-        )
-
+    def _run_resumable(self, insert_request: Any) -> dict[str, Any]:
+        """Drive a resumable videos.insert to completion with retry/backoff; return the response."""
         response = None
         retry_count = 0
 
@@ -655,6 +575,145 @@ class YouTubeApiUploader:
                     f"(attempt {retry_count}/{self.max_retries}, outage: {outage_info.get('outage_type', 'none')})..."
                 )
                 time.sleep(backoff_sec)
+
+        return response
+
+    def upload(
+        self,
+        path: Path | None = None,
+        title: str = "",
+        description: str = "",
+        tags: list[str] | Sequence[str] | None = None,
+        privacy: str = "unlisted",
+        category_id: str | None = None,
+        default_language: str | None = None,
+        altered_content: bool | None = None,
+        publish_at: str | None = None,
+        playlist_id: str | None = None,
+        auto_pin_comment: bool | None = None,
+        pin_comment_text: str | None = None,
+        thumbnail_path: Path | str | None = None,
+        *,
+        video_path: Path | None = None,
+        privacy_status: str | None = None,
+        custom_tags: Sequence[str] | None = None,
+        is_short: bool = True,
+        **kwargs: Any,
+    ) -> UploadResult:
+        """Upload a video MP4 using chunked resumable insert with advanced metadata & scheduling."""
+        target_path = Path(video_path if video_path is not None else (path or "")).resolve()
+        if not target_path.is_file():
+            raise FileNotFoundError(f"Video file not found for upload: {target_path}")
+
+        if self.quota_tracker is not None and not self.quota_tracker.can_upload():
+            raise QuotaExhaustedError(
+                bucket="upload",
+                spent=self.quota_tracker.get_upload_spend(),
+                limit=self.quota_tracker.daily_upload_budget,
+            )
+
+        # Title: <=100 chars, no < or >, single trailing #Shorts, never empty
+        final_title = build_upload_title(title) if is_short else build_long_title(title)
+
+        service = self.get_service()
+        _, _, _, _, _, MediaFileUpload = _get_google_libraries()
+
+        effective_privacy = (
+            privacy_status or privacy or getattr(self.config, "privacy_status", "unlisted")
+        )
+        effective_category = (
+            category_id or self.category_id or getattr(self.config, "category_id", None) or "24"
+        )
+        if custom_tags is not None or kwargs.get("custom_tags") is not None:
+            effective_tags = build_compliant_tags(
+                tags, custom_tags=custom_tags or kwargs.get("custom_tags")
+            )
+        else:
+            # Sanitize tags and enforce YouTube API's 500-character combined length cap
+            raw_tags = list(tags) if tags is not None else []
+            effective_tags = []
+            curr_len = 0
+            for t in raw_tags:
+                cleaned = str(t).replace("<", "").replace(">", "").strip()
+                if not cleaned:
+                    continue
+                cost = len(cleaned) + (2 if " " in cleaned else 0) + (1 if effective_tags else 0)
+                if curr_len + cost <= 500:
+                    effective_tags.append(cleaned)
+                    curr_len += cost
+
+        # Enforce YouTube API's 5000-character description cap (word-boundary cut)
+        final_description = build_upload_description(description)
+
+        snippet: dict[str, Any] = {
+            "title": final_title,
+            "description": final_description,
+            "tags": effective_tags,
+            "categoryId": str(effective_category),
+        }
+
+        lang = default_language or getattr(self.config, "default_language", None)
+        if lang:
+            snippet["defaultLanguage"] = lang
+            snippet["defaultAudioLanguage"] = (
+                getattr(self.config, "default_audio_language", None) or lang
+            )
+
+        status: dict[str, Any] = {
+            "privacyStatus": effective_privacy,
+            "selfDeclaredMadeForKids": False,
+        }
+
+        eff_altered = (
+            altered_content
+            if altered_content is not None
+            else getattr(self.config, "altered_content", None)
+        )
+        if eff_altered is not None:
+            status["containsSyntheticMedia"] = bool(eff_altered)
+
+        # Native Server-Side Scheduling (publish_at ISO-8601 UTC string)
+        # YouTube Data API v3 requires privacyStatus to be 'private' when publishAt is set
+        if publish_at and _publish_at_is_past(publish_at):
+            # YouTube rejects a publishAt in the past with a 400; publish immediately instead.
+            logger.warning("publish_at %s is not in the future; ignoring schedule.", publish_at)
+            publish_at = None
+        if publish_at:
+            status["privacyStatus"] = "private"
+            status["publishAt"] = str(publish_at)
+
+        body = {
+            "snippet": snippet,
+            "status": status,
+        }
+
+        media = MediaFileUpload(
+            str(target_path),
+            mimetype="video/mp4",
+            chunksize=self.chunk_size_bytes,
+            resumable=True,
+        )
+
+        insert_request = service.videos().insert(
+            part="snippet,status",
+            body=body,
+            media_body=media,
+        )
+
+        logger.info(
+            f"Initiating resumable upload for '{final_title}' ({target_path.stat().st_size} bytes)..."
+        )
+
+        try:
+            response = self._run_resumable(insert_request)
+        finally:
+            # Release the OS handle on the video (Windows cannot delete an open file).
+            fd = getattr(media, "_fd", None)
+            if fd is not None and hasattr(fd, "close"):
+                try:
+                    fd.close()
+                except Exception:
+                    pass
 
         video_id = response.get("id")
         if not video_id:

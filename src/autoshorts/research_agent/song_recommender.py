@@ -341,7 +341,8 @@ def _synthesize_procedural_wav(track_id: str, dest_path: Path, duration_sec: flo
         proc = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10.0,
             check=False,
         )
@@ -421,7 +422,8 @@ def download_viral_bgm(
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=12.0,
                 check=False,
             )

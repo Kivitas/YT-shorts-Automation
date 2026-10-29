@@ -306,22 +306,22 @@ def parse_link_line(
         if key in ("clips", "clips_per_video", "clip_count", "clips_count"):
             try:
                 clips = int(val)
-            except ValueError:
+            except (ValueError, OverflowError):
                 unhandled_instructions.append(token)
         elif key in ("max", "max_s", "max_duration", "max_sec", "max_duration_seconds"):
             try:
                 max_s = _parse_time_seconds(val)
-            except ValueError:
+            except (ValueError, OverflowError):
                 unhandled_instructions.append(token)
         elif key in ("min", "min_s", "min_duration", "min_sec", "min_duration_seconds"):
             try:
                 min_s = _parse_time_seconds(val)
-            except ValueError:
+            except (ValueError, OverflowError):
                 unhandled_instructions.append(token)
         elif key in ("stride", "window_stride", "window_stride_seconds", "stride_seconds"):
             try:
                 stride = _parse_time_seconds(val)
-            except ValueError:
+            except (ValueError, OverflowError):
                 unhandled_instructions.append(token)
         elif key in ("focus", "focus_prompt", "angle", "prompt", "topic"):
             focus = val
@@ -348,7 +348,7 @@ def parse_link_line(
         canonical_url=canonical,
         raw_input=raw_line,
         clips_per_video=max(1, clips),
-        min_duration_seconds=max(10, min_s),
+        min_duration_seconds=min(max(10, min_s), 60),
         max_duration_seconds=min(60, max(min_s, max_s)),
         window_stride_seconds=max(5, stride),
         focus_prompt=focus,

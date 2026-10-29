@@ -19,6 +19,7 @@ from pathlib import Path
 
 from autoshorts.cleanup.safety_cleaner import SafetyCleaner
 from autoshorts.core.config import Settings, load_config
+from autoshorts.core.exceptions import AutoShortsError, InvalidURLError
 from autoshorts.core.logging_setup import setup_logging
 from autoshorts.core.models import JobStatus
 from autoshorts.core.state_manager import StateManager
@@ -307,7 +308,7 @@ def cmd_quota(args: argparse.Namespace, config: Settings, state_manager: StateMa
         f"General Bucket:       {general_b.get('spent', 0)} spent / {general_b.get('daily_allocation', 10000)} pool ({general_b.get('remaining', 10000)} remaining)"
     )
     print(
-        f"Completed Today:      {daily_c.get('completed', 0)} / {daily_c.get('cap', 50)} shorts cap"
+        f"Completed Today:      {daily_c.get('completed', 0)} / {daily_c.get('cap', 40)} shorts cap"
     )
     print(
         f"Can Upload Now:       {'YES' if upload_b.get('can_upload_fresh', True) else 'NO (Throttled or Exhausted)'}"
@@ -405,7 +406,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.config and not Path(args.config).is_file():
         parser.error(f"config file not found: {args.config}")
 
-    # Load configuration
+    try:
+        return _dispatch(parser, args)
+    except InvalidURLError as exc:
+        print(f"Error: invalid link: {exc}", file=sys.stderr)
+        return 2
+    except AutoShortsError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("Interrupted by operator.", file=sys.stderr)
+        return 130
+
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Load configuration and run the selected subcommand."""
     config = load_config(args.config)
     state_manager = StateManager()
 

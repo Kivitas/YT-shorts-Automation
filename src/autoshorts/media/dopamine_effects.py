@@ -150,10 +150,15 @@ def build_watermark_filter(
     if not watermark_text:
         return ""
 
-    # Escape for the filtergraph and drawtext: backslash, colon, single quote.
-    # expansion=none (below) makes '%' literal, so it needs no escape. A "\%" escape was
-    # unreliable: it printed "Stray %" and its parity flipped when an apostrophe was present.
-    escaped_text = watermark_text.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
+    # Two-level FFmpeg escaping, unquoted: option level (backslash, apostrophe, colon) first, then
+    # filtergraph level (backslash, apostrophe, brackets, comma, semicolon). Quoting the text and
+    # using a backslash-apostrophe inside the quotes is unreliable: a following escaped colon or the quote gets
+    # mis-parsed and swallows the remaining drawtext options. expansion=none makes '%' literal.
+    bs = "\\"
+    escaped_text = watermark_text.replace(bs, bs * 2).replace("'", bs + "'").replace(":", bs + ":")
+    escaped_text = escaped_text.replace(bs, bs * 2).replace("'", bs + "'")
+    for ch in "[],;":
+        escaped_text = escaped_text.replace(ch, bs + ch)
 
     pos = (position or "top_right").strip().lower()
     if pos == "top_left":
@@ -173,7 +178,7 @@ def build_watermark_filter(
     alpha_val = max(0.05, min(1.0, opacity))
 
     return (
-        f"drawtext=text='{escaped_text}':expansion=none:fontcolor=white@{alpha_val:.2f}:"
+        f"drawtext=text={escaped_text}:expansion=none:fontcolor=white@{alpha_val:.2f}:"
         f"fontsize={fontsize}:x={x_expr}:y={y_expr}:shadowcolor=black@0.5:shadowx=2:shadowy=2"
     )
 

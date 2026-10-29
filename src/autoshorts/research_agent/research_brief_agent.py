@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -22,6 +23,13 @@ from autoshorts.research_agent.song_recommender import get_viral_bgm_catalog
 from autoshorts.research_agent.trending_sources import discover_trending_sources
 
 logger = logging.getLogger("autoshorts.research_agent.brief")
+
+
+def _clean_text(value: object) -> str | None:
+    """Return the stripped string, or None when the value is not a non-empty string."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def generate_viral_strategy_brief(
@@ -114,18 +122,23 @@ def generate_viral_strategy_brief(
                 f"Respond ONLY with valid JSON."
             )
             raw_text = provider.complete(prompt)
-            # Find JSON inside response
-            s = raw_text.strip()
-            if s.startswith("```"):
-                s = s.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            # Find JSON inside response (fenced anywhere, fence unclosed, or bare)
+            s = (raw_text or "").strip()
+            fenced = re.search(r"```[A-Za-z]*\s*([\s\S]*?)\s*(?:```|\Z)", s)
+            if fenced:
+                s = fenced.group(1).strip()
             parsed = json.loads(s)
             if isinstance(parsed, dict):
-                target_audience = parsed.get("target_audience") or target_audience
-                clip_strategy = parsed.get("clipping_strategy") or clip_strategy
+                # Model output is untrusted: only plain non-empty strings may replace defaults,
+                # otherwise the ViralStrategyBrief validation below would fail.
+                target_audience = _clean_text(parsed.get("target_audience")) or target_audience
+                clip_strategy = _clean_text(parsed.get("clipping_strategy")) or clip_strategy
                 h_list = parsed.get("three_hook_variants")
-                if isinstance(h_list, list) and len(h_list) >= 3:
-                    hooks = [str(x) for x in h_list[:3]]
-                reasoning = parsed.get("reasoning") or reasoning
+                if isinstance(h_list, list):
+                    cleaned_hooks = [h.strip() for h in h_list if isinstance(h, str) and h.strip()]
+                    if len(cleaned_hooks) >= 3:
+                        hooks = cleaned_hooks[:3]
+                reasoning = _clean_text(parsed.get("reasoning")) or reasoning
         except Exception as llm_err:
             logger.debug(
                 "LLM brief synthesis skipped/failed (%s); using deterministic expert fallback.",

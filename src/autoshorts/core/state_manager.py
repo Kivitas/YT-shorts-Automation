@@ -10,6 +10,7 @@ import json
 import sqlite3
 import threading
 import zoneinfo
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -317,12 +318,17 @@ class StateManager:
                 job.error_message = error_message
             self.save_job(job)
 
-    def reconcile_stranded_jobs(self) -> int:
+    def reconcile_stranded_jobs(self, is_job_active: Callable[[str], bool] | None = None) -> int:
         """Find jobs left in active transient states from a prior process and transition them to FAILED.
 
         Transient states:
             FETCHING_METADATA, EXTRACTING_TRANSCRIPT, SCORING_WINDOWS, DOWNLOADING_SECTION,
             PLANNING_EDITS, GENERATING_SUBTITLES, COMPOSITING, UPLOADING, VERIFYING.
+
+        Args:
+            is_job_active: Optional probe returning True when another live process or thread
+                is still working on the job. Such jobs are left alone so that starting a
+                second AutoShorts process never fails a job that is mid-render.
 
         Returns:
             Count of jobs transitioned to FAILED.
@@ -354,6 +360,13 @@ class StateManager:
 
                 for row in rows:
                     job_id = row["id"]
+                    if is_job_active is not None:
+                        try:
+                            active = bool(is_job_active(job_id))
+                        except Exception:
+                            active = True  # probe failed: leave the job alone rather than fail it
+                        if active:
+                            continue
                     try:
                         job = Job.model_validate_json(row["payload_json"])
                         job.status = JobStatus.FAILED

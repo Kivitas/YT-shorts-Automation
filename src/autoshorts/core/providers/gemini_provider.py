@@ -170,10 +170,11 @@ class GeminiProvider(BaseLLMProvider):
             candidates = data.get("candidates", [])
             if not candidates:
                 return ""
-            parts = candidates[0].get("content", {}).get("parts", [])
+            parts = (candidates[0].get("content") or {}).get("parts") or []
             if not parts:
                 return ""
-            return str(parts[0].get("text", "")).strip()
+            # text may be JSON null on non-text parts; never stringify None.
+            return str(parts[0].get("text") or "").strip()
 
         return self.execute_with_retry(_request)
 
@@ -270,33 +271,44 @@ class GeminiProvider(BaseLLMProvider):
         }
 
         tally: dict[str, int] = {k: 0 for k in allowed_keys}
+        failures = 0
+        last_failure = ""
         for _ in range(votes):
             try:
                 resp = client.post(url, params=params, json=fallback_payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        raw = (
-                            candidates[0]
-                            .get("content", {})
-                            .get("parts", [{}])[0]
-                            .get("text", "")
-                            .strip()
-                            .strip('"')
-                            .strip("'")
-                            .upper()
-                        )
-                        for k in allowed_keys:
-                            if k in raw:
-                                tally[k] += 1
-                                break
-            except Exception:
-                pass
+                if resp.status_code != 200:
+                    failures += 1
+                    last_failure = f"HTTP {resp.status_code}"
+                    continue
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    raw = (
+                        candidates[0]
+                        .get("content", {})
+                        .get("parts", [{}])[0]
+                        .get("text", "")
+                        .strip()
+                        .strip('"')
+                        .strip("'")
+                        .upper()
+                    )
+                    for k in allowed_keys:
+                        if k in raw:
+                            tally[k] += 1
+                            break
+            except Exception as exc:
+                failures += 1
+                last_failure = type(exc).__name__
 
         total_votes = sum(tally.values())
         if total_votes > 0:
             return {k: count / total_votes for k, count in tally.items()}
 
-        # If zero valid votes, return uniform distribution
+        # Every request failed at the transport/HTTP level (bad key, quota, outage): surface it so
+        # the caller can fall back, instead of returning a uniform score that looks like a real answer.
+        if failures >= votes:
+            raise ProviderError(f"Gemini scoring failed on every attempt ({last_failure})")
+
+        # Replies arrived but none named a valid option: uniform distribution
         return {k: 1.0 / len(allowed_keys) for k in allowed_keys}

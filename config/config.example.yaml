@@ -27,8 +27,6 @@ job_defaults:
   background_category: "minecraft" # "minecraft", "subway", or "auto"
   dopamine_level: "medium"         # "low", "medium", "high"
   auto_approve: false              # Require human dashboard confirmation before upload
-  skip_sponsors: true              # Filter out SponsorBlock sponsor/intro/outro segments automatically
-  auto_trim_silence: true          # Auto-trim dead-air pauses (>0.45s) into tight jump-cuts
 
 edit_planner:
   enabled: true                    # Multimodal AI edit planning
@@ -85,6 +83,7 @@ subtitles:
   outline_color: "&H00000000"      # Black
   safe_zone_margin_v: 780          # Centers over 960px boundary
   karaoke_pop_scale: 118           # Word pop scale percent (e.g. 118 for 1.18x)
+  caption_engine: "ass"            # "ass" (FFmpeg burn-in) or "remotion" (needs the remotion/ npm install)
   text_transform: "uppercase"      # "uppercase", "title", "none"
   position: "center"               # "bottom_safe", "center", "top_safe"
   hook_banner_style: "neon_box"    # "neon_box", "pill", "minimal", "none"
@@ -92,7 +91,6 @@ subtitles:
 
 branding:
   layout_mode: "split_50_50"       # "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
-  crop_focus: "center"             # "center", "left", "right", "dynamic_pan" horizontal speaker framing
   color_grading: "none"            # "none", "vibrant", "cinematic", "warm", "crisp"
   watermark_text: null             # Channel watermark text (e.g. "@MyChannel")
   watermark_position: "top_right"  # "top_right", "top_left", "bottom_right", "bottom_center"
@@ -143,9 +141,6 @@ cleanup:
   enabled: true
   use_recycle_bin: true            # Use send2trash
   keep_master_mp4: true            # Retain output/ master MP4, purge work/ intermediate files
+  keep_final_days: 1               # Days a kept master MP4 stays in output/
   purge_intermediate_work: true
   dry_run: false
-integrations:
-  eachlabs:
-    enabled: false   # Hosted AI music/voice via each::labs. Needs EACHLABS_API_KEY in .env. Off by default.
-    timeout_seconds: 120

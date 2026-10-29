@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import re
@@ -87,7 +88,12 @@ class LocalExportUploader:
         dest_path = _unique_path(self.export_dir / dest_filename)
 
         # Copy video file
-        shutil.copy2(src_path, dest_path)
+        try:
+            shutil.copy2(src_path, dest_path)
+        except BaseException:
+            # Never leave a truncated export behind (disk full, locked source, Ctrl+C).
+            dest_path.unlink(missing_ok=True)
+            raise
         self._exported_files[video_id] = dest_path
 
         # Write metadata sidecar JSON (never overwrite an existing sidecar)
@@ -124,10 +130,17 @@ class LocalExportUploader:
 
     def verify(self, video_id: str) -> bool:
         """Confirm exported video exists on disk and is non-empty."""
+        if not video_id:
+            # An empty id would glob-match every exported file and report a false success.
+            return False
         dest_path = self._exported_files.get(video_id)
         if dest_path and dest_path.is_file() and dest_path.stat().st_size > 0:
             return True
 
         # Search export_dir for matching filename pattern if not in memory dict
-        matching = list(self.export_dir.glob(f"*{video_id}*.mp4"))
+        matching = [
+            m
+            for m in self.export_dir.glob(f"*{glob.escape(video_id)}*")
+            if m.is_file() and not m.name.endswith("_meta.json")
+        ]
         return len(matching) > 0 and matching[0].stat().st_size > 0

@@ -889,3 +889,65 @@ def test_slicer_heatmap_hook_and_sponsor_filtering():
         assert w.heatmap_score > 0.5
         assert w.hook_strength > 0.5
         assert w.chapter_title == "Secret Formula"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: cookie flag placement, VTT dedupe, link-parser edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_cookies_flag_precedes_double_dash():
+    """Anything after '--' is a URL for yt-dlp, so the cookies option must come first."""
+    fetcher = MetadataFetcher(cookies_from_browser="firefox")
+    captured: list[str] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        captured.extend(cmd)
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=json.dumps({"title": "T", "duration": 60.0}), stderr=""
+        )
+
+    with patch("subprocess.run", side_effect=mock_run):
+        fetcher.fetch("https://youtu.be/dQw4w9WgXcQ")
+
+    assert captured.index("--cookies-from-browser") < captured.index("--")
+    assert captured[-1].endswith("dQw4w9WgXcQ")
+
+
+def test_transcript_cookies_flag_precedes_double_dash():
+    fetcher = TranscriptFetcher(cookies_from_browser="chrome")
+    cmds: list[list[str]] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        cmds.append(list(cmd))
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=mock_run), pytest.raises(TranscriptNotFoundError):
+        fetcher._fetch_via_ytdlp_file_download("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    assert cmds
+    for cmd in cmds:
+        assert cmd.index("--cookies-from-browser") < cmd.index("--")
+
+
+def test_vtt_rolling_auto_captions_are_deduplicated():
+    from autoshorts.transcript.fetcher import parse_vtt_text
+
+    vtt = (
+        "WEBVTT\n\n"
+        "00:00:01.000 --> 00:00:03.000\nhello there\nhow are you\n\n"
+        "00:00:03.000 --> 00:00:03.010\nhow are you\n\n"
+        "00:00:03.010 --> 00:00:05.000\nhow are you\nfine thanks\n"
+    )
+    texts = [s.text for s in parse_vtt_text(vtt)]
+    assert texts == ["hello there how are you", "fine thanks"]
+
+
+def test_parse_link_line_inf_duration_does_not_crash():
+    link = parse_link_line("https://youtu.be/dQw4w9WgXcQ | max inf")
+    assert link.max_duration_seconds == 50
+    assert "max inf" in (link.custom_instructions or "")
+
+
+def test_parse_link_line_min_never_exceeds_max():
+    link = parse_link_line("https://youtu.be/dQw4w9WgXcQ | min 100")
+    assert link.min_duration_seconds <= link.max_duration_seconds <= 60

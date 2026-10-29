@@ -542,3 +542,47 @@ def test_narrative_completeness_evaluation_and_penalty():
     fused_cutoff = _fuse_candidate_score(0.80, 0.50, 0.60, narrative_completeness=0.50)
     assert fused_cutoff < fused_complete
     assert (fused_complete - fused_cutoff) >= 0.05
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: degenerate transcripts and strides
+# ---------------------------------------------------------------------------
+
+
+def test_slicer_zero_stride_terminates():
+    from autoshorts.decision.window_slicer import slice_transcript_windows
+
+    segs = [
+        {"start": float(i * 5), "end": float(i * 5 + 5), "text": f"Sentence number {i}."}
+        for i in range(40)
+    ]
+    for stride in (0.0, -3.0, float("nan")):
+        out = slice_transcript_windows(segs, stride_seconds=stride)
+        assert out
+
+
+def test_slicer_segment_ending_before_start_does_not_crash():
+    from autoshorts.decision.window_slicer import slice_transcript_windows
+
+    segs = [
+        {"start": 0.0, "end": 20.0, "text": "Intro."},
+        {"start": 100.0, "end": 0.0, "duration": 0.0, "text": "Late cue."},
+    ]
+    out = slice_transcript_windows(segs)
+    assert out
+    assert all(c.end >= c.start for c in out)
+
+
+def test_slicer_empty_transcript_returns_empty():
+    from autoshorts.decision.window_slicer import slice_transcript_windows
+
+    assert slice_transcript_windows([]) == []
+    assert slice_transcript_windows("   ") == []
+
+
+def test_fuse_candidate_score_nan_is_not_a_perfect_score():
+    from autoshorts.decision.orchestrator import _fuse_candidate_score
+
+    assert _fuse_candidate_score(float("nan"), 0.0, 0.0) == 0.0
+    assert _fuse_candidate_score(float("inf"), 0.5, 0.5) <= 0.3
+    assert _fuse_candidate_score(0.8, float("nan"), float("nan")) == 0.8

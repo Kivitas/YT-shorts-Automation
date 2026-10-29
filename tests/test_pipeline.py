@@ -1335,3 +1335,93 @@ def test_pipeline_gameplay_background_selection_manifest_and_fallback(
             "No gameplay background video found" in record.message for record in caplog.records
         )
         assert any("Gracefully falling back" in record.message for record in caplog.records)
+
+
+def _ready_job(test_env: dict[str, Any], job_id: str) -> Job:
+    output_dir = test_env["output_dir"]
+    master_file = output_dir / f"{job_id}_master.mp4"
+    master_file.write_bytes(b"\x00\x00\x00 master")
+    cand = ClipCandidate(start=0.0, end=15.0, text="Regression text", score=0.9)
+    job = Job(
+        id=job_id,
+        source_url="https://youtube.com/watch?v=regress0001",
+        status=JobStatus.READY_FOR_REVIEW,
+        rendered_video_path=str(master_file),
+        selected_clips=[ClipSelection(candidate=cand, clip_index=0, hook_text="H", title="T")],
+    )
+    test_env["state_mgr"].save_job(job)
+    return job
+
+
+def test_unverified_upload_never_triggers_cleanup(test_env: dict[str, Any]):
+    """An unconfirmed upload (verified False) must keep its intermediates."""
+    from autoshorts.pipeline import ShortsPipeline
+
+    uploader = MagicMock()
+    uploader.upload.return_value = UploadResult(
+        video_id="vid_unverified", url="https://youtube.com/shorts/x", status="uploaded"
+    )
+    uploader.verify.return_value = False
+    uploader.last_verification_kind = None
+    cleaner = MagicMock()
+    job = _ready_job(test_env, "job_unverified_cleanup")
+
+    pipeline = ShortsPipeline(
+        state_manager=test_env["state_mgr"], uploader=uploader, cleaner=cleaner
+    )
+    pipeline._run_immediate_upload(job)
+
+    cleaner.cleanup_job.assert_not_called()
+    assert job.status == JobStatus.COMPLETED
+
+
+def test_verify_crash_after_upload_does_not_fail_job(test_env: dict[str, Any]):
+    """The video is live once upload returns; any verify error must not mark the job FAILED."""
+    from autoshorts.pipeline import ShortsPipeline
+
+    uploader = MagicMock()
+    uploader.upload.return_value = UploadResult(
+        video_id="vid_live", url="https://youtube.com/shorts/y", status="uploaded"
+    )
+    uploader.verify.side_effect = OSError("socket closed")
+    uploader.last_verification_kind = None
+    job = _ready_job(test_env, "job_verify_crash")
+
+    pipeline = ShortsPipeline(
+        state_manager=test_env["state_mgr"], uploader=uploader, cleaner=MagicMock()
+    )
+    res = pipeline._run_immediate_upload(job)
+
+    assert res.video_id == "vid_live"
+    assert res.verified is False
+    assert job.status in (JobStatus.COMPLETED, JobStatus.CLEANED)
+
+
+def test_startup_reconcile_skips_job_locked_by_live_process(test_env: dict[str, Any]):
+    """A job another process is rendering must not be failed by a newly started pipeline."""
+    from autoshorts.core.job_lock import job_lock
+    from autoshorts.pipeline import ShortsPipeline, get_work_dir
+
+    state_mgr = test_env["state_mgr"]
+    live = Job(id="job_live_render", source_url="u", status=JobStatus.COMPOSITING)
+    dead = Job(id="job_dead_render", source_url="u", status=JobStatus.COMPOSITING)
+    state_mgr.save_job(live)
+    state_mgr.save_job(dead)
+
+    with job_lock(get_work_dir() / live.id, live.id):
+        ShortsPipeline(state_manager=state_mgr, uploader=MagicMock(), cleaner=MagicMock())
+
+    assert state_mgr.get_job("job_live_render").status == JobStatus.COMPOSITING
+    assert state_mgr.get_job("job_dead_render").status == JobStatus.FAILED
+
+
+def test_rerender_refused_while_job_is_locked(test_env: dict[str, Any]):
+    from autoshorts.core.job_lock import JobLockedError, job_lock
+    from autoshorts.pipeline import ShortsPipeline, get_work_dir
+
+    job = _ready_job(test_env, "job_rerender_locked")
+    pipeline = ShortsPipeline(
+        state_manager=test_env["state_mgr"], uploader=MagicMock(), cleaner=MagicMock()
+    )
+    with job_lock(get_work_dir() / job.id, job.id), pytest.raises(JobLockedError):
+        pipeline.rerender_job(job.id)

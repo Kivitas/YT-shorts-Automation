@@ -560,3 +560,40 @@ def test_local_mode_is_not_blocked_by_exhausted_youtube_quota(
 
     assert res is not None
     assert res.status == "exported"
+
+
+def test_slot_generator_active_window_respects_configured_timezone():
+    """Window 08:00-23:59 in Asia/Kolkata: 03:00 UTC (08:30 IST) is inside, 12:00 IST is not 'outside'."""
+    gen = SlotGenerator(
+        min_gap_minutes=5,
+        max_gap_minutes=25,
+        active_window=ActiveWindowConfig(start="08:00", end="23:59", timezone="Asia/Kolkata"),
+        rng=random.Random(1),
+    )
+    assert gen.is_within_active_window(datetime(2026, 10, 19, 3, 0, tzinfo=UTC))  # 08:30 IST
+    assert not gen.is_within_active_window(datetime(2026, 10, 19, 1, 0, tzinfo=UTC))  # 06:30 IST
+    # A slot rolled past midnight IST lands at the next IST window start, not at UTC 08:00.
+    late = datetime(2026, 10, 19, 18, 25, tzinfo=UTC)  # 23:55 IST
+    for seed in range(20):
+        gen.rng = random.Random(seed)
+        slot = gen.next_slot_after(late)
+        assert gen.is_within_active_window(slot)
+        assert slot > late
+
+
+def test_enqueue_never_anchors_in_the_past(state_mgr: StateManager):
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    tracker = QuotaTracker(state_mgr, clock=lambda: now)
+    cfg = SchedulerConfig(
+        active_window=ActiveWindowConfig(start="00:00", end="23:59", timezone="UTC")
+    )
+    sched = SpreadScheduler(
+        state_mgr=state_mgr, quota_tracker=tracker, scheduler_config=cfg, clock=lambda: now
+    )
+    vid = Path("x.mp4")
+    stale = now - timedelta(days=2)
+    for jid in ("job_old", "job_new"):
+        state_mgr.save_job(Job(id=jid, source_url="https://youtu.be/1"))
+    sched.enqueue("job_old", vid, "t", "d", target_time=stale)
+    new_time = sched.enqueue("job_new", vid, "t", "d")
+    assert new_time > now

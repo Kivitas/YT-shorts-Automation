@@ -9,6 +9,7 @@ and generative metadata helpers.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -44,16 +45,21 @@ def _fuse_candidate_score(
     Applies a score penalty if narrative_completeness indicates an abrupt cutoff (< 0.85).
     Preserves exact deterministic behavior when heatmap_score == 0.0 and hook_strength == 0.0.
     """
-    hm = max(0.0, min(1.0, float(heatmap_score or 0.0)))
-    hk = max(0.0, min(1.0, float(hook_strength or 0.0)))
-    sf = max(0.0, min(1.0, float(semif_score or 0.0)))
-    nc = max(
-        0.0,
-        min(
-            1.0,
-            float(narrative_completeness if narrative_completeness is not None else 1.0),
-        ),
-    )
+
+    def _unit(value: Any, default: float = 0.0) -> float:
+        # min(1.0, nan) is 1.0, so a NaN score would otherwise become a perfect score.
+        try:
+            number = float(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(number):
+            return default
+        return max(0.0, min(1.0, number))
+
+    hm = _unit(heatmap_score)
+    hk = _unit(hook_strength)
+    sf = _unit(semif_score)
+    nc = _unit(narrative_completeness, default=1.0)
 
     if hm > 0.0:
         composite = 0.72 * sf + 0.18 * hm + 0.10 * hk

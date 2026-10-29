@@ -334,6 +334,8 @@ def run_command_with_cleanup(
 
     # Close stdin so a child can never block waiting on an interactive prompt.
     kwargs.setdefault("stdin", subprocess.DEVNULL)
+    kwargs.setdefault("encoding", "utf-8")
+    kwargs.setdefault("errors", "replace")
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -384,7 +386,15 @@ def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
         str(p),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15.0, check=False)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15.0,
+            check=False,
+        )
         if proc.returncode == 0 and proc.stdout.strip():
             payload = json.loads(proc.stdout)
             streams = payload.get("streams") or []
@@ -432,6 +442,8 @@ def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
                 [ffmpeg_bin, "-hide_banner", "-i", str(p)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15.0,
                 check=False,
             )

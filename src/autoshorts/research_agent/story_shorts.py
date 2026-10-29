@@ -53,51 +53,51 @@ MOOD_VOICES = {
 
 CURATED_STORIES: dict[str, dict[str, str]] = {
     "sad": {
-        "title": 'The Voicemail I Never Deleted',
+        "title": "The Voicemail I Never Deleted",
         "hook": "I kept my grandfather's last voicemail for three years without playing it.",
         "narration": (
             "I kept my grandfather's last voicemail for three years without playing it. Every "
-            'time my phone warned me about storage, I deleted photos and apps, but never that '
-            'message. Last week I finally pressed play, sitting alone in my car outside the '
-            'grocery store. His voice was cracked and cheerful. He was calling to remind me '
-            'to wear a jacket because the weather had turned cold. That was it. No big '
-            'goodbye, no wise last words, just a man who worried about me catching a chill. I '
-            'laughed first, then I cried so hard the windows fogged up. Today I wore the '
-            'jacket. It was too warm outside, but I kept it on all day anyway. If someone you '
-            'love is still a phone call away, call them. Say the ordinary things. Some nights '
-            'I still hear his voice telling me to wear my jacket.'
+            "time my phone warned me about storage, I deleted photos and apps, but never that "
+            "message. Last week I finally pressed play, sitting alone in my car outside the "
+            "grocery store. His voice was cracked and cheerful. He was calling to remind me "
+            "to wear a jacket because the weather had turned cold. That was it. No big "
+            "goodbye, no wise last words, just a man who worried about me catching a chill. I "
+            "laughed first, then I cried so hard the windows fogged up. Today I wore the "
+            "jacket. It was too warm outside, but I kept it on all day anyway. If someone you "
+            "love is still a phone call away, call them. Say the ordinary things. Some nights "
+            "I still hear his voice telling me to wear my jacket."
         ),
     },
     "funny": {
-        "title": 'I Accidentally Joined the Wrong Wedding',
+        "title": "I Accidentally Joined the Wrong Wedding",
         "hook": "I ate dinner at a stranger's wedding and ended up giving the toast.",
         "narration": (
             "I ate dinner at a stranger's wedding and ended up giving the toast. I walked "
             "into a hotel ballroom looking for my cousin's birthday party, and a nice lady "
-            'handed me a name card, so I assumed I was in the right place. I ate three bread '
-            'rolls and chatted with a man named Gerald about his boat. Then the microphone '
-            'landed in my hands. Somebody shouted, speech from the best friend of the groom. '
-            'I froze. So I said, Gerald talks about boats the way other people talk about '
+            "handed me a name card, so I assumed I was in the right place. I ate three bread "
+            "rolls and chatted with a man named Gerald about his boat. Then the microphone "
+            "landed in my hands. Somebody shouted, speech from the best friend of the groom. "
+            "I froze. So I said, Gerald talks about boats the way other people talk about "
             "love. The room exploded, because Gerald was the groom's father and it was "
             "painfully true. The bride hugged me. Later I found out my cousin's party was on "
-            'the floor below, and they had saved me cake. Gerald now texts me boat pictures '
-            'every single week, and honestly, I love it.'
+            "the floor below, and they had saved me cake. Gerald now texts me boat pictures "
+            "every single week, and honestly, I love it."
         ),
     },
     "angry": {
-        "title": 'My Neighbor Kept Stealing My Parking Spot',
-        "hook": 'My neighbor stole my parking spot for a whole year, and then I snapped.',
+        "title": "My Neighbor Kept Stealing My Parking Spot",
+        "hook": "My neighbor stole my parking spot for a whole year, and then I snapped.",
         "narration": (
-            'My neighbor stole my parking spot for a whole year, and then I snapped. I pay '
-            'extra for that numbered space. It is written in my lease. Every evening I came '
-            'home exhausted and found his shiny car parked there like he owned the place. I '
-            'left polite notes. I knocked on his door. He just smirked and said, first come, '
-            'first served. It was not first come. I called the property manager six times, '
-            'and each time they promised to look into it and did nothing. So I documented '
-            'everything with dated photos, sent one formal complaint, and asked for the '
+            "My neighbor stole my parking spot for a whole year, and then I snapped. I pay "
+            "extra for that numbered space. It is written in my lease. Every evening I came "
+            "home exhausted and found his shiny car parked there like he owned the place. I "
+            "left polite notes. I knocked on his door. He just smirked and said, first come, "
+            "first served. It was not first come. I called the property manager six times, "
+            "and each time they promised to look into it and did nothing. So I documented "
+            "everything with dated photos, sent one formal complaint, and asked for the "
             "towing company's number. Two days later his car was gone. He knocked on my door "
-            'asking who called the tow. I told him, the rules did. Nobody parks in my space '
-            'anymore, and I still smile every time I pull in.'
+            "asking who called the tow. I told him, the rules did. Nobody parks in my space "
+            "anymore, and I still smile every time I pull in."
         ),
     },
 }
@@ -318,7 +318,14 @@ def create_story_job(
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(section_path),
         ]  # fmt: skip
     try:
-        proc = subprocess.run(mux_cmd, capture_output=True, text=True, timeout=180.0, check=False)
+        proc = subprocess.run(
+            mux_cmd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180.0,
+            check=False,
+        )
         if proc.returncode != 0 or not section_path.is_file():
             logger.warning("Story mux failed: %s", (proc.stderr or "")[-300:])
             section_path.touch()

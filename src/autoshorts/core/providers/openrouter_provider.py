@@ -155,8 +155,9 @@ class OpenRouterProvider(BaseLLMProvider):
             choices = data.get("choices", [])
             if not choices:
                 return ""
-            msg = choices[0].get("message", {})
-            return str(msg.get("content", "")).strip()
+            msg = choices[0].get("message") or {}
+            # content may be JSON null (e.g. refusals or tool-only turns); never stringify None.
+            return str(msg.get("content") or "").strip()
 
         return self.execute_with_retry(_request)
 
@@ -254,17 +255,27 @@ class OpenRouterProvider(BaseLLMProvider):
 
         try:
             resp = client.post(url, headers=headers, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                choices = data.get("choices", [])
-                if choices:
-                    raw = choices[0].get("message", {}).get("content", "").strip().upper()
-                    for k in allowed_keys:
-                        if k in raw:
-                            dist = {opt: 0.05 for opt in allowed_keys}
-                            dist[k] = 1.0 - (0.05 * (len(allowed_keys) - 1))
-                            return dist
+        except Exception as exc:
+            # Transport failure: surface it so the caller can fall back rather than score uniformly.
+            raise ProviderError(f"OpenRouter scoring request failed: {type(exc).__name__}") from exc
+        if resp.status_code == 429:
+            raise ProviderRateLimitError(f"OpenRouter rate limit during scoring: {resp.text}")
+        if resp.status_code != 200:
+            raise ProviderError(f"OpenRouter scoring failed (HTTP {resp.status_code})")
+
+        try:
+            data = resp.json()
+            choices = data.get("choices", [])
+            if choices:
+                raw = (choices[0].get("message") or {}).get("content") or ""
+                raw = str(raw).strip().upper()
+                for k in allowed_keys:
+                    if k in raw:
+                        dist = {opt: 0.05 for opt in allowed_keys}
+                        dist[k] = 1.0 - (0.05 * (len(allowed_keys) - 1))
+                        return dist
         except Exception:
             pass
 
+        # Reply arrived but named no valid option: uniform distribution
         return {k: 1.0 / len(allowed_keys) for k in allowed_keys}

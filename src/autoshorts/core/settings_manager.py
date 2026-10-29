@@ -646,10 +646,8 @@ def apply_settings_update(
         if val and isinstance(val, str) and "•" not in val and val.strip():
             env_updates[env_key] = val.strip()
 
-    if env_updates:
-        update_env_file(target_env, env_updates)
-
-    # 2. Process subsystem sections into YAML dictionary
+    # 2. Process subsystem sections into YAML dictionary. .env is written only after the
+    # merged YAML validates (below), so a rejected save changes neither file.
 
     # LLM
     if "llm" in payload and isinstance(payload["llm"], dict):
@@ -831,6 +829,18 @@ def apply_settings_update(
                         raw_yaml["cleanup"][k] = 1
                 else:
                     raw_yaml["cleanup"][k] = cl_data[k]
+
+    # Validate the merged settings before writing either file. A value the schema rejects
+    # (for example upload.mode "bogus") would otherwise stay in config.yaml and make the
+    # next start fail in load_config.
+    # Validate a copy: UploadConfig's before-validator writes into the dict it receives.
+    try:
+        Settings(**copy.deepcopy(raw_yaml))
+    except Exception as e:
+        raise ValueError(f"Settings were not saved: {e}") from e
+
+    if env_updates:
+        update_env_file(target_env, env_updates)
 
     # Rewrite config.yaml only when a value changed. yaml.safe_dump drops every comment,
     # so a no-op save must leave the hand-written file byte-identical.

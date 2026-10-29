@@ -186,15 +186,13 @@ def get_log_stream_handler(capacity: int = 1000) -> LogStreamHandler:
         _LOG_STREAM_HANDLER.setFormatter(formatter)
         _LOG_STREAM_HANDLER.addFilter(RedactingFilter())
 
+        # Attach once, to root only. "autoshorts" propagates to root, so attaching it there too
+        # made every record appear twice in the log console.
         root_logger = logging.getLogger()
         if _LOG_STREAM_HANDLER not in root_logger.handlers:
             root_logger.addHandler(_LOG_STREAM_HANDLER)
         if root_logger.level > logging.INFO or root_logger.level == logging.NOTSET:
             root_logger.setLevel(logging.INFO)
-
-        autoshorts_logger = logging.getLogger("autoshorts")
-        if _LOG_STREAM_HANDLER not in autoshorts_logger.handlers:
-            autoshorts_logger.addHandler(_LOG_STREAM_HANDLER)
 
     return _LOG_STREAM_HANDLER
 

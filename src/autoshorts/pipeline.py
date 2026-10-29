@@ -228,6 +228,23 @@ def _is_nonempty_file(path: Path | None) -> bool:
         return False
 
 
+def _job_lock_is_held(job_id: str) -> bool:
+    """True when another process or thread currently holds the job's lock."""
+    try:
+        with job_lock(get_work_dir() / job_id, job_id):
+            return False
+    except JobLockedError:
+        return True
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer environment variable, falling back to ``default`` on junk."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _upload_succeeded(result: Any) -> bool:
     """An uploader result counts as a success only if it is not flagged and has a video id."""
     if getattr(result, "success", True) is False:
@@ -259,7 +276,7 @@ class ShortsPipeline:
         self.config = config or load_config()
         self.state_manager = state_manager or StateManager()
         if concurrency is None:
-            resolved_concurrency = int(os.environ.get("AUTOSHORTS_CONCURRENCY", "3"))
+            resolved_concurrency = _env_int("AUTOSHORTS_CONCURRENCY", 3)
         else:
             resolved_concurrency = concurrency
         self.concurrency = max(1, resolved_concurrency)
@@ -343,7 +360,7 @@ class ShortsPipeline:
 
         # Reconcile stranded jobs from prior interrupted processes
         try:
-            reconciled = self.state_manager.reconcile_stranded_jobs()
+            reconciled = self.state_manager.reconcile_stranded_jobs(is_job_active=_job_lock_is_held)
             if reconciled > 0:
                 logger.info(
                     "Reconciled %d stranded job(s) from prior session to FAILED.", reconciled
@@ -1749,6 +1766,14 @@ class ShortsPipeline:
             raise
 
     def rerender_job(self, job_id: str, **overrides: Any) -> Job:
+        """Re-render under the per-job lock so it never races a running pipeline pass.
+
+        Raises JobLockedError when another process or thread is already working on the job.
+        """
+        with job_lock(get_work_dir() / job_id, job_id):
+            return self._rerender_job_locked(job_id, **overrides)
+
+    def _rerender_job_locked(self, job_id: str, **overrides: Any) -> Job:
         """Fast 1-click re-render of subtitles and compositing stages skipping re-download and re-scoring.
 
         Robustly re-renders jobs from READY_FOR_REVIEW, SCHEDULED, COMPLETED, or FAILED.
@@ -2177,7 +2202,7 @@ class ShortsPipeline:
             # job, because a retry would upload the same video a second time.
             try:
                 verified = use_uploader.verify(result.video_id)
-            except UploadError as verify_err:
+            except Exception as verify_err:
                 logger.warning(
                     "Verification raised after upload of %s: %s", result.video_id, verify_err
                 )
@@ -2223,14 +2248,14 @@ class ShortsPipeline:
 
             # Post-upload transactional cleanup. Only delete intermediates when the
             # upload was positively confirmed; an unconfirmed Studio upload keeps them.
-            if self.cleaner and getattr(getattr(self.config, "cleanup", None), "enabled", True):
-                if not result.verified:
-                    logger.warning(
-                        "Job %s: Skipping intermediate cleanup because the upload is not "
-                        "confirmed (verification=%s).",
-                        job.id,
-                        result.verification_kind,
-                    )
+            if not result.verified:
+                logger.warning(
+                    "Job %s: Skipping intermediate cleanup because the upload is not "
+                    "confirmed (verification=%s).",
+                    job.id,
+                    result.verification_kind,
+                )
+            elif self.cleaner and getattr(getattr(self.config, "cleanup", None), "enabled", True):
                 try:
                     self.cleaner.cleanup_job(job.id, verified=result.verified, upload_result=result)
                     job.transition_to(JobStatus.CLEANED)

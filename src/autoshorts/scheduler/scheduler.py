@@ -16,7 +16,7 @@ from typing import Any
 
 from autoshorts.core.config import SchedulerConfig, Settings, UploadConfig
 from autoshorts.core.contracts import Cleaner, Uploader
-from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError, UploadError
+from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
 from autoshorts.core.models import JobStatus, UploadResult, resolve_verification
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
@@ -182,7 +182,15 @@ class SpreadScheduler:
                 # Anchor after the last scheduled slot
                 last_slot_str = pending[-1]["scheduled_time"]
                 last_time = datetime.fromisoformat(last_slot_str)
-                scheduled_time = self.slot_generator.next_slot_after(last_time)
+                if last_time.tzinfo is None and now.tzinfo is not None:
+                    last_time = last_time.replace(tzinfo=UTC)
+                # Never anchor in the past: a stale tail slot would yield an already-overdue slot.
+                if last_time.tzinfo is not None and now.tzinfo is None:
+                    now_cmp = now.replace(tzinfo=UTC)
+                else:
+                    now_cmp = now
+                anchor = max(last_time, now_cmp)
+                scheduled_time = self.slot_generator.next_slot_after(anchor)
             else:
                 scheduled_time = self.slot_generator.next_slot_after(now)
         else:
@@ -547,7 +555,7 @@ class SpreadScheduler:
             # retry would upload the same video a second time.
             try:
                 verified = uploader_to_use.verify(result.video_id)
-            except UploadError as verify_err:
+            except Exception as verify_err:
                 logger.warning(
                     "Verification raised after upload of %s: %s", result.video_id, verify_err
                 )

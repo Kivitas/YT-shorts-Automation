@@ -224,7 +224,7 @@ class LocalProvider(BaseLLMProvider):
             )
             choices = result.get("choices", [])
             if choices and "logprobs" in choices[0] and choices[0]["logprobs"]:
-                top_lp = choices[0]["logprobs"].get("top_logprobs", [{}])[0]
+                top_lp = (choices[0]["logprobs"].get("top_logprobs") or [{}])[0] or {}
                 for key in norm_options:
                     # Match key or ' ' + key
                     matches = [v for k_tok, v in top_lp.items() if k_tok.strip().upper() == key]

@@ -8,6 +8,7 @@ non-overlapping selection.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -671,6 +672,7 @@ def _normalize_segments(
             text = str(getattr(item, "text", "") or "").strip()
         if end <= start and duration > 0.0:
             end = start + duration
+        end = max(end, start)  # never let a segment end before it starts
         if text:
             norm_segments.append({"start": start, "end": end, "text": text})
 
@@ -712,14 +714,17 @@ def slice_transcript_windows(
             chapter_title=_resolve_chapter_title(s_t, e_t, chapters),
         )
 
-    total_duration = segments[-1]["end"]
+    # A zero or negative stride would never advance the window cursor (infinite loop).
+    if not math.isfinite(stride_seconds) or stride_seconds < 1.0:
+        stride_seconds = 1.0
+    total_duration = max(s["end"] for s in segments)
     if total_duration < min_duration_seconds:
         # Transcript shorter than min_duration: return single candidate if not empty
         full_text = " ".join(s["text"] for s in segments)
         return [
             _build_candidate(
                 segments[0]["start"],
-                segments[-1]["end"],
+                total_duration,
                 full_text,
             )
         ]
@@ -732,7 +737,7 @@ def slice_transcript_windows(
         nominal_end_t = current_t + window_duration_seconds
 
         # 1. Locate start segment snapped strictly to the beginning of a sentence or clause
-        nominal_start_idx = 0
+        nominal_start_idx = len(segments) - 1
         for i, s in enumerate(segments):
             if s["start"] >= current_t:
                 nominal_start_idx = i
@@ -832,7 +837,7 @@ def slice_transcript_windows(
         candidates.append(
             _build_candidate(
                 segments[0]["start"],
-                min(segments[-1]["end"], segments[0]["start"] + max_duration_seconds),
+                min(total_duration, segments[0]["start"] + max_duration_seconds),
                 full_text,
             )
         )

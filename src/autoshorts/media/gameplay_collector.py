@@ -13,11 +13,13 @@ Provides:
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
 import re
 import subprocess
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -181,6 +183,8 @@ def probe_video_duration(media_path: Path | str, default: float = 0.0) -> float:
             [ffmpeg_bin, "-i", str(target)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10.0,
         )
         text = proc.stderr or proc.stdout
@@ -302,7 +306,14 @@ def search_category_videos(
 
     logger.info("Searching YouTube via yt-dlp: '%s' (limit=%d)", query, search_count)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+        )
         if proc.returncode != 0:
             logger.warning(
                 "yt-dlp search exited with code %d: %s",
@@ -409,6 +420,7 @@ def download_source_video(
         "bestvideo[height<=1080]/best[height<=1080]/best"
     )
 
+    tmp_path = output_path.with_name(f".dl_{uuid.uuid4().hex[:8]}_{output_path.name}")
     cmd = [
         bin_name,
         "--ffmpeg-location",
@@ -423,20 +435,47 @@ def download_source_video(
         "--merge-output-format",
         "mp4",
         "-o",
-        str(output_path),
+        str(tmp_path),
         url,
     ]
 
+    def _cleanup() -> None:
+        for leftover in output_path.parent.glob(f"{glob.escape(tmp_path.stem)}*"):
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+
+    def _produced() -> Path | None:
+        if tmp_path.is_file() and tmp_path.stat().st_size > 0:
+            return tmp_path
+        for cand in output_path.parent.glob(f"{glob.escape(tmp_path.stem)}*"):
+            if (
+                cand.is_file()
+                and cand.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}
+                and not re.search(r"\.f\d+\.", cand.name)
+                and cand.stat().st_size > 0
+            ):
+                return cand
+        return None
+
     logger.info("Downloading source video with yt-dlp: %s -> %s", url, output_path.name)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+        )
         if proc.returncode != 0:
             logger.warning(
                 "yt-dlp download failed (rc=%d): %s",
                 proc.returncode,
                 (proc.stderr or proc.stdout).strip()[:300],
             )
-            # Retry without --download-sections if partial download failed
+            _cleanup()  # never keep a partial slice from the failed attempt
             cmd_fallback = [
                 bin_name,
                 "--ffmpeg-location",
@@ -448,40 +487,41 @@ def download_source_video(
                 "--merge-output-format",
                 "mp4",
                 "-o",
-                str(output_path),
+                str(tmp_path),
                 url,
             ]
             logger.info("Retrying without --download-sections for %s", url)
-            proc_fb = subprocess.run(
-                cmd_fallback, capture_output=True, text=True, timeout=timeout_sec
+            proc = subprocess.run(
+                cmd_fallback,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_sec,
             )
-            if proc_fb.returncode == 0 and output_path.is_file() and output_path.stat().st_size > 0:
-                return output_path
+            if proc.returncode != 0:
+                _cleanup()
+                return None
 
-            if output_path.is_file() and output_path.stat().st_size > 0:
-                return output_path
+        produced = _produced()
+        if produced is None:
+            _cleanup()
             return None
-
-        if output_path.is_file() and output_path.stat().st_size > 0:
-            return output_path
-
-        # Check for format-suffixed file in parent
-        for cand in output_path.parent.glob(f"{output_path.stem}*"):
-            if (
-                cand.is_file()
-                and cand.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}
-                and cand.stat().st_size > 0
-            ):
-                return cand
-
-        return None
+        final = (
+            output_path
+            if produced.suffix.lower() == output_path.suffix.lower()
+            else output_path.with_suffix(produced.suffix.lower())
+        )
+        os.replace(produced, final)
+        _cleanup()
+        return final
     except subprocess.TimeoutExpired:
         logger.warning("yt-dlp download timed out (%.1fs) for %s", timeout_sec, url)
-        if output_path.is_file():
-            output_path.unlink(missing_ok=True)
+        _cleanup()
         return None
     except Exception as exc:
         logger.warning("Error downloading video %s: %s", url, exc)
+        _cleanup()
         return None
 
 
@@ -599,7 +639,14 @@ def cut_video_segments(
 
         success = False
         try:
-            proc = subprocess.run(cmd_copy, capture_output=True, text=True, timeout=timeout_sec)
+            proc = subprocess.run(
+                cmd_copy,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_sec,
+            )
             if proc.returncode == 0 and tmp_dest.is_file() and tmp_dest.stat().st_size > 1024:
                 os.replace(tmp_dest, dest_path)
                 success = True
@@ -637,7 +684,12 @@ def cut_video_segments(
             ]
             try:
                 proc = subprocess.run(
-                    cmd_reencode, capture_output=True, text=True, timeout=timeout_sec
+                    cmd_reencode,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_sec,
                 )
                 if proc.returncode == 0 and tmp_dest.is_file() and tmp_dest.stat().st_size > 1024:
                     os.replace(tmp_dest, dest_path)

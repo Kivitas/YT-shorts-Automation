@@ -19,19 +19,30 @@ logger = logging.getLogger(__name__)
 
 
 def _concat_audio(sections: list[SectionAudio], work_dir: Path) -> Path:
-    list_file = work_dir / "audio_list.txt"
-    lines = []
-    for sa in sections:
-        p = Path(sa.audio_path).resolve().as_posix().replace("'", "'\\''")
-        lines.append(f"file '{p}'")
-    list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    """Join section audio with the concat *filter*.
+
+    The concat demuxer needs identical codec parameters, which breaks when one section fell back
+    from Edge (mp3) to Kokoro (wav). Each input is normalised to 48 kHz stereo first.
+    """
+    if not sections:
+        raise ValueError("No audio sections to concatenate")
     out = work_dir / "narration.m4a"
-    cmd = [
-        get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "concat", "-safe", "0", "-i", str(list_file),
-        "-c:a", "aac", "-b:a", "192k", str(out),
-    ]  # fmt: skip
-    subprocess.run(cmd, check=True, capture_output=True)
+    cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-nostdin"]
+    parts = []
+    for i, sa in enumerate(sections):
+        cmd += ["-i", str(Path(sa.audio_path).resolve())]
+        parts.append(
+            f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]"
+        )
+    labels = "".join(f"[a{i}]" for i in range(len(sections)))
+    graph = ";".join(parts) + f";{labels}concat=n={len(sections)}:v=0:a=1[outa]"
+    cmd += ["-filter_complex", graph, "-map", "[outa]", "-c:a", "aac", "-b:a", "192k", str(out)]
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=600, check=False,
+    )  # fmt: skip
+    if proc.returncode != 0:
+        raise RuntimeError(f"audio concat failed: {(proc.stderr or '').strip()[-800:]}")
     return out
 
 
@@ -49,13 +60,22 @@ def _encode(sections: list[SectionAudio], title: str, audio: Path, out_path: Pat
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None and proc.stderr is not None
     try:
-        for frame in frames:
-            proc.stdin.write(frame)
-        proc.stdin.close()
-    except BrokenPipeError:
-        pass
-    err = proc.stderr.read().decode("utf-8", "replace")
-    if proc.wait() != 0:
+        try:
+            for frame in frames:
+                proc.stdin.write(frame)
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
+        err = proc.stderr.read().decode("utf-8", "replace")
+        rc = proc.wait()
+    except BaseException:
+        # A frame generator error or Ctrl+C must not leave ffmpeg running or the output half-written.
+        proc.kill()
+        proc.wait()
+        Path(out_path).unlink(missing_ok=True)
+        raise
+    if rc != 0:
+        Path(out_path).unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg failed: {err[-800:]}")
 
 
@@ -69,6 +89,8 @@ def render_longform(
 
     sections = synthesize_sections(script, work_dir)
     duration = float(sum(sa.duration for sa in sections))
+    if not sections or duration <= 0:
+        raise ValueError("Long-form script produced no narration audio")
     if duration > MAX_VIDEO_SECONDS:
         raise ValueError(f"Video duration {duration:.1f}s exceeds the {MAX_VIDEO_SECONDS:.0f}s cap")
 

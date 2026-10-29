@@ -329,6 +329,9 @@ NICHE_TOPIC_TEMPLATES: dict[str, list[dict[str, Any]]] = {
 
 YOUTUBE_TITLE_MAX_CHARS = 100
 
+# Upper bound for one edge-tts synthesis before falling back to Kokoro / offline audio.
+_TTS_TIMEOUT_SEC = 45.0
+
 
 def _clamp_title(title: str, max_len: int = YOUTUBE_TITLE_MAX_CHARS) -> str:
     """Collapse whitespace and cut an over-long LLM title to YouTube's 100-character limit."""
@@ -443,9 +446,10 @@ def generate_faceless_script(
                 f"Respond ONLY with valid JSON."
             )
             raw = provider.complete(prompt)
-            s = raw.strip()
-            if s.startswith("```"):
-                s = s.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            s = (raw or "").strip()
+            fenced = re.search(r"```[A-Za-z]*\s*([\s\S]*?)\s*(?:```|\Z)", s)
+            if fenced:
+                s = fenced.group(1).strip()
             data = json.loads(s)
             if isinstance(data, dict) and "hook" in data and "script_sentences" in data:
                 normalized = _normalize_llm_script(data, chosen_topic, chosen_template)
@@ -621,6 +625,16 @@ def synthesize_neural_tts(
     Returns (audio_path, aligned_words_list, total_duration_seconds).
     Falls back gracefully to offline synthesized voiceover if network is unavailable.
     """
+
+    def _run_bounded() -> tuple[Path, list[dict[str, Any]], float]:
+        # wait_for cancels the stream when it hangs, so no late write can race the fallback.
+        return asyncio.run(
+            asyncio.wait_for(
+                _async_synthesize_edge_tts(text, voice, output_audio_path, output_words_path),
+                timeout=_TTS_TIMEOUT_SEC,
+            )
+        )
+
     try:
         try:
             loop = asyncio.get_running_loop()
@@ -628,19 +642,15 @@ def synthesize_neural_tts(
             loop = None
 
         if loop and loop.is_running():
-            # Run in a dedicated thread to avoid blocking running event loop
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(
-                    lambda: asyncio.run(
-                        _async_synthesize_edge_tts(
-                            text, voice, output_audio_path, output_words_path
-                        )
-                    )
-                ).result(timeout=45.0)
+            # Run in a dedicated thread to avoid blocking running event loop. Do not use the
+            # pool as a context manager: its __exit__ waits for the worker and would defeat the timeout.
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                result = pool.submit(_run_bounded).result(timeout=_TTS_TIMEOUT_SEC + 5.0)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
         else:
-            result = asyncio.run(
-                _async_synthesize_edge_tts(text, voice, output_audio_path, output_words_path)
-            )
+            result = _run_bounded()
         logger.info("TTS engine used: edge-tts")
         return result
     except Exception as tts_err:
@@ -773,7 +783,8 @@ def create_faceless_short_job(
         proc = subprocess.run(
             mux_cmd,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120.0,
             check=False,
         )

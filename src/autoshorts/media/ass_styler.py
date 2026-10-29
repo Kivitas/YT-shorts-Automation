@@ -399,6 +399,38 @@ def offset_words_for_hook(
     return offset_words
 
 
+def shift_jump_cuts_for_hook(
+    jump_cuts: Sequence[JumpCut] | None,
+    hook_in_sec: float,
+) -> list[JumpCut]:
+    """Express clip-timeline jump cuts on the hook-trimmed timeline.
+
+    The EDL stores cuts in source-clip time (between hook_in and hook_out), but the render trims
+    the input with ``-ss hook_in`` first, so filters, captions and the Remotion plan all work on
+    a timeline that starts at hook_in. Cuts entirely before hook_in vanish; one straddling it is
+    clamped to start at 0.
+    """
+    if not jump_cuts:
+        return []
+    if hook_in_sec <= 0.0:
+        return list(jump_cuts)
+    shifted: list[JumpCut] = []
+    for c in jump_cuts:
+        new_end = c.cut_end - hook_in_sec
+        if new_end <= 0.0:
+            continue
+        new_start = max(0.0, c.cut_start - hook_in_sec)
+        if new_end > new_start:
+            shifted.append(
+                JumpCut(
+                    cut_start=round(new_start, 3),
+                    cut_end=round(new_end, 3),
+                    reason=getattr(c, "reason", "") or "",
+                )
+            )
+    return shifted
+
+
 def remap_words_for_jump_cuts(
     words: Sequence[TimedWord | dict[str, Any]],
     jump_cuts: Sequence[JumpCut] | None = None,
@@ -601,6 +633,7 @@ def build_ass_script(
     # If hook_in trimming was applied, offset word timestamps
     if hook_in_sec > 0:
         words = offset_words_for_hook(words, hook_in_sec)
+        jump_cuts = shift_jump_cuts_for_hook(jump_cuts, hook_in_sec)
 
     # If jump cuts exist, remap word timestamps to close excised dead-air gaps
     if jump_cuts:

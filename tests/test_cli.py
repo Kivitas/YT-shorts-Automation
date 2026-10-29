@@ -80,3 +80,27 @@ def test_missing_config_file_is_an_error_not_silent_defaults(tmp_path) -> None:
         cli.main(["--config", str(missing), "quota"])
     assert exc.value.code == 2
     load.assert_not_called()
+
+
+def test_bad_link_returns_clean_error_not_traceback(capsys) -> None:
+    from autoshorts.core.exceptions import InvalidURLError
+
+    pipeline = MagicMock()
+    pipeline.process_batch.side_effect = InvalidURLError("not a youtube link")
+    with (
+        patch.object(cli, "load_config", return_value=MagicMock()),
+        patch.object(cli, "StateManager", return_value=MagicMock()),
+        patch.object(cli, "ShortsPipeline", return_value=pipeline),
+    ):
+        code = cli.main(["run", "--links", "https://example.com/x"])
+    assert code == 2
+    assert "invalid link" in capsys.readouterr().err
+
+
+def test_config_error_returns_exit_code_one(capsys) -> None:
+    from autoshorts.core.exceptions import ConfigError
+
+    with patch.object(cli, "load_config", side_effect=ConfigError("bad yaml")):
+        code = cli.main(["quota"])
+    assert code == 1
+    assert "bad yaml" in capsys.readouterr().err

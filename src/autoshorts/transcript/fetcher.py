@@ -79,6 +79,7 @@ def parse_vtt_text(vtt_content: str) -> list[TranscriptSegment]:
 
     idx = 0
     num_lines = len(lines)
+    prev_cue_lines: set[str] = set()
     while idx < num_lines:
         line = lines[idx].strip()
         match = time_pattern.search(line)
@@ -90,12 +91,17 @@ def parse_vtt_text(vtt_content: str) -> list[TranscriptSegment]:
 
             # Collect subsequent text lines until next timestamp or blank line
             text_lines: list[str] = []
+            cue_lines: set[str] = set()
             idx += 1
             while idx < num_lines and lines[idx].strip() and not time_pattern.search(lines[idx]):
                 clean_text = re.sub(r"<[^>]+>", "", lines[idx].strip())  # Strip VTT styling tags
+                # YouTube auto-captions roll: each cue repeats the previous cue's last line.
                 if clean_text:
-                    text_lines.append(clean_text)
+                    cue_lines.add(clean_text)
+                    if clean_text not in prev_cue_lines:
+                        text_lines.append(clean_text)
                 idx += 1
+            prev_cue_lines = cue_lines
 
             full_text = " ".join(text_lines).strip()
             if full_text:
@@ -328,12 +334,12 @@ class TranscriptFetcher:
             "--skip-download",
             "--no-playlist",
             "--no-warnings",
-            "--",
-            canonical_url,
         ]
 
+        # Options must come before "--": everything after it is treated as a URL.
         if self.cookies_from_browser:
             cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+        cmd.extend(["--", canonical_url])
 
         proc = subprocess.run(
             cmd,
@@ -455,12 +461,12 @@ class TranscriptFetcher:
                 "vtt",
                 "-o",
                 out_template,
-                "--",
-                canonical_url,
             ]
 
+            # Options must come before "--": everything after it is treated as a URL.
             if self.cookies_from_browser:
                 cmd.extend(["--cookies-from-browser", self.cookies_from_browser])
+            cmd.extend(["--", canonical_url])
 
             subprocess.run(
                 cmd,
@@ -471,7 +477,7 @@ class TranscriptFetcher:
             )
             vtt_files = list(tmp_path.glob("*.vtt"))
             if vtt_files:
-                vtt_text = vtt_files[0].read_text(encoding="utf-8")
+                vtt_text = vtt_files[0].read_text(encoding="utf-8", errors="replace")
                 segments = parse_vtt_text(vtt_text)
                 if segments:
                     return segments

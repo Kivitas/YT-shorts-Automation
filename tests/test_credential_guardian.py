@@ -585,3 +585,12 @@ def test_quarantine_with_string_path(tmp_path: Path) -> None:
     assert backup is not None
     assert backup.name == "token.revoked.json.bak"
     assert backup.is_file()
+
+
+def test_classify_fallback_message_redacts_key_in_error_url():
+    """Unrecognized errors echo request URLs; an embedded API key must not reach the message."""
+    secret = "AIzaSyD" + "x" * 32
+    err = f"unexpected failure calling https://www.googleapis.com/youtube/v3/videos?key={secret}"
+    report = classify_api_error("youtube_api_key", err)
+    assert secret not in report.message
+    assert "REDACTED" in report.message

@@ -329,7 +329,8 @@ class AnalyticsEngine:
                         proc = subprocess.run(
                             ["yt-dlp", "--dump-json", "--skip-download", url],
                             capture_output=True,
-                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
                             timeout=30,
                         )
                         if proc.returncode == 0 and proc.stdout.strip():

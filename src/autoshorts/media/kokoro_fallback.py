@@ -83,6 +83,8 @@ def synthesize_kokoro(text: str, voice: str, output_wav: Path, speed: float = 1.
             cwd=str(_model_dir()),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_TIMEOUT_SEC,
             check=False,
         )

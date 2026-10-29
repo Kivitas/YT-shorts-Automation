@@ -18,8 +18,8 @@ from autoshorts.core.models import JobStatus
 
 if TYPE_CHECKING:
     from autoshorts.core.models import Job
+    from autoshorts.core.state_manager import StateManager
     from autoshorts.pipeline import ShortsPipeline
-    from autoshorts.storage.state_manager import StateManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,10 @@ class ParallelJobExecutor:
         self.pipeline = pipeline
         self.state_manager = state_manager or pipeline.state_manager
         if max_workers is None:
-            max_workers = int(os.environ.get("AUTOSHORTS_CONCURRENCY", "3"))
+            try:
+                max_workers = int(os.environ.get("AUTOSHORTS_CONCURRENCY", "3"))
+            except (TypeError, ValueError):
+                max_workers = 3
         self.max_workers = max(1, max_workers)
         self._executor = ThreadPoolExecutor(
             max_workers=self.max_workers,
@@ -123,9 +126,17 @@ class ParallelJobExecutor:
                     self.active_count,
                 )
 
-        future = self._executor.submit(_worker)
+        try:
+            future = self._executor.submit(_worker)
+        except BaseException:
+            # Executor shut down or refused the task: never leave the job marked active.
+            with self._lock:
+                self._active_jobs.discard(job_id)
+            raise
         with self._lock:
-            self._futures[job_id] = future
+            # A very fast worker may already have finished; do not keep a stale future.
+            if job_id in self._active_jobs:
+                self._futures[job_id] = future
         return future
 
     def poll_queued_jobs(

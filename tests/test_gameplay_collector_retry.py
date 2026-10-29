@@ -54,9 +54,7 @@ def test_skips_failed_download_until_max_videos_collected(tmp_path, monkeypatch)
     monkeypatch.setattr(gc, "download_source_video", fake_download)
     monkeypatch.setattr(gc, "cut_video_segments", fake_cut)
 
-    result = gc.collect_category_gameplay(
-        category="minecraft", max_videos=2, assets_dir=tmp_path
-    )
+    result = gc.collect_category_gameplay(category="minecraft", max_videos=2, assets_dir=tmp_path)
 
     assert result["videos_processed"] == 2
     assert len(cut_calls) == 2
@@ -84,9 +82,7 @@ def test_retries_failed_download_once_and_counts_candidate(tmp_path, monkeypatch
         lambda source_path, video_id, **kw: [_fake_clip(f"{video_id}_01.mp4", video_id)],
     )
 
-    result = gc.collect_category_gameplay(
-        category="minecraft", max_videos=1, assets_dir=tmp_path
-    )
+    result = gc.collect_category_gameplay(category="minecraft", max_videos=1, assets_dir=tmp_path)
 
     assert len(attempts) == 2
     assert result["videos_processed"] == 1
