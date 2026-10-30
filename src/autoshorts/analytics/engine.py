@@ -765,13 +765,21 @@ class AnalyticsEngine:
         existing = self.state_manager.list_video_analytics(limit=10)
         if existing:
             return existing
-        return self.generate_sample_telemetry()
+        samples = self.generate_sample_telemetry()
+        for sample in samples:
+            try:
+                self.state_manager.record_video_analytics(sample)
+            except Exception as e:
+                logger.debug(f"Failed saving seed sample telemetry: {e}")
+        return self.state_manager.list_video_analytics(limit=50)
 
     def get_overview(self, days: int = 30) -> AnalyticsOverview:
         """Compute top-level KPI metrics across all synchronized videos."""
         from autoshorts.analytics.attribution import PerformanceAttributionEngine
 
         records = self.state_manager.list_video_analytics(limit=500)
+        if not records:
+            records = self.seed_demo_analytics_if_empty()
         attribution_engine = PerformanceAttributionEngine(self.state_manager)
         winning_recipe = attribution_engine.get_winning_recipe()
 
@@ -836,6 +844,8 @@ class AnalyticsEngine:
     def get_videos(self, limit: int = 50) -> list[VideoAnalyticsRecord]:
         """Return recorded video analytics records."""
         records = self.state_manager.list_video_analytics(limit=limit)
+        if not records:
+            records = self.seed_demo_analytics_if_empty()[:limit]
         res: list[VideoAnalyticsRecord] = []
         for r in records:
             try:

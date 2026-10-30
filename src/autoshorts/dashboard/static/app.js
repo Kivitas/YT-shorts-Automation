@@ -2041,9 +2041,10 @@ function onLongformPresetSelect() {
 }
 
 async function generateLongform() {
+  const sourceUrl = document.getElementById("longform-source-url")?.value?.trim() || "";
   const customTopic = document.getElementById("longform-custom-topic")?.value?.trim();
   const presetTopic = document.getElementById("longform-topic-select")?.value;
-  const topic = customTopic || presetTopic || "science";
+  const topic = sourceUrl || customTopic || presetTopic || "science";
   const genre = document.getElementById("longform-genre-select")?.value || "auto";
   const minutesVal = parseFloat(document.getElementById("longform-minutes-input").value);
   const provider = document.getElementById("longform-provider-select").value;
@@ -2053,6 +2054,7 @@ async function generateLongform() {
   const publishToggle = document.getElementById("longform-publish-toggle");
   const payload = {
     topic: topic,
+    source_url: sourceUrl || null,
     genre: genre,
     minutes: Number.isFinite(minutesVal) ? minutesVal : 3.0,
     provider: provider,
@@ -3159,7 +3161,9 @@ function openPreview(jobId, title) {
 
   if (modalTitle) modalTitle.textContent = decodeURIComponent(title);
   if (video) {
+    video.pause();
     video.src = `/api/video/${jobId}/preview`;
+    video.load();
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
     video.muted = true; // Required by Safari for autoplay

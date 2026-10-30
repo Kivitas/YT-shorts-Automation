@@ -554,6 +554,7 @@ class StoryJobRequest(BaseModel):
 
 class LongformRequest(BaseModel):
     topic: str
+    source_url: str | None = None
     genre: str = "auto"
     minutes: float = Field(default=3.0, ge=0.5, le=15.0)
     provider: str = "api"
@@ -1109,6 +1110,34 @@ def create_app(
         """Render a long-form stick-figure video (runs in a worker thread: plain def)."""
         from autoshorts.longform.render import render_longform
 
+        target_topic = req.topic
+        src_url = getattr(req, "source_url", None)
+        if not src_url and ("youtube.com" in req.topic or "youtu.be" in req.topic):
+            src_url = req.topic
+
+        if src_url:
+            try:
+                from autoshorts.metadata.extractor import MetadataExtractor
+                from autoshorts.transcript.fetcher import TranscriptFetcher
+
+                extractor = MetadataExtractor()
+                meta = extractor.extract(src_url)
+                title = meta.title if meta and meta.title else "YouTube Video"
+
+                fetcher = TranscriptFetcher(config=cfg)
+                transcript_res = fetcher.fetch(src_url)
+                summary_text = ""
+                if transcript_res and transcript_res.segments:
+                    summary_text = " ".join(s.text for s in transcript_res.segments[:60])
+                if summary_text:
+                    target_topic = f"{title}: {summary_text[:350]}"
+                else:
+                    target_topic = title
+            except Exception as ex:
+                logger.warning("Could not extract YouTube transcript for longform: %s", ex)
+                if not target_topic or "http" in target_topic:
+                    target_topic = "Deep Dive Analysis"
+
         sig = inspect.signature(render_longform)
         kwargs: dict[str, Any] = {}
         if "config" in sig.parameters:
@@ -1124,9 +1153,9 @@ def create_app(
 
         try:
             if not kwargs and len(sig.parameters) >= 4:
-                result = render_longform(req.topic, req.minutes, req.provider, cfg)
+                result = render_longform(target_topic, req.minutes, req.provider, cfg)
             else:
-                result = render_longform(req.topic, req.minutes, req.provider, **kwargs)
+                result = render_longform(target_topic, req.minutes, req.provider, **kwargs)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except RuntimeError as e:
@@ -2241,10 +2270,61 @@ def create_app(
     # Video Streaming & Download API
     # -------------------------------------------------------------------------
 
+    def _stream_video_range(path_str: str, request: Request, filename: str | None = None) -> Response:
+        path = Path(path_str)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Video file not found on disk")
+
+        file_size = path.stat().st_size
+        range_header = request.headers.get("range")
+        if not range_header or not range_header.strip().lower().startswith("bytes="):
+            headers = {"Accept-Ranges": "bytes"}
+            if filename:
+                headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+            return FileResponse(path=str(path), media_type="video/mp4", headers=headers)
+
+        range_spec = range_header.strip().lower()[6:]
+        parts = range_spec.split("-")
+        try:
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+        except ValueError:
+            start = 0
+            end = file_size - 1
+
+        if end >= file_size:
+            end = file_size - 1
+        if start > end or start >= file_size:
+            start = 0
+
+        chunk_length = (end - start) + 1
+
+        def iter_file():
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_length
+                while remaining > 0:
+                    chunk = f.read(min(remaining, 128 * 1024))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(chunk_length),
+            "Content-Type": "video/mp4",
+        }
+        if filename:
+            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+        return StreamingResponse(iter_file(), status_code=206, headers=headers)
+
     @app.get("/api/video/{job_id}/preview")
-    async def get_preview_video(job_id: str) -> FileResponse:
-        """Stream low-resolution preview or master MP4 for scrub preview."""
-        job = state_mgr.get_job(job_id)
+    async def get_preview_video(job_id: str, request: Request) -> Response:
+        """Stream low-resolution preview or master MP4 for scrub preview with HTTP 206 Range support."""
+        job = await asyncio.to_thread(state_mgr.get_job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
@@ -2252,12 +2332,12 @@ def create_app(
         if not path_str or not Path(path_str).is_file():
             raise HTTPException(status_code=404, detail="Video media file not found on disk")
 
-        return FileResponse(path=path_str, media_type="video/mp4")
+        return _stream_video_range(path_str, request)
 
     @app.get("/api/video/{job_id}/master")
-    async def get_master_video(job_id: str) -> FileResponse:
-        """Download high-resolution rendered master Short MP4."""
-        job = state_mgr.get_job(job_id)
+    async def get_master_video(job_id: str, request: Request) -> Response:
+        """Download high-resolution rendered master Short MP4 with HTTP 206 Range support."""
+        job = await asyncio.to_thread(state_mgr.get_job, job_id)
         if not job or not job.rendered_video_path:
             raise HTTPException(status_code=404, detail="Rendered master video not found")
 
@@ -2265,11 +2345,7 @@ def create_app(
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Master video file not found on disk")
 
-        return FileResponse(
-            path=str(path),
-            media_type="video/mp4",
-            filename=f"{job_id}_master.mp4",
-        )
+        return _stream_video_range(str(path), request, filename=f"{job_id}_master.mp4")
 
     # -------------------------------------------------------------------------
     # Settings & YouTube Data API v3 Management API
@@ -2557,8 +2633,8 @@ def create_app(
             engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
             attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
 
-            overview = engine.get_overview(days=days)
-            winning = attr_engine.get_winning_recipe()
+            overview = await asyncio.to_thread(engine.get_overview, days=days)
+            winning = await asyncio.to_thread(attr_engine.get_winning_recipe)
 
             return {
                 "success": True,
@@ -2635,7 +2711,7 @@ def create_app(
             from autoshorts.analytics.engine import AnalyticsEngine
 
             engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
-            videos = engine.get_videos(limit=limit)
+            videos = await asyncio.to_thread(engine.get_videos, limit=limit)
 
             return {
                 "success": True,

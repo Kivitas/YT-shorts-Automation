@@ -154,9 +154,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     longform_parser.add_argument(
         "--topic",
-        required=True,
-        choices=["discipline", "money", "testosterone", "science", "self_improvement"],
-        help="Topic for the long-form video",
+        default="science",
+        help="Topic for the long-form video (preset or custom premise)",
+    )
+    longform_parser.add_argument(
+        "--url",
+        "--link",
+        type=str,
+        default=None,
+        help="YouTube URL to adapt into a long-form explainer video",
     )
     longform_parser.add_argument(
         "--minutes", type=float, default=2.5, help="Target length in minutes (default 2.5)"
@@ -381,11 +387,30 @@ def cmd_edge_login(args: argparse.Namespace, config: Settings, state_manager: St
 
 def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
     """Render a long-form stick-figure video and print the result paths."""
-    # Imported here so the rest of the CLI still loads when Pillow is missing.
     from autoshorts.longform.render import render_longform
 
+    target_topic = args.topic or "science"
+    if getattr(args, "url", None):
+        try:
+            from autoshorts.metadata.extractor import MetadataExtractor
+            from autoshorts.transcript.fetcher import TranscriptFetcher
+
+            extractor = MetadataExtractor()
+            meta = extractor.extract(args.url)
+            title = meta.title if meta and meta.title else "YouTube Video"
+
+            fetcher = TranscriptFetcher(config=config)
+            transcript_res = fetcher.fetch(args.url)
+            summary_text = ""
+            if transcript_res and transcript_res.segments:
+                summary_text = " ".join(s.text for s in transcript_res.segments[:60])
+            target_topic = f"{title}: {summary_text[:350]}" if summary_text else title
+        except Exception as e:
+            logger.warning("Could not extract YouTube transcript for longform: %s", e)
+            target_topic = target_topic or "science"
+
     try:
-        result = render_longform(args.topic, args.minutes, args.provider, config)
+        result = render_longform(target_topic, args.minutes, args.provider, config)
     except (ValueError, RuntimeError) as e:
         print(str(e), file=sys.stderr)
         return 1
