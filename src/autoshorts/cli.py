@@ -188,16 +188,19 @@ def cmd_run(args: argparse.Namespace, config: Settings, state_manager: StateMana
     print("\n" + "=" * 60)
     print("PIPELINE EXECUTION SUMMARY")
     print("=" * 60)
+    enc = sys.stdout.encoding or "utf-8"
     for j in jobs:
         print(f"Job ID: {j.id} | Status: {j.status.value}")
         if j.video_metadata:
-            print(f"  Title: {j.video_metadata.title}")
+            title_safe = j.video_metadata.title.encode(enc, errors="replace").decode(enc)
+            print(f"  Title: {title_safe}")
         if j.rendered_video_path:
             print(f"  Master MP4: {j.rendered_video_path}")
         if j.upload_result:
             print(f"  Uploaded URL: {j.upload_result.url} (Verified: {j.upload_result.verified})")
         if j.error_message:
-            print(f"  Error: {j.error_message}")
+            err_safe = str(j.error_message).encode(enc, errors="replace").decode(enc)
+            print(f"  Error: {err_safe}")
         print("-" * 60)
 
     failed_count = sum(1 for j in jobs if j.status == JobStatus.FAILED)

@@ -331,8 +331,9 @@ class SemIfDecider(Decider):
                 ClipSelection(
                     candidate=cand,
                     clip_index=i,
-                    target_duration=min(
-                        cand.duration, float(self.settings.job_defaults.max_duration_seconds)
+                    target_duration=max(
+                        10.0,
+                        min(cand.duration, float(self.settings.job_defaults.max_duration_seconds)),
                     ),
                     background_style=bg_style,
                     hook_text=hook_text,
