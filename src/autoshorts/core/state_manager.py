@@ -400,6 +400,27 @@ class StateManager:
                     )
                     reconciled += 1
 
+                # A queue row left UPLOADING was mid-upload when the process died. It is not
+                # re-queued: the video may already be live, and a retry would upload a duplicate.
+                # Mark it FAILED so it is visible for a manual check against YouTube.
+                stranded_slots = conn.execute(
+                    "SELECT job_id FROM scheduler_queue WHERE status = 'UPLOADING';"
+                ).fetchall()
+                for slot_row in stranded_slots:
+                    slot_job_id = slot_row["job_id"]
+                    if is_job_active is not None:
+                        try:
+                            active = bool(is_job_active(slot_job_id))
+                        except Exception:
+                            active = True
+                        if active:
+                            continue
+                    conn.execute(
+                        "UPDATE scheduler_queue SET status = 'FAILED' "
+                        "WHERE job_id = ? AND status = 'UPLOADING';",
+                        (slot_job_id,),
+                    )
+
                 conn.execute("COMMIT;")
                 return reconciled
             except Exception as e:

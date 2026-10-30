@@ -698,3 +698,42 @@ def test_channel_profiles_persistence(tmp_path: Path):
     assert match["name"] == "Podcast Highlights Official"
     assert match["handle"] == "@PodcastHighlightsHQ"
     assert match["default_category_id"] == "27"
+
+
+def test_reconcile_marks_stranded_upload_slots_failed_not_requeued(tmp_path: Path):
+    """A queue row left UPLOADING by a crash becomes FAILED so it is never re-uploaded blindly."""
+    sm = StateManager(tmp_path / "stranded_slots.db")
+
+    stranded = Job(id="job_stranded_up", source_url="https://youtu.be/stranded", status=JobStatus.UPLOADING)
+    sm.save_job(stranded)
+    sm.enqueue_for_upload(
+        job_id="job_stranded_up",
+        video_path="output/stranded.mp4",
+        title="Stranded",
+        description="Stranded",
+        scheduled_time=datetime(2026, 10, 29, 8, 0, tzinfo=UTC),
+        privacy_status="public",
+    )
+    assert sm.claim_scheduled_slot("job_stranded_up")
+
+    live = Job(id="job_live_up", source_url="https://youtu.be/live", status=JobStatus.UPLOADING)
+    sm.save_job(live)
+    sm.enqueue_for_upload(
+        job_id="job_live_up",
+        video_path="output/live.mp4",
+        title="Live",
+        description="Live",
+        scheduled_time=datetime(2026, 10, 29, 8, 5, tzinfo=UTC),
+        privacy_status="public",
+    )
+    assert sm.claim_scheduled_slot("job_live_up")
+
+    # The second job is still being uploaded by a live process, so it must be left alone.
+    sm.reconcile_stranded_jobs(is_job_active=lambda job_id: job_id == "job_live_up")
+
+    conn = sm._get_connection()
+    statuses = dict(conn.execute("SELECT job_id, status FROM scheduler_queue").fetchall())
+    conn.close()
+    assert statuses["job_stranded_up"] == "FAILED"
+    assert statuses["job_live_up"] == "UPLOADING"
+    assert sm.get_job("job_stranded_up").status == JobStatus.FAILED
