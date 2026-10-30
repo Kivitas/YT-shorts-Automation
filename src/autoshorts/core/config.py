@@ -265,9 +265,9 @@ class CleanupConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = True
-    use_recycle_bin: bool = True
-    keep_master_mp4: bool = True
-    keep_final_days: int = Field(default=1, ge=0)
+    use_recycle_bin: bool = False
+    keep_master_mp4: bool = False
+    keep_final_days: int = Field(default=0, ge=0)
     purge_intermediate_work: bool = True
     dry_run: bool = False
 

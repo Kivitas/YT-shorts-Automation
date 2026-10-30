@@ -280,12 +280,33 @@ class FasterWhisperTranscriber:
     def __init__(
         self,
         model_name: str | None = None,
-        device: str = "cpu",
-        compute_type: str = "int8",
-        cpu_threads: int = 4,
+        device: str | None = None,
+        compute_type: str | None = None,
+        cpu_threads: int | None = None,
     ):
         settings = load_config()
         self.model_name = model_name or settings.media.whisper_model or "base.en"
+        
+        # Hardware auto-detection: CUDA GPU -> CPU multi-core
+        if device is None:
+            has_cuda = False
+            try:
+                import ctranslate2
+                has_cuda = ctranslate2.get_cuda_device_count() > 0
+            except Exception:
+                try:
+                    import torch
+                    has_cuda = torch.cuda.is_available()
+                except Exception:
+                    pass
+            device = "cuda" if has_cuda else "cpu"
+
+        if compute_type is None:
+            compute_type = "float16" if device == "cuda" else "int8"
+
+        if cpu_threads is None:
+            cpu_threads = max(1, (os.cpu_count() or 4) - 1) if device == "cpu" else 4
+
         self.device = device
         self.compute_type = compute_type
         self.cpu_threads = cpu_threads

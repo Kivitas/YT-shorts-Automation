@@ -239,7 +239,7 @@ class SafetyCleaner(Cleaner):
 
         eff_dry_run = dry_run if dry_run is not None else self.dry_run
         eff_keep_days = keep_final_days if keep_final_days is not None else self.keep_final_days
-        eff_keep_master = keep_master_mp4 if keep_master_mp4 is not None else self.keep_master_mp4
+        eff_keep_master = keep_master_mp4 if keep_master_mp4 is not None else (False if force else self.keep_master_mp4)
         eff_permanent = permanent if permanent is not None else self.permanent
 
         files_to_delete: list[Path] = []

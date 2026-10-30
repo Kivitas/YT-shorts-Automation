@@ -1766,11 +1766,29 @@ function closeStageModal(e) {
 // A line with " : " stays one unit (link + instructions); other lines split on commas/whitespace.
 function splitLinkUnits(text) {
   const units = [];
-  text.split("\n").map(l => l.trim()).filter(Boolean).forEach(line => {
-    if (line.includes(" : ")) {
+  if (!text) return units;
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const ytRegex = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?(?:youtube\.com\/(?:watch\?(?:[^&\s]+&)*v=|shorts\/|live\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/g;
+
+  lines.forEach(line => {
+    const matches = [...line.matchAll(ytRegex)];
+    if (matches.length === 0) return; // Skip non-URL lines (headers, instructions, hashtags)
+
+    if (matches.length === 1 && line.includes(" : ")) {
+      units.push(line);
+    } else if (matches.length === 1 && line.includes("|")) {
       units.push(line);
     } else {
-      line.split(/[\s,]+/).filter(Boolean).forEach(part => units.push(part));
+      const firstMatch = matches[0];
+      const preLabel = line.substring(0, firstMatch.index).trim();
+      matches.forEach(m => {
+        const canonical = `https://www.youtube.com/watch?v=${m[1]}`;
+        if (preLabel && !preLabel.startsWith("http")) {
+          units.push(`${canonical} | focus: ${preLabel}`);
+        } else {
+          units.push(canonical);
+        }
+      });
     }
   });
   return units;
@@ -1895,65 +1913,71 @@ async function submitJobs() {
   let acceptedCount = 0;
   let refusedCount = 0;
 
+  // Safeguard timeout to ensure button is never stuck on 'Submitting...'
+  const timeoutGuard = setTimeout(() => {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "⚡ Start Pipeline";
+    }
+  }, 12000);
+
   try {
-    // One request per link unit, sent sequentially.
-    for (const unit of units) {
-      const body = JSON.stringify(Object.assign({}, payload, { links: unit }));
-      let accepted = false;
-      let text = "link failed validation";
-      try {
-        let res = await fetch("/api/jobs/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: body,
-        });
-        if (res.status === 404) {
-          res = await fetch("/api/jobs", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: body,
-          });
-        }
-        let data = {};
-        try { data = await res.json(); } catch (e) { data = {}; }
-
-        const okFlag = data.ok !== undefined ? data.ok : data.success;
-        const count = Number(data.count) || 0;
-        if (res.ok && okFlag && count >= 1) {
-          accepted = true;
-          const firstJob = Array.isArray(data.jobs) && data.jobs.length ? data.jobs[0] : null;
-          text = (firstJob && firstJob.id) ? firstJob.id : "queued";
-        } else {
-          const detail = data.detail;
-          if (typeof detail === "string" && detail) {
-            text = detail;
-          } else if (detail && typeof detail === "object") {
-            text = JSON.stringify(detail);
-          }
-        }
-      } catch (err) {
-        text = "network error: " + err;
-      }
-
-      if (accepted) acceptedCount++;
-      else refusedCount++;
-      if (resultsBox) {
-        renderLinkResult(resultsBox, unit, accepted, text);
-      }
+    // Send all parsed link units together in one single batch request
+    const batchBody = JSON.stringify(Object.assign({}, payload, { links: units.join("\n") }));
+    let res = await fetch("/api/jobs/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: batchBody,
+    });
+    if (res.status === 404) {
+      res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: batchBody,
+      });
     }
 
-    // Clear the input only when every link was accepted, so refused lines can be fixed.
-    if (acceptedCount > 0 && refusedCount === 0) {
+    let data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+
+    const okFlag = data.ok !== undefined ? data.ok : (data.success !== undefined ? data.success : res.ok);
+    const jobsList = Array.isArray(data.jobs) ? data.jobs : [];
+    const count = Number(data.count) || jobsList.length;
+
+    if (res.ok && (okFlag || count > 0)) {
+      acceptedCount = count || units.length;
+      if (resultsBox) {
+        if (jobsList.length > 0) {
+          jobsList.forEach(j => {
+            renderLinkResult(resultsBox, j.source_url || j.id, true, `Job #${(j.id || "").slice(0, 8)} enqueued`);
+          });
+        } else {
+          units.forEach(u => {
+            renderLinkResult(resultsBox, u, true, "Enqueued to pipeline");
+          });
+        }
+      }
       document.getElementById("links-input").value = "";
       const previewContainer = document.getElementById("links-preview-container");
       if (previewContainer) previewContainer.style.display = "none";
-    }
-
-    if (acceptedCount > 0) {
       refreshJobs();
-      showToast("Submitted jobs to pipeline!");
+      showToast(`Submitted ${acceptedCount} job(s) to pipeline!`);
+    } else {
+      const errMsg = (data && (data.detail || data.error)) || "Batch submission failed";
+      const displayMsg = typeof errMsg === "object" ? JSON.stringify(errMsg) : String(errMsg);
+      if (resultsBox) {
+        renderLinkResult(resultsBox, "Batch Submission", false, displayMsg);
+      }
+      showToast("Submission issue: " + displayMsg);
     }
+  } catch (err) {
+    console.error("Batch submit error:", err);
+    if (resultsBox) {
+      renderLinkResult(resultsBox, "Network Error", false, String(err));
+    }
+    showToast("Network error: " + err);
   } finally {
+    clearTimeout(timeoutGuard);
     btn.disabled = false;
     btn.textContent = "⚡ Start Pipeline";
   }

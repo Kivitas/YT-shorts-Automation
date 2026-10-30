@@ -617,7 +617,7 @@ class SpreadScheduler:
             # Post-upload cleanup: delete video files from PC once verified
             if result.verified and self.cleaner:
                 try:
-                    self.cleaner.cleanup_job(job_id, verified=True, upload_result=result)
+                    self.cleaner.cleanup_job(job_id, verified=True, upload_result=result, keep_master_mp4=False)
                     job = self.state_manager.get_job(job_id)
                     if job and job.status == JobStatus.COMPLETED:
                         self.state_manager.update_job_status(job_id, JobStatus.CLEANED)

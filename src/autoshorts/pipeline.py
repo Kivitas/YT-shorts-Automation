@@ -2326,7 +2326,7 @@ class ShortsPipeline:
                 )
             elif self.cleaner and getattr(getattr(self.config, "cleanup", None), "enabled", True):
                 try:
-                    self.cleaner.cleanup_job(job.id, verified=result.verified, upload_result=result)
+                    self.cleaner.cleanup_job(job.id, verified=result.verified, upload_result=result, keep_master_mp4=False)
                     job.transition_to(JobStatus.CLEANED)
                     self.state_manager.save_job(job)
                     logger.info("Job %s: Post-upload cleanup completed.", job.id)

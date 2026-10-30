@@ -24,6 +24,11 @@ from autoshorts.core.exceptions import InvalidURLError
 # such as "dQw4w9WgXcQ\n" (from a percent-encoded query) through into the canonical URL.
 YOUTUBE_VIDEO_ID_REGEX = re.compile(r"\A[a-zA-Z0-9_-]{11}\Z")
 
+# Regex to match or find YouTube URLs embedded within text or with query params
+YOUTUBE_URL_FINDER_REGEX = re.compile(
+    r"(?:https?://)?(?:[a-zA-Z0-9-]+\.)?(?:youtube\.com/(?:watch\?(?:[^&\s]+&)*v=|shorts/|live/|embed/|v/)|youtu\.be/)([a-zA-Z0-9_-]{11})"
+)
+
 # Recognized YouTube domain host suffixes
 ALLOWED_YOUTUBE_HOSTS = {
     "youtube.com",
@@ -104,6 +109,11 @@ def extract_video_id(url_or_id: str) -> str:
     # Direct 11-char ID check
     if YOUTUBE_VIDEO_ID_REGEX.match(cleaned):
         return cleaned
+
+    # Direct regex match for any embedded YouTube URL
+    match = YOUTUBE_URL_FINDER_REGEX.search(cleaned)
+    if match:
+        return match.group(1)
 
     # Ensure URL has scheme for parsing if domain is provided
     if not cleaned.startswith(("http://", "https://")):
@@ -229,12 +239,27 @@ def parse_link_line(
     if not raw_line:
         raise InvalidURLError("Cannot parse empty line")
 
+    if " : " in raw_line and "|" not in raw_line:
+        parts = raw_line.split(" : ", 1)
+        raw_line = f"{parts[0].strip()} | focus: {parts[1].strip()}"
+
     # Split on pipe '|'
     tokens = [t.strip() for t in raw_line.split("|")]
     url_token = tokens[0]
     override_tokens = tokens[1:]
 
-    vid = extract_video_id(url_token)
+    prefix_label = None
+    vid_match = YOUTUBE_URL_FINDER_REGEX.search(url_token)
+    if vid_match:
+        vid = vid_match.group(1)
+        pre = url_token[:vid_match.start()].strip()
+        post = url_token[vid_match.end():].strip()
+        if pre and not pre.startswith(("http://", "https://")):
+            prefix_label = pre
+        if post and not post.startswith("?"):
+            override_tokens.append(post)
+    else:
+        vid = extract_video_id(url_token)
     canonical = f"https://www.youtube.com/watch?v={vid}"
 
     # Extract base defaults
@@ -341,6 +366,12 @@ def parse_link_line(
     if unhandled_instructions:
         combined_notes.extend(unhandled_instructions)
 
+    if prefix_label:
+        if not focus:
+            focus = prefix_label
+        elif prefix_label not in combined_notes:
+            combined_notes.insert(0, prefix_label)
+
     final_custom_instructions = " | ".join(combined_notes) if combined_notes else None
 
     return ParsedLink(
@@ -408,22 +439,61 @@ def parse_links_input(
 
     for line in raw_lines:
         line_clean = line.strip()
-        # Skip empty lines and comment lines
+        # Skip empty lines and comments
         if not line_clean or line_clean.startswith("#"):
             continue
 
-        parsed_link = parse_link_line(
-            line_clean,
-            defaults=defaults,
-            global_instructions=global_instructions,
-        )
+        # Extract hashtag lines or instruction lines that contain no URLs
+        url_matches = list(YOUTUBE_URL_FINDER_REGEX.finditer(line_clean))
+        if not url_matches:
+            # Check for hashtag tokens to merge into global instructions
+            tags = [t for t in line_clean.split() if t.startswith("#")]
+            if tags:
+                tag_str = " ".join(tags)
+                global_instructions = (
+                    f"{global_instructions} | tags: {tag_str}"
+                    if global_instructions
+                    else f"tags: {tag_str}"
+                )
+            continue
 
-        if dedupe:
-            if parsed_link.video_id in seen_ids:
+        if len(url_matches) == 1:
+            try:
+                parsed_link = parse_link_line(
+                    line_clean,
+                    defaults=defaults,
+                    global_instructions=global_instructions,
+                )
+                if dedupe:
+                    if parsed_link.video_id in seen_ids:
+                        continue
+                    seen_ids.add(parsed_link.video_id)
+                results.append(parsed_link)
+            except InvalidURLError:
                 continue
-            seen_ids.add(parsed_link.video_id)
+        else:
+            # Multiple YouTube URLs on a single line (e.g. 'HAIX https://... https://...')
+            pre_label = line_clean[:url_matches[0].start()].strip()
+            for m in url_matches:
+                vid = m.group(1)
+                canonical = f"https://www.youtube.com/watch?v={vid}"
+                sub_line = f"{canonical} | focus: {pre_label}" if pre_label else canonical
+                try:
+                    parsed_link = parse_link_line(
+                        sub_line,
+                        defaults=defaults,
+                        global_instructions=global_instructions,
+                    )
+                    if dedupe:
+                        if parsed_link.video_id in seen_ids:
+                            continue
+                        seen_ids.add(parsed_link.video_id)
+                    results.append(parsed_link)
+                except InvalidURLError:
+                    continue
 
-        results.append(parsed_link)
+    if not results:
+        raise InvalidURLError("No valid YouTube URLs found in input.")
 
     return results
 
@@ -431,6 +501,7 @@ def parse_links_input(
 __all__ = [
     "ALLOWED_YOUTUBE_HOSTS",
     "YOUTUBE_VIDEO_ID_REGEX",
+    "YOUTUBE_URL_FINDER_REGEX",
     "InvalidURLError",
     "ParsedLink",
     "extract_video_id",

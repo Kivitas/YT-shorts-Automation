@@ -139,9 +139,9 @@ upload:
 
 cleanup:
   enabled: true
-  use_recycle_bin: true            # Use send2trash
-  keep_master_mp4: true            # Retain output/ master MP4, purge work/ intermediate files
-  keep_final_days: 1               # Days a kept master MP4 stays in output/
+  use_recycle_bin: false           # Permanently delete to immediately free up local PC disk space
+  keep_master_mp4: false           # Purge local output/ master MP4 once successfully uploaded & verified
+  keep_final_days: 0               # 0 days retention
   purge_intermediate_work: true
   dry_run: false
 

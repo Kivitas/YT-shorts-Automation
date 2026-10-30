@@ -35,6 +35,7 @@ HW_ENCODERS: list[tuple[str, list[str], str]] = [
     ("hevc_videotoolbox", ["-q:v", "65"], "Apple VideoToolbox HEVC Hardware Encoder"),
     ("h264_videotoolbox", ["-q:v", "65"], "Apple VideoToolbox H.264 Hardware Encoder"),
     ("h264_qsv", ["-global_quality", "25", "-look_ahead", "0"], "Intel QuickSync Video (h264_qsv)"),
+    ("h264_amf", ["-usage", "transcoding", "-quality", "speed"], "AMD AMF H.264 Hardware Encoder"),
 ]
 _HW_CODECS = {codec for codec, _, _ in HW_ENCODERS}
 
@@ -51,16 +52,24 @@ class EncoderInfo:
 
     def get_ffmpeg_args(self) -> list[str]:
         """Return the FFmpeg command line arguments for video encoding."""
-        return ["-c:v", self.codec, *self.extra_args, "-pix_fmt", "yuv420p"]
+        return [
+            "-c:v",
+            self.codec,
+            *self.extra_args,
+            "-pix_fmt",
+            "yuv420p",
+            "-max_muxing_queue_size",
+            "1024",
+        ]
 
 
 # CPU fallback used when no hardware encoder verifies (or ffmpeg is unusable).
 DEFAULT_CPU_ENCODER = EncoderInfo(
     codec="libx264",
-    extra_args=["-preset", "veryfast", "-crf", "22", "-threads", "4"],
+    extra_args=["-preset", "veryfast", "-crf", "22", "-threads", "0"],
     is_hardware_accelerated=False,
     verified=False,
-    description="libx264 software encoder fallback (CPU)",
+    description="libx264 multi-core software encoder fallback (CPU)",
 )
 
 _PROBE_CACHE: dict[str, EncoderInfo] = {}
