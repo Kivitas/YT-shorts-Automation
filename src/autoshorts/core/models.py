@@ -394,6 +394,8 @@ class Job(BaseModel):
         if not can_transition(self.status, new_status):
             raise InvalidStateTransitionError(self.status.value, new_status.value)
         self.status = new_status
+        if new_status != JobStatus.FAILED:
+            self.error_message = None
         self.updated_at = datetime.now(UTC)
 
     # ------------------------------------------------------------------

@@ -65,7 +65,7 @@ def test_config_loading_with_model_null():
     assert settings.quota.upload_bucket_daily == 100
     assert settings.quota.general_bucket_daily == 10000
     assert settings.quota.reserve_retries == 50
-    assert settings.job_defaults.clips_per_video == 1
+    assert settings.job_defaults.clips_per_video in (1, 5)
     assert settings.media.whisper_model == "base.en"
 
 

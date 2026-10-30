@@ -602,7 +602,7 @@ function renderJobs(jobs) {
     }
 
     const stepperHtml = buildStepperHtml(job);
-    const errorHtml = job.error_message
+    const errorHtml = (job.status === 'FAILED' && job.error_message)
       ? `<div style="color: var(--accent-red); font-size: 0.75rem; margin-top: 0.35rem;">⚠️ ${escapeHtml(job.error_message)}</div>`
       : "";
 
