@@ -39,6 +39,7 @@ class QuotaTracker:
         """
         self.state_manager = state_manager
         self.clock = clock or (lambda: datetime.now(UTC))
+        self._api_exhausted_dates: set[str] = set()
 
         # Resolve quota config
         if quota_config is not None:
@@ -85,6 +86,19 @@ class QuotaTracker:
     def fallback_mode(self) -> Literal["queue_next_day", "studio", "local"]:
         """Configured fallback behavior upon quota exhaustion."""
         return self.quota_config.exhaustion_fallback
+
+    def mark_upload_exhausted(self, date_pt: str | None = None) -> None:
+        """Flag quota or channel limit exhausted without corrupting actual spend counters."""
+        target_date = date_pt or self.get_current_pt_date()
+        self._api_exhausted_dates.add(target_date)
+        logger.warning(
+            f"Upload quota or channel daily limit flagged as exhausted for {target_date}."
+        )
+
+    def reset_exhaustion_flag(self, date_pt: str | None = None) -> None:
+        """Clear the exhaustion flag (e.g. for testing or manual user reset)."""
+        target_date = date_pt or self.get_current_pt_date()
+        self._api_exhausted_dates.discard(target_date)
 
     def get_current_pt_date(self) -> str:
         """Return the current Pacific Time date string (YYYY-MM-DD) based on clock."""
@@ -135,6 +149,12 @@ class QuotaTracker:
             True if upload is permitted, False otherwise.
         """
         target_date = date_pt or self.get_current_pt_date()
+        if target_date in self._api_exhausted_dates:
+            logger.warning(
+                f"Upload quota / channel limit is currently marked exhausted for PT date {target_date}."
+            )
+            return False
+
         upload_spend = self.get_upload_spend(target_date)
         completed_today = self.get_completed_uploads_today(target_date)
 

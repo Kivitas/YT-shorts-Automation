@@ -328,30 +328,22 @@ class YouTubeApiUploader:
     # -------------------------------------------------------------------------
 
     def _mark_upload_quota_exhausted(self) -> None:
-        """Record a 403 quotaExceeded in the tracker by consuming today's remaining upload budget.
+        """Record quota exhaustion in the tracker without corrupting actual spend counters.
 
-        This makes can_upload() / is_throttled() report the exhaustion, so the scheduler
-        stops sending uploads and the configured fallback takes over. Also marks general quota
-        exhausted when Google returns a project-wide 403 quotaExceeded.
+        This makes can_upload() / is_throttled() report the exhaustion cleanly, so the scheduler
+        stops sending uploads and the configured fallback takes over.
         """
         if self.quota_tracker is None:
             return
         try:
-            remaining = int(self.quota_tracker.get_upload_remaining())
-            if remaining > 0:
-                self.quota_tracker.record_upload(remaining)
+            if hasattr(self.quota_tracker, "mark_upload_exhausted"):
+                self.quota_tracker.mark_upload_exhausted()
+            else:
+                remaining = int(self.quota_tracker.get_upload_remaining())
+                if remaining > 0:
+                    self.quota_tracker.record_upload(remaining)
         except Exception as e:
             logger.warning("Could not record upload quota exhaustion in tracker: %s", e)
-
-        try:
-            if hasattr(self.quota_tracker, "get_general_remaining") and hasattr(
-                self.quota_tracker, "record_general"
-            ):
-                gen_rem = int(self.quota_tracker.get_general_remaining())
-                if gen_rem > 0:
-                    self.quota_tracker.record_general(gen_rem)
-        except Exception as e:
-            logger.warning("Could not record general quota exhaustion in tracker: %s", e)
 
     def add_to_playlist(self, video_id: str, playlist_id: str) -> bool:
         """Add an uploaded video to a YouTube playlist via playlistItems.insert.
