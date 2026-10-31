@@ -1503,6 +1503,15 @@ class ShortsPipeline:
         """
         raw = Path(job.raw_video_path) if job.raw_video_path else None
         if not _is_nonempty_file(raw):
+            if job.selected_clips:
+                logger.info("Job %s: section cut missing from disk (%s); re-downloading section...", job.id, raw)
+                try:
+                    self._run_download_stage(job)
+                    raw = Path(job.raw_video_path) if job.raw_video_path else None
+                except Exception as dl_err:
+                    logger.warning("Job %s: automatic re-download attempt failed: %s", job.id, dl_err)
+
+        if not _is_nonempty_file(raw):
             raise AutoShortsError(
                 f"Job {job.id}: downloaded section is missing or empty ({raw}); "
                 "re-run the download stage before compositing."
