@@ -6,27 +6,36 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
-    name: Test & Lint (${{ matrix.os }})
+    name: Test & Lint (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Create virtual environment
-        run: uv venv --python 3.12
+        run: uv venv --python ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: uv pip install -e ".[dev]"
@@ -37,5 +46,32 @@ jobs:
       - name: Check code formatting
         run: uv run ruff format --check src/ tests/
 
+      - name: Audit dependencies with pip-audit
+        run: uv run --with pip-audit pip-audit
+
       - name: Run test suite
         run: uv run pytest -q
+
+  remotion:
+    name: Remotion Type-Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: remotion
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check with tsc
+        run: npm run typecheck

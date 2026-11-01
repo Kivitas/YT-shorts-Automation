@@ -25,6 +25,7 @@ client_secret*.json
 credentials*.json
 
 # Runtime Data & Storage
+state.db
 data/
 work/
 output/
@@ -67,6 +68,7 @@ assets/sfx/*
 *.swp
 *.swo
 .omc/
+.freebuff/
 Thumbs.db
 Desktop.ini
 .DS_Store

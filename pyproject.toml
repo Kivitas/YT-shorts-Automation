@@ -40,12 +40,9 @@ dependencies = [
 local-llm = [
     "llama-cpp-python>=0.3.1",
 ]
-whisper = [
-    "faster-whisper>=1.0.3",
-]
-browser = [
-    "playwright>=1.49.0",
-]
+# Core dependencies already include faster-whisper and playwright; extras kept empty to prevent conflicts
+whisper = []
+browser = []
 dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
@@ -79,7 +76,9 @@ target-version = "py312"
 extend-exclude = ["third_party"]  # vendored ffmpeg-skill scripts, MIT (see third_party/ffmpeg_skill/THIRD_PARTY.md)
 
 [tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
 ignore = [
+    "E501",     # Line too long (formatter owns line wrapping)
     "BLE001",   # Blind exception catches at pipeline, worker, CLI, and cleanup boundaries
     "S110",     # Try-except-pass blocks (intentional suppression in fallbacks and cleanups)
     "ASYNC251", # Sleep in background worker/task
@@ -87,4 +86,12 @@ ignore = [
     "TRY004",   # Prefer TypeError for type check
     "SIM102",   # Collapsible if statements
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Test suite alias modules re-export complete test suites per INTERFACES.md
+"tests/test_decider.py" = ["F403"]
+"tests/test_ingestion_slicer.py" = ["F403"]
+"tests/test_provider_abstraction.py" = ["F403"]
+"tests/test_semif_math.py" = ["F403"]
+
 
