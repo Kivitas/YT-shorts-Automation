@@ -286,16 +286,18 @@ class FasterWhisperTranscriber:
     ):
         settings = load_config()
         self.model_name = model_name or settings.media.whisper_model or "base.en"
-        
+
         # Hardware auto-detection: CUDA GPU -> CPU multi-core
         if device is None:
             has_cuda = False
             try:
                 import ctranslate2
+
                 has_cuda = ctranslate2.get_cuda_device_count() > 0
             except Exception:
                 try:
                     import torch
+
                     has_cuda = torch.cuda.is_available()
                 except Exception:
                     pass
@@ -399,7 +401,7 @@ class FasterWhisperTranscriber:
                 )
                 for tag, i1, i2, j1, j2 in matcher.get_opcodes():
                     if tag == "equal" and (i2 - i1 == j2 - j1):
-                        for idx_w, idx_r in zip(range(i1, i2), range(j1, j2)):
+                        for idx_w, idx_r in zip(range(i1, i2), range(j1, j2), strict=False):
                             words[idx_w]["word"] = ref_tokens[idx_r]
         return words
 
@@ -1043,6 +1045,7 @@ class FFmpegCompositor:
 
         # Hard cap at 60s and shortest stream
         cmd.extend(["-t", f"{target_duration:.3f}", "-shortest"])
+        cmd.extend(["-max_muxing_queue_size", "1024"])
         # Move the moov atom to the front so the Short starts playing before full download
         cmd.extend(["-movflags", "+faststart"])
 

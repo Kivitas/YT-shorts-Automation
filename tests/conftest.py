@@ -85,6 +85,9 @@ def _mock_pipeline_network_for_tests(monkeypatch: pytest.MonkeyPatch):
             kwargs["llm_provider"] = mock_llm
         orig_init(self, *args, **kwargs)
 
+        if "config" not in kwargs or kwargs.get("config") is None:
+            self.config.job_defaults.auto_approve = False
+
     monkeypatch.setattr(ShortsPipeline, "__init__", wrapped_init)
 
 

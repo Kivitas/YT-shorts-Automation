@@ -261,7 +261,7 @@ class AnalyticsEngine:
                 resp = req.execute()
                 headers = [h.get("name") for h in resp.get("columnHeaders", [])]
                 for row in resp.get("rows", []):
-                    row_dict = dict(zip(headers, row))
+                    row_dict = dict(zip(headers, row, strict=False))
                     vid = row_dict.get("video")
                     if vid:
                         results[vid] = {
@@ -778,8 +778,6 @@ class AnalyticsEngine:
         from autoshorts.analytics.attribution import PerformanceAttributionEngine
 
         records = self.state_manager.list_video_analytics(limit=500)
-        if not records:
-            records = self.seed_demo_analytics_if_empty()
         attribution_engine = PerformanceAttributionEngine(self.state_manager)
         winning_recipe = attribution_engine.get_winning_recipe()
 
@@ -844,8 +842,6 @@ class AnalyticsEngine:
     def get_videos(self, limit: int = 50) -> list[VideoAnalyticsRecord]:
         """Return recorded video analytics records."""
         records = self.state_manager.list_video_analytics(limit=limit)
-        if not records:
-            records = self.seed_demo_analytics_if_empty()[:limit]
         res: list[VideoAnalyticsRecord] = []
         for r in records:
             try:

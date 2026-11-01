@@ -167,8 +167,8 @@ def test_quota_exceeded_is_recorded_and_raised_without_retry(
 
     assert mock_sleep.call_count == 0
     # The exhaustion is recorded so the scheduler's throttle and fallback see it.
-    assert tracker.get_upload_spend() == tracker.upload_bucket_daily
     assert tracker.can_upload() is False
+    assert tracker.get_current_pt_date() in tracker._api_exhausted_dates
 
 
 def test_user_rate_limit_is_retried_not_treated_as_quota(

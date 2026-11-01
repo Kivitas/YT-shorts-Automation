@@ -449,3 +449,75 @@ def test_record_diagnostic_accepts_section_as_a_data_key():
     job = Job(source_url="https://www.youtube.com/watch?v=aqz-KE-bpKQ")
     job.record_diagnostic("download", section="*00:01.000-00:50.000", mode="yt_dlp")
     assert job.diagnostics["download"]["section"] == "*00:01.000-00:50.000"
+
+
+def test_pipeline_monkeypatch_generate_candidate_windows_and_bg(
+    env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify monkeypatching autoshorts.pipeline.* (generate_candidate_windows, select_gameplay_background, _is_nonempty_file) takes effect."""
+    import json
+
+    import autoshorts.pipeline as pipeline_mod
+    from autoshorts.core.models import ClipCandidate
+
+    # 1. Test generate_candidate_windows patch in _run_slicing_stage
+    slicer_called = []
+
+    def fake_slicer(**kwargs):
+        slicer_called.append(kwargs)
+        return [
+            ClipCandidate(
+                start=0.0,
+                end=15.0,
+                text="monkeypatched candidate window",
+                hook_curiosity_score=9.8,
+            )
+        ]
+
+    monkeypatch.setattr("autoshorts.pipeline.generate_candidate_windows", fake_slicer)
+
+    job = Job(
+        id="job_slice_patch_test",
+        source_url=SOURCE,
+        status=JobStatus.TRANSCRIBED,
+    )
+    env.state.save_job(job)
+
+    # Provide cached transcript
+    job_dir = env.work / job.id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "transcript.json").write_text(
+        json.dumps([{"start": 0.0, "end": 10.0, "text": "hello"}]),
+        encoding="utf-8",
+    )
+
+    env.pipe._run_slicing_stage(job)
+    assert len(slicer_called) == 1
+    assert job.status == JobStatus.WINDOWS_SLICED
+    assert len(job.candidate_windows) == 1
+    assert job.candidate_windows[0].text == "monkeypatched candidate window"
+
+    # 2. Test select_gameplay_background patch
+    bg_called = []
+    fake_bg_file = env.tmp / "fake_bg.mp4"
+    fake_bg_file.write_bytes(b"bg bytes")
+
+    def fake_bg(category=None):
+        bg_called.append(category)
+        return fake_bg_file, 0.0
+
+    monkeypatch.setattr("autoshorts.pipeline.select_gameplay_background", fake_bg)
+    res_bg, offset = pipeline_mod.select_gameplay_background(category="subway")
+    assert res_bg == fake_bg_file
+    assert bg_called == ["subway"]
+
+    # 3. Test _is_nonempty_file patch
+    monkeypatch.setattr("autoshorts.pipeline._is_nonempty_file", lambda path: False)
+    check_job = Job(
+        id="job_nonempty_patch", source_url=SOURCE, status=JobStatus.SUBTITLES_GENERATED
+    )
+    raw_path = _write(env.work / check_job.id / "raw.mp4")
+    check_job.raw_video_path = str(raw_path)
+
+    with pytest.raises(AutoShortsError, match="downloaded section is missing or empty"):
+        env.pipe._validate_compositing_inputs(check_job)

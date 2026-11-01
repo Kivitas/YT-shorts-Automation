@@ -110,11 +110,6 @@ def extract_video_id(url_or_id: str) -> str:
     if YOUTUBE_VIDEO_ID_REGEX.match(cleaned):
         return cleaned
 
-    # Direct regex match for any embedded YouTube URL
-    match = YOUTUBE_URL_FINDER_REGEX.search(cleaned)
-    if match:
-        return match.group(1)
-
     # Ensure URL has scheme for parsing if domain is provided
     if not cleaned.startswith(("http://", "https://")):
         cleaned = "https://" + cleaned
@@ -252,8 +247,8 @@ def parse_link_line(
     vid_match = YOUTUBE_URL_FINDER_REGEX.search(url_token)
     if vid_match:
         vid = vid_match.group(1)
-        pre = url_token[:vid_match.start()].strip()
-        post = url_token[vid_match.end():].strip()
+        pre = url_token[: vid_match.start()].strip()
+        post = url_token[vid_match.end() :].strip()
         if pre and not pre.startswith(("http://", "https://")):
             prefix_label = pre
         if post and not post.startswith("?"):
@@ -473,7 +468,7 @@ def parse_links_input(
                 continue
         else:
             # Multiple YouTube URLs on a single line (e.g. 'HAIX https://... https://...')
-            pre_label = line_clean[:url_matches[0].start()].strip()
+            pre_label = line_clean[: url_matches[0].start()].strip()
             for m in url_matches:
                 vid = m.group(1)
                 canonical = f"https://www.youtube.com/watch?v={vid}"
@@ -500,8 +495,8 @@ def parse_links_input(
 
 __all__ = [
     "ALLOWED_YOUTUBE_HOSTS",
-    "YOUTUBE_VIDEO_ID_REGEX",
     "YOUTUBE_URL_FINDER_REGEX",
+    "YOUTUBE_VIDEO_ID_REGEX",
     "InvalidURLError",
     "ParsedLink",
     "extract_video_id",

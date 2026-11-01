@@ -1077,6 +1077,7 @@ def test_studio_publish_click_failure_raises(dummy_video: Path):
 
 def test_youtube_api_quota_exhausted_error_resolves_upload_bucket_daily(dummy_video: Path):
     from autoshorts.core.exceptions import QuotaExhaustedError
+
     """Verify line 612 fallback prevents AttributeError when daily_upload_budget is absent."""
     tracker = MagicMock()
     tracker.can_upload.return_value = False
@@ -1097,18 +1098,22 @@ def test_youtube_api_quota_exhausted_error_resolves_upload_bucket_daily(dummy_vi
     assert exc_info.value.bucket == "upload"
 
 
-def test_mark_upload_quota_exhausted_also_exhausts_general_quota(state_mgr: StateManager):
-    """Verify _mark_upload_quota_exhausted consumes both upload and general remaining quotas."""
+def test_mark_upload_quota_exhausted_sets_exhaustion_flag(state_mgr: StateManager):
+    """Verify _mark_upload_quota_exhausted marks upload exhausted without corrupting spend counters."""
     tracker = QuotaTracker(state_mgr)
     uploader = YouTubeApiUploader(quota_tracker=tracker)
 
-    assert tracker.get_upload_remaining() > 0
-    assert tracker.get_general_remaining() > 0
+    assert tracker.can_upload() is True
+    initial_upload_spend = tracker.get_upload_spend()
+    initial_general_spend = tracker.get_general_spend()
 
     uploader._mark_upload_quota_exhausted()
 
-    assert tracker.get_upload_remaining() == 0
-    assert tracker.get_general_remaining() == 0
+    assert tracker.can_upload() is False
+    assert tracker.get_current_pt_date() in tracker._api_exhausted_dates
+    # Spend counters should not be artificially inflated
+    assert tracker.get_upload_spend() == initial_upload_spend
+    assert tracker.get_general_spend() == initial_general_spend
 
 
 def test_youtube_api_verify_skips_when_can_verify_is_false():
@@ -1262,7 +1267,9 @@ def test_run_youtube_oauth_flow_default_scopes(tmp_path: Path):
     client_secret.write_text('{"installed": {"client_id": "test", "client_secret": "test"}}')
     token_path = tmp_path / "token.json"
 
-    with patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file") as mock_flow_cls:
+    with patch(
+        "google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file"
+    ) as mock_flow_cls:
         mock_flow = MagicMock()
         mock_creds = MagicMock()
         mock_creds.to_json.return_value = '{"token": "test"}'
@@ -1271,7 +1278,9 @@ def test_run_youtube_oauth_flow_default_scopes(tmp_path: Path):
 
         run_youtube_oauth_flow(client_secret, token_path)
 
-        called_scopes = mock_flow_cls.call_args.kwargs.get("scopes") or mock_flow_cls.call_args[1].get("scopes")
+        called_scopes = mock_flow_cls.call_args.kwargs.get("scopes") or mock_flow_cls.call_args[
+            1
+        ].get("scopes")
         assert "https://www.googleapis.com/auth/youtube" in called_scopes
         assert "https://www.googleapis.com/auth/youtube.force-ssl" in called_scopes
         assert "https://www.googleapis.com/auth/yt-analytics.readonly" in called_scopes

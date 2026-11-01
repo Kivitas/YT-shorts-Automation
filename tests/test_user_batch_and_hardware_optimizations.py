@@ -1,9 +1,8 @@
-import pytest
 from pathlib import Path
-from autoshorts.discovery.url_validator import parse_links_input
+
 from autoshorts.cleanup.safety_cleaner import SafetyCleaner
-from autoshorts.core.config import Settings
 from autoshorts.core.models import UploadResult
+from autoshorts.discovery.url_validator import parse_links_input
 
 USER_SAMPLE_INPUT = """
 DIRECT YOUTUBE VIDEO LINKS
@@ -98,3 +97,19 @@ def test_post_upload_deletes_master_mp4(tmp_path: Path):
     assert not preview_mp4.exists(), "Preview MP4 was not deleted after upload verification"
     assert not (job_work / "test_audio.wav").exists(), "Work audio file was not deleted"
     assert len(deleted) >= 3
+
+
+def test_clip_selection_short_duration_valid():
+    """Verify that short clips under 10 seconds (e.g. 9.88s) do not fail Pydantic validation."""
+    from autoshorts.core.models import ClipCandidate, ClipSelection
+
+    cand = ClipCandidate(start=1.68, end=11.56, text="Short clip text")
+    assert round(cand.duration, 2) == 9.88
+
+    # Should validate without raising ValidationError for duration < 10.0
+    selection = ClipSelection(
+        candidate=cand,
+        clip_index=0,
+        target_duration=cand.duration,
+    )
+    assert selection.target_duration == 9.88

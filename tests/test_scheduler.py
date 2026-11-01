@@ -358,7 +358,9 @@ def test_scheduler_verified_upload_triggers_cleaner(state_mgr: StateManager):
 
     res = scheduler.upload_now(job_id)
     assert res.verified is True
-    mock_cleaner.cleanup_job.assert_called_once_with(job_id, verified=True, upload_result=res)
+    mock_cleaner.cleanup_job.assert_called_once_with(
+        job_id, verified=True, upload_result=res, keep_master_mp4=False
+    )
 
     updated_job = state_mgr.get_job(job_id)
     assert updated_job is not None
@@ -623,7 +625,9 @@ def test_upload_limit_keeps_slot_queued_and_job_not_failed(state_mgr: StateManag
     )
 
     job_id = "job_upload_limit"
-    state_mgr.save_job(Job(id=job_id, source_url="https://youtube.com/watch?v=limit", status=JobStatus.SCHEDULED))
+    state_mgr.save_job(
+        Job(id=job_id, source_url="https://youtube.com/watch?v=limit", status=JobStatus.SCHEDULED)
+    )
     scheduler.enqueue(
         job_id=job_id,
         video_path="output/master.mp4",

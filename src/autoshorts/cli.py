@@ -154,8 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     longform_parser.add_argument(
         "--topic",
+        type=str,
         default="science",
-        help="Topic for the long-form video (preset or custom premise)",
+        help="Topic for the long-form video",
     )
     longform_parser.add_argument(
         "--url",
@@ -172,6 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["api", "local"],
         default="api",
         help="Script and voice provider (default api)",
+    )
+    longform_parser.add_argument(
+        "--publish",
+        action="store_true",
+        default=False,
+        help="Upload the rendered long-form video to YouTube after rendering",
     )
 
     return parser
@@ -419,6 +426,18 @@ def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: Stat
     print(f"Video: {result.video_path}")
     print(f"Thumbnail: {result.thumbnail_path}")
     print(f"Duration: {result.duration:.1f}s")
+
+    if getattr(args, "publish", False):
+        try:
+            from autoshorts.longform.publish import publish_longform
+
+            print("Uploading long-form video to YouTube...")
+            yt_url = publish_longform(result, config=config, state_manager=state_manager)
+            print(f"Published to YouTube: {yt_url}")
+        except Exception as p_err:
+            print(f"Failed to upload long-form video: {p_err}", file=sys.stderr)
+            return 1
+
     return 0
 
 

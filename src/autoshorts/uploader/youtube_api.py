@@ -338,10 +338,16 @@ class YouTubeApiUploader:
         try:
             if hasattr(self.quota_tracker, "mark_upload_exhausted"):
                 self.quota_tracker.mark_upload_exhausted()
-            else:
-                remaining = int(self.quota_tracker.get_upload_remaining())
+            elif hasattr(self.quota_tracker, "record_upload"):
+                remaining = (
+                    int(self.quota_tracker.get_upload_remaining())
+                    if hasattr(self.quota_tracker, "get_upload_remaining")
+                    else 1
+                )
                 if remaining > 0:
                     self.quota_tracker.record_upload(remaining)
+                else:
+                    self.quota_tracker.record_upload(1)
         except Exception as e:
             logger.warning("Could not record upload quota exhaustion in tracker: %s", e)
 

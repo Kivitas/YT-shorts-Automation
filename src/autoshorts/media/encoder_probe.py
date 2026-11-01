@@ -52,15 +52,7 @@ class EncoderInfo:
 
     def get_ffmpeg_args(self) -> list[str]:
         """Return the FFmpeg command line arguments for video encoding."""
-        return [
-            "-c:v",
-            self.codec,
-            *self.extra_args,
-            "-pix_fmt",
-            "yuv420p",
-            "-max_muxing_queue_size",
-            "1024",
-        ]
+        return ["-c:v", self.codec, *self.extra_args, "-pix_fmt", "yuv420p"]
 
 
 # CPU fallback used when no hardware encoder verifies (or ffmpeg is unusable).

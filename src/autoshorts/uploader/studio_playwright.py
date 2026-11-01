@@ -750,12 +750,16 @@ class PlaywrightStudioUploader:
                         toggle_btn = page.locator(
                             "#toggle-button, ytcp-button#toggle-button, button:has-text('Show more')"
                         ).first
-                        if hasattr(toggle_btn, "is_visible") and toggle_btn.is_visible(timeout=1500):
+                        if hasattr(toggle_btn, "is_visible") and toggle_btn.is_visible(
+                            timeout=1500
+                        ):
                             toggle_btn.click()
                             wait_for_idle(page, 400)
 
                         tags_input = page.locator("#tags-container input#text-input").first
-                        if hasattr(tags_input, "is_visible") and tags_input.is_visible(timeout=3000):
+                        if hasattr(tags_input, "is_visible") and tags_input.is_visible(
+                            timeout=3000
+                        ):
                             tags_text = ",".join(str(t) for t in effective_tags if t)
                             tags_input.fill(tags_text)
                             if hasattr(page, "keyboard") and hasattr(page.keyboard, "press"):

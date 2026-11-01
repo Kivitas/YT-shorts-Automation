@@ -7,14 +7,14 @@ Video Metadata, Upload Results, and the JobStatus state machine per PLAN.md sect
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Lifecycle state machine for a video clipping job (PLAN.md section 4.3)."""
 
     QUEUED = "QUEUED"
@@ -145,7 +145,7 @@ class ClipSelection(BaseModel):
 
     candidate: ClipCandidate = Field(..., description="Underlying candidate window")
     clip_index: int = Field(default=0, ge=0, description="Index of this clip for the source video")
-    target_duration: float = Field(default=45.0, ge=10.0, le=60.0)
+    target_duration: float = Field(default=45.0, ge=1.0, le=60.0)
     background_style: str = Field(default="minecraft", description="Selected background theme")
     hook_text: str = Field(default="", description="First 3-second hook question/card")
     title: str = Field(default="", description="Recommended Shorts title with hashtag")

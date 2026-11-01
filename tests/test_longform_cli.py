@@ -37,11 +37,10 @@ def test_parser_accepts_all_options() -> None:
     assert args.provider == "local"
 
 
-def test_parser_rejects_unknown_topic(capsys: pytest.CaptureFixture[str]) -> None:
+def test_parser_accepts_custom_topic() -> None:
     parser = cli.build_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(["longform", "--topic", "cooking"])
-    assert "invalid choice" in capsys.readouterr().err
+    args = parser.parse_args(["longform", "--topic", "cooking"])
+    assert args.topic == "cooking"
 
 
 def test_cmd_longform_returns_1_on_value_error(
