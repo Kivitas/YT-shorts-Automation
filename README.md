@@ -323,7 +323,7 @@ Long-Form YouTube URL / Topic Prompt
    - Mid-flight failover catches `403 QuotaExceeded` and automatically deploys headless Microsoft Edge browser automation (`msedge`) to complete uploads with 0 quota cost.
 4. **Hardware Optimized for Consumer Windows PCs**:
    - 100% executable on consumer multi-core CPUs with integrated Intel UHD / Iris Xe Graphics.
-   - Bounded parallelism: parallel jobs default to `AUTOSHORTS_CONCURRENCY=3` (render semaphore in `pipeline.py` and `ParallelJobExecutor`), overridable via the environment variable, to balance throughput against CPU and memory use.
+   - Bounded parallelism: parallel jobs default to `AUTOSHORTS_CONCURRENCY=3` (render semaphore in `src/autoshorts/pipeline/` and `ParallelJobExecutor`), overridable via the environment variable, to balance throughput against CPU and memory use.
 
 ---
 
