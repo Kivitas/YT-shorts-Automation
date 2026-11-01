@@ -13,15 +13,18 @@ import gc
 import logging
 import os
 import shutil
+import stat
+import sys
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from autoshorts.core.config import CleanupConfig, Settings
+from autoshorts.core.config import CleanupConfig, RetentionConfig, Settings
 from autoshorts.core.contracts import Cleaner
 from autoshorts.core.exceptions import CleanupError, PathSecurityError
+from autoshorts.core.job_lock import JobLockedError, job_lock
 from autoshorts.core.models import JobStatus, UploadResult
 from autoshorts.core.paths import (
     ALLOWED_CLEANUP_ROOTS,
@@ -64,6 +67,55 @@ def _resolve_send2trash() -> Any | None:
         return None
 
 
+def _handle_remove_readonly(func: Any, path: str, exc: Any) -> None:
+    """Clear the read-only bit and retry removal on Windows."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+    except OSError:
+        pass
+    func(path)
+
+
+def is_job_locked(target_dir: Path, job_id: str | None = None) -> bool:
+    """Check if a job directory is currently locked by a live process."""
+    jid = job_id or target_dir.name
+    candidate_dirs: list[Path] = [target_dir]
+    if target_dir.parent != target_dir:
+        candidate_dirs.append(target_dir.parent)
+
+    for c_dir in candidate_dirs:
+        lock_file = c_dir / f".{jid}.lock"
+        if lock_file.exists():
+            try:
+                with job_lock(c_dir, jid):
+                    pass
+            except JobLockedError:
+                return True
+            except OSError:
+                return True
+    return False
+
+
+def _calculate_dir_size(path: Path) -> int:
+    """Recursively calculate the total byte size of files within path."""
+    total = 0
+    try:
+        if path.is_file() or path.is_symlink():
+            return path.stat().st_size
+        for root, _, files in os.walk(path, followlinks=False):
+            root_path = Path(root)
+            for f in files:
+                try:
+                    fp = root_path / f
+                    if not fp.is_symlink():
+                        total += fp.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
 class SafetyCleaner(Cleaner):
     """Path-guarded transactional cleaner implementing contracts.Cleaner."""
 
@@ -81,6 +133,7 @@ class SafetyCleaner(Cleaner):
         allowed_roots: Sequence[Path | str] | None = None,
         state_manager: Any | None = None,
         backoff_delays: tuple[float, ...] = (0.5, 1.5, 3.0),
+        retention_config: RetentionConfig | None = None,
     ) -> None:
         """Initialize SafetyCleaner with configuration and safety boundaries.
 
@@ -106,12 +159,19 @@ class SafetyCleaner(Cleaner):
             self.keep_master_mp4 = cleanup_cfg.keep_master_mp4
             self.purge_intermediate_work = cleanup_cfg.purge_intermediate_work
             self.keep_final_days = getattr(cleanup_cfg, "keep_final_days", keep_final_days)
+            if isinstance(config, Settings):
+                self.retention_config = getattr(config, "retention", RetentionConfig())
+            elif isinstance(config, RetentionConfig):
+                self.retention_config = config
+            else:
+                self.retention_config = retention_config or RetentionConfig()
         else:
             self.use_recycle_bin = use_recycle_bin
             self.dry_run = dry_run
             self.keep_master_mp4 = keep_master_mp4
             self.purge_intermediate_work = purge_intermediate_work
             self.keep_final_days = keep_final_days
+            self.retention_config = retention_config or RetentionConfig()
 
         self.permanent = permanent
         self.state_manager = state_manager
@@ -215,20 +275,16 @@ class SafetyCleaner(Cleaner):
         """
         # Verification check
         is_verified = False
-        if (
-            verified is True
-            or upload_result is not None
-            and getattr(upload_result, "verified", False)
-        ):
-            is_verified = True
+        if upload_result is not None:
+            is_verified = bool(getattr(upload_result, "verified", False))
+        elif verified is not None:
+            is_verified = bool(verified)
         elif self.state_manager is not None:
             job = self.state_manager.get_job(job_id)
             if job is not None:
-                if (
-                    job.status in (JobStatus.COMPLETED, JobStatus.CLEANED)
-                    or job.upload_result is not None
-                    and job.upload_result.verified
-                ):
+                if job.upload_result is not None:
+                    is_verified = bool(getattr(job.upload_result, "verified", False))
+                elif job.status in (JobStatus.COMPLETED, JobStatus.CLEANED):
                     is_verified = True
 
         if not is_verified and not force:
@@ -239,7 +295,11 @@ class SafetyCleaner(Cleaner):
 
         eff_dry_run = dry_run if dry_run is not None else self.dry_run
         eff_keep_days = keep_final_days if keep_final_days is not None else self.keep_final_days
-        eff_keep_master = keep_master_mp4 if keep_master_mp4 is not None else (False if force else self.keep_master_mp4)
+        eff_keep_master = (
+            keep_master_mp4
+            if keep_master_mp4 is not None
+            else (False if force else self.keep_master_mp4)
+        )
         eff_permanent = permanent if permanent is not None else self.permanent
 
         files_to_delete: list[Path] = []
@@ -333,10 +393,11 @@ class SafetyCleaner(Cleaner):
                 except Exception as e:
                     logger.debug("Non-critical: Directory %s not removed: %s", dir_path, e)
 
-        # Update state manager status if job exists
+        # Update state manager status only if job exists as a real tracked job
         if self.state_manager is not None:
             try:
-                self.state_manager.update_job_status(job_id, JobStatus.CLEANED)
+                if self.state_manager.get_job(job_id) is not None:
+                    self.state_manager.update_job_status(job_id, JobStatus.CLEANED)
             except Exception as e:
                 logger.debug("Could not transition job status to CLEANED: %s", e)
 
@@ -362,9 +423,19 @@ class SafetyCleaner(Cleaner):
 
                 if permanent or not self.use_recycle_bin:
                     if is_link or target.is_file():
-                        target.unlink()
+                        try:
+                            target.unlink()
+                        except PermissionError:
+                            try:
+                                os.chmod(target, stat.S_IWRITE)
+                            except OSError:
+                                pass
+                            target.unlink()
                     elif target.is_dir():
-                        shutil.rmtree(target)
+                        if sys.version_info >= (3, 12):  # noqa: UP036
+                            shutil.rmtree(target, onexc=_handle_remove_readonly)
+                        else:
+                            shutil.rmtree(target, onerror=_handle_remove_readonly)
                 else:
                     trash_fn = _resolve_send2trash()
                     if trash_fn is None:
@@ -395,3 +466,285 @@ class SafetyCleaner(Cleaner):
         raise CleanupError(
             f"Failed to delete '{target}' after {len(delays)} attempts due to file lock: {last_error}"
         )
+
+    def prune_work_dir(
+        self,
+        *,
+        max_age_days: int | None = None,
+        max_total_gb: float | None = None,
+        max_total_bytes: int | None = None,
+        keep_last_n: int | None = None,
+        dry_run: bool | None = None,
+        permanent: bool | None = None,
+        force: bool = False,
+    ) -> list[Path]:
+        """Prune work/ directory according to retention policy (age, size, count).
+
+        Guarantees that directories of active or not-yet-uploaded jobs are NEVER deleted:
+        - Checks job lock via core.job_lock.
+        - Checks state_manager for job status (only COMPLETED/CLEANED or verified uploaded jobs may be pruned).
+        - Untracked or unclassified jobs are skipped with a warning log.
+        - The N most recent eligible dirs (keep_last_n) are exempt from ALL pruning (age, count, size).
+        Uses send2trash or permanent deletion according to cleaner configuration.
+
+        Args:
+            max_age_days: Delete job directories older than this many days (default from config: 14).
+            max_total_gb: Ceiling for total work/ directory size in GB (default from config: 20).
+            max_total_bytes: Explicit byte ceiling overriding max_total_gb (useful for tests).
+            keep_last_n: Always retain at least N most recent run folders (default from config: 10).
+            dry_run: If True, simulate and return target paths without deleting.
+            permanent: If True, delete permanently instead of using Recycle Bin.
+            force: If True, bypass retention.enabled check.
+
+        Returns:
+            List of Path objects that were deleted (or would be deleted in dry_run).
+        """
+        ret_cfg = getattr(self, "retention_config", None)
+        if not force and ret_cfg is not None and not ret_cfg.enabled:
+            logger.info("Work directory retention policy is disabled.")
+            return []
+
+        eff_dry_run = (
+            dry_run if dry_run is not None else (ret_cfg.dry_run if ret_cfg else self.dry_run)
+        )
+        eff_max_age_days = (
+            max_age_days
+            if max_age_days is not None
+            else (ret_cfg.work_max_age_days if ret_cfg else 14)
+        )
+        eff_max_total_gb = (
+            max_total_gb
+            if max_total_gb is not None
+            else (ret_cfg.work_max_total_gb if ret_cfg else 20.0)
+        )
+        eff_keep_last_n = (
+            keep_last_n if keep_last_n is not None else (ret_cfg.keep_last_n if ret_cfg else 10)
+        )
+        eff_permanent = permanent if permanent is not None else self.permanent
+
+        if max_total_bytes is not None:
+            eff_max_bytes: int | None = max_total_bytes
+        elif eff_max_total_gb is not None and eff_max_total_gb >= 0:
+            eff_max_bytes = int(eff_max_total_gb * (1024**3))
+        else:
+            eff_max_bytes = None
+
+        if not self.work_dir.exists() or not self.work_dir.is_dir():
+            return []
+
+        # Find all run folders inside work_dir (e.g. story_*, longform_*, job_*)
+        subdirs: list[Path] = [
+            p for p in self.work_dir.iterdir() if p.is_dir() and not p.name.startswith(".")
+        ]
+        if not subdirs:
+            return []
+
+        # 1. Identify protected directories (active, untracked, unclassified, or not yet uploaded)
+        protected_dirs: set[Path] = set()
+        for d in subdirs:
+            job_id = d.name
+            # Check A: Job lock
+            if is_job_locked(d, job_id):
+                logger.debug(
+                    "Work directory '%s' is locked by an active process; protecting.", job_id
+                )
+                protected_dirs.add(d)
+                continue
+
+            # Check B: StateManager status
+            if self.state_manager is None:
+                logger.warning(
+                    "Work directory '%s' cannot be classified (no state manager configured); skipping pruning for safety.",
+                    job_id,
+                )
+                protected_dirs.add(d)
+                continue
+
+            job = self.state_manager.get_job(job_id)
+            if job is None:
+                logger.warning(
+                    "Work directory '%s' has untracked job state; skipping pruning for safety.",
+                    job_id,
+                )
+                protected_dirs.add(d)
+                continue
+
+            # Check upload verification status:
+            # If upload_result exists, its .verified flag is authoritative.
+            # Even if status is COMPLETED, if upload_result.verified is False, it MUST be protected.
+            if job.upload_result is not None:
+                is_uploaded = bool(getattr(job.upload_result, "verified", False))
+            else:
+                is_uploaded = job.status in (JobStatus.COMPLETED, JobStatus.CLEANED)
+
+            if not is_uploaded:
+                logger.debug(
+                    "Job '%s' has status %s and unverified upload; protecting.",
+                    job_id,
+                    job.status,
+                )
+                protected_dirs.add(d)
+                continue
+
+        # Calculate sizes and modification times
+        dir_sizes: dict[Path, int] = {d: _calculate_dir_size(d) for d in subdirs}
+        total_work_size = sum(dir_sizes.values())
+
+        # Sort eligible directories by mtime descending (newest first)
+        eligible = [d for d in subdirs if d not in protected_dirs]
+        eligible.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+
+        to_prune: list[Path] = []
+        to_prune_set: set[Path] = set()
+
+        def _mark_for_prune(d: Path) -> None:
+            if d not in to_prune_set:
+                to_prune.append(d)
+                to_prune_set.add(d)
+
+        now_ts = datetime.now(UTC).timestamp()
+
+        # Semantics: keep_last_n most recent eligible dirs are exempt from ALL pruning (age, count, size)
+        keep_count = max(0, eff_keep_last_n) if eff_keep_last_n is not None else 0
+        candidates = eligible[keep_count:]
+
+        # Step 1: Prune candidates by age (work_max_age_days)
+        if eff_max_age_days is not None and eff_max_age_days >= 0:
+            for d in candidates:
+                try:
+                    mtime = d.stat().st_mtime
+                    age_days = (now_ts - mtime) / 86400.0
+                    if age_days >= eff_max_age_days:
+                        _mark_for_prune(d)
+                except OSError:
+                    pass
+
+        # Step 2: Prune candidates by size (work_max_total_gb / eff_max_bytes)
+        # Note: count-based pruning does not delete fresh dirs by itself; only candidates beyond keep_last_n can be pruned for age or size.
+        if eff_max_bytes is not None and eff_max_bytes >= 0:
+            pruned_size = sum(dir_sizes.get(d, 0) for d in to_prune)
+            projected_size = total_work_size - pruned_size
+            if projected_size > eff_max_bytes:
+                remaining_candidates = [d for d in candidates if d not in to_prune_set]
+                for d in reversed(remaining_candidates):
+                    if projected_size <= eff_max_bytes:
+                        break
+                    _mark_for_prune(d)
+                    projected_size -= dir_sizes.get(d, 0)
+
+        # In dry run mode, return the list of targets that would be removed
+        if eff_dry_run:
+            logger.info(
+                "Dry run retention pruning: would delete %d work directories", len(to_prune)
+            )
+            return to_prune
+
+        deleted_paths: list[Path] = []
+        for d in to_prune:
+            if not d.exists() and not (d.is_symlink() or os.path.islink(d)):
+                continue
+            job_id = d.name
+
+            # Re-check job lock right before deleting
+            if is_job_locked(d, job_id):
+                logger.warning(
+                    "Work directory '%s' is locked by an active process; skipping deletion.",
+                    job_id,
+                )
+                continue
+
+            try:
+                with job_lock(self.work_dir, job_id):
+                    self.assert_safe_to_delete(d)
+                    self._delete_path_with_backoff(d, permanent=eff_permanent)
+                    deleted_paths.append(d)
+
+                    # Remove associated loose files in work_dir with prefix {job_id}. or {job_id}_
+                    if self.work_dir.exists():
+                        for loose in list(self.work_dir.iterdir()):
+                            if loose.name == f".{job_id}.lock":
+                                continue
+                            if loose.name.startswith(f"{job_id}.") or loose.name.startswith(
+                                f"{job_id}_"
+                            ):
+                                if loose.is_file() or loose.is_symlink():
+                                    try:
+                                        self.assert_safe_to_delete(loose)
+                                        self._delete_path_with_backoff(
+                                            loose, permanent=eff_permanent
+                                        )
+                                        deleted_paths.append(loose)
+                                    except Exception as e:
+                                        logger.debug("Could not remove loose file %s: %s", loose, e)
+            except JobLockedError:
+                logger.warning(
+                    "Work directory '%s' was acquired by another process before deletion; skipping.",
+                    job_id,
+                )
+                continue
+            except Exception as e:
+                logger.warning("Failed to prune work directory '%s': %s", d, e)
+                continue
+
+            # Clean dangling lock file if present
+            lock_file = self.work_dir / f".{job_id}.lock"
+            if lock_file.exists() and lock_file.is_file():
+                try:
+                    self.assert_safe_to_delete(lock_file)
+                    self._delete_path_with_backoff(lock_file, permanent=eff_permanent)
+                except Exception:
+                    pass
+
+            # Update StateManager status to CLEANED only for real tracked job ids
+            if self.state_manager is not None:
+                try:
+                    if self.state_manager.get_job(job_id) is not None:
+                        self.state_manager.update_job_status(job_id, JobStatus.CLEANED)
+                except Exception as e:
+                    logger.debug("Could not transition job %s status to CLEANED: %s", job_id, e)
+
+        logger.info("Retention policy pruned %d paths from work directory.", len(deleted_paths))
+        return deleted_paths
+
+
+def prune_work_dir(
+    work_dir: Path | str | None = None,
+    output_dir: Path | str | None = None,
+    config: Settings | RetentionConfig | CleanupConfig | None = None,
+    state_manager: Any | None = None,
+    max_age_days: int | None = None,
+    max_total_gb: float | None = None,
+    max_total_bytes: int | None = None,
+    keep_last_n: int | None = None,
+    dry_run: bool | None = None,
+    permanent: bool | None = None,
+    allowed_roots: Sequence[Path | str] | None = None,
+    force: bool = False,
+) -> list[Path]:
+    """Safely prune work/ directory according to retention policy."""
+    cleaner = SafetyCleaner(
+        config=config if isinstance(config, (Settings, CleanupConfig)) else None,
+        retention_config=config if isinstance(config, RetentionConfig) else None,
+        work_dir=work_dir,
+        output_dir=output_dir,
+        state_manager=state_manager,
+        allowed_roots=allowed_roots,
+        dry_run=dry_run if dry_run is not None else False,
+        permanent=permanent if permanent is not None else False,
+    )
+    return cleaner.prune_work_dir(
+        max_age_days=max_age_days,
+        max_total_gb=max_total_gb,
+        max_total_bytes=max_total_bytes,
+        keep_last_n=keep_last_n,
+        dry_run=dry_run,
+        permanent=permanent,
+        force=force,
+    )
+
+
+__all__ = [
+    "SafetyCleaner",
+    "is_job_locked",
+    "prune_work_dir",
+]

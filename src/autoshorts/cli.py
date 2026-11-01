@@ -181,6 +181,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Upload the rendered long-form video to YouTube after rendering",
     )
 
+    # 8. cleanup-work command
+    cleanup_work_parser = subparsers.add_parser(
+        "cleanup-work", help="Prune work/ directory according to retention policy"
+    )
+    cleanup_work_parser.add_argument(
+        "--dry-run", action="store_true", help="Simulate cleanup without deleting directories"
+    )
+
     return parser
 
 
@@ -270,6 +278,26 @@ def cmd_scheduler(args: argparse.Namespace, config: Settings, state_manager: Sta
         uploader=uploader,
         config=config,
     )
+
+    if getattr(config, "retention", None) and config.retention.enabled:
+        try:
+            startup_cleaner = SafetyCleaner(config=config, state_manager=state_manager)
+            pruned_startup = startup_cleaner.prune_work_dir()
+            if pruned_startup:
+                eff_dry_run = getattr(config.retention, "dry_run", True)
+                if eff_dry_run:
+                    logger.info(
+                        "Scheduler startup retention (dry-run): would delete %d work directories: %s",
+                        len(pruned_startup),
+                        [p.name for p in pruned_startup],
+                    )
+                else:
+                    logger.info(
+                        "Scheduler startup retention: pruned %d work directories.",
+                        len(pruned_startup),
+                    )
+        except Exception as ex:
+            logger.debug("Non-critical scheduler startup retention check: %s", ex)
 
     if args.once or not args.daemon:
         logger.info("Running single scheduler dispatch tick...")
@@ -374,6 +402,21 @@ def cmd_clean(args: argparse.Namespace, config: Settings, state_manager: StateMa
         action = "Would delete" if args.dry_run else "Deleted"
         print(f"Cleanup summary: {action} {total_deleted} items across completed jobs.")
 
+    return 0
+
+
+def cmd_cleanup_work(
+    args: argparse.Namespace, config: Settings, state_manager: StateManager
+) -> int:
+    """Prune work directory according to configured retention policy."""
+    dry_run = args.dry_run if args.dry_run else None
+    cleaner = SafetyCleaner(config=config, state_manager=state_manager)
+    pruned = cleaner.prune_work_dir(dry_run=dry_run, force=True)
+    is_dry = bool(args.dry_run or (dry_run is None and config.retention.dry_run))
+    action = "Would prune" if is_dry else "Pruned"
+    print(f"Retention policy: {action} {len(pruned)} job item(s) from work directory.")
+    for p in pruned:
+        print(f"  - {p}")
     return 0
 
 
@@ -483,6 +526,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return cmd_scheduler(args, config, state_manager)
     elif args.command == "quota":
         return cmd_quota(args, config, state_manager)
+    elif args.command == "cleanup-work":
+        return cmd_cleanup_work(args, config, state_manager)
     elif args.command == "clean":
         return cmd_clean(args, config, state_manager)
     elif args.command == "edge-login":

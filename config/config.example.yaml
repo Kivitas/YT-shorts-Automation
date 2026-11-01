@@ -145,6 +145,13 @@ cleanup:
   purge_intermediate_work: true
   dry_run: false
 
+retention:
+  enabled: true                    # Auto-prune work/ directory to reclaim disk space
+  work_max_age_days: 14            # Max age in days before pruning old job working dirs
+  work_max_total_gb: 20            # Max total disk size (GB) allowed for work/ before pruning oldest
+  keep_last_n: 10                  # Always retain the N most recent run folders regardless of age
+  dry_run: true                    # Safe default: simulate cleanup. Set dry_run: false to enable live deletion.
+
 pipeline:
   concurrency: 3                   # Max concurrent rendering and processing workers
   caption_engine: "ass"            # Caption generator engine ("ass" or "remotion")

@@ -22,7 +22,9 @@ from autoshorts.core.paths import PROJECT_ROOT, get_config_dir
 LayoutMode = Literal[
     "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
 ]
-SubtitlePreset = Literal["neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid"]
+SubtitlePreset = Literal[
+    "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid"
+]
 ColorGradingPreset = Literal["none", "vibrant", "cinematic", "warm", "crisp"]
 ProgressBarPosition = Literal["top", "bottom", "seam", "none"]
 TextTransform = Literal["uppercase", "title", "none"]
@@ -259,6 +261,18 @@ class SubtitlesConfig(BaseModel):
     )
 
 
+class RetentionConfig(BaseModel):
+    """Retention policy parameters for work directory and historical runs."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    work_max_age_days: int = Field(default=14, ge=0)
+    work_max_total_gb: float = Field(default=20.0, ge=0.0)
+    keep_last_n: int = Field(default=10, ge=0)
+    dry_run: bool = True
+
+
 class CleanupConfig(BaseModel):
     """Intermediate file purge and safety retention parameters."""
 
@@ -322,6 +336,7 @@ class Settings(BaseSettings):
     audio_mastering: AudioMasteringConfig = Field(default_factory=AudioMasteringConfig)
     upload: UploadConfig = Field(default_factory=UploadConfig)
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
 
@@ -406,7 +421,7 @@ def load_config(config_path: Path | str | None = None) -> Settings:
     raw_yaml: dict[str, Any] = {}
     if target.is_file():
         try:
-            with open(target, "r", encoding="utf-8") as f:
+            with open(target, encoding="utf-8") as f:
                 loaded = yaml.safe_load(f)
                 if isinstance(loaded, dict):
                     raw_yaml = loaded
@@ -440,6 +455,7 @@ __all__ = [
     "PipelineConfig",
     "ProgressBarPosition",
     "QuotaConfig",
+    "RetentionConfig",
     "SchedulerConfig",
     "Settings",
     "SparkConfig",

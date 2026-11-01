@@ -407,3 +407,355 @@ def test_cleanup_idempotency(tmp_path: Path):
     # Second call should find nothing and return cleanly
     del2 = cleaner.cleanup_job(job_id, verified=True)
     assert del2 == []
+
+
+# --- Retention Policy and Critic Findings Tests -----------------------------------
+
+
+def test_retention_config_defaults():
+    """RetentionConfig must be safe by default with dry_run=True."""
+    from autoshorts.core.config import RetentionConfig
+
+    cfg = RetentionConfig()
+    assert cfg.enabled is True
+    assert cfg.dry_run is True
+    assert cfg.work_max_age_days == 14
+    assert cfg.work_max_total_gb == 20.0
+    assert cfg.keep_last_n == 10
+
+
+def test_keep_last_n_exempts_all_pruning_old_dirs(tmp_path: Path):
+    """3 dirs all 15 days old with keep_last_n=10 -> none deleted."""
+    import os
+    import time
+
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+
+    old_time = time.time() - (15 * 86400)
+    for i in range(3):
+        jid = f"job_old_{i}"
+        j_dir = work_dir / jid
+        j_dir.mkdir()
+        (j_dir / "temp.ts").write_text("data")
+        os.utime(j_dir, (old_time, old_time))
+        job = Job(id=jid, source_url="https://youtube.com/watch?v=1", status=JobStatus.COMPLETED)
+        state_mgr.save_job(job)
+
+    cleaner = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    deleted = cleaner.prune_work_dir(
+        keep_last_n=10,
+        max_age_days=14,
+        dry_run=False,
+    )
+
+    assert deleted == []
+    for i in range(3):
+        assert (work_dir / f"job_old_{i}").exists()
+
+
+def test_keep_last_n_fresh_dirs_count_pruning_disabled(tmp_path: Path):
+    """15 dirs created today -> none deleted (count-based pruning does not delete fresh dirs)."""
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+
+    for i in range(15):
+        jid = f"job_fresh_{i}"
+        j_dir = work_dir / jid
+        j_dir.mkdir()
+        (j_dir / "temp.ts").write_text("fresh")
+        job = Job(id=jid, source_url="https://youtube.com/watch?v=1", status=JobStatus.COMPLETED)
+        state_mgr.save_job(job)
+
+    cleaner = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    deleted = cleaner.prune_work_dir(
+        keep_last_n=10,
+        max_age_days=14,
+        dry_run=False,
+    )
+
+    assert deleted == []
+    for i in range(15):
+        assert (work_dir / f"job_fresh_{i}").exists()
+
+
+def test_unverified_upload_result_protected_even_if_completed(tmp_path: Path):
+    """Jobs whose upload_result exists with verified False must be protected even if status is COMPLETED."""
+    import os
+    import time
+
+    from autoshorts.core.models import Job, JobStatus, UploadResult
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+
+    jid = "job_unverified_completed"
+    j_dir = work_dir / jid
+    j_dir.mkdir()
+    (j_dir / "temp.ts").write_text("data")
+    old_time = time.time() - (20 * 86400)
+    os.utime(j_dir, (old_time, old_time))
+
+    unverified_res = UploadResult(
+        video_id="vid_unver",
+        url="https://youtube.com/shorts/vid_unver",
+        verified=False,
+    )
+    job = Job(
+        id=jid,
+        source_url="https://youtube.com/watch?v=unver",
+        status=JobStatus.COMPLETED,
+        upload_result=unverified_res,
+    )
+    state_mgr.save_job(job)
+
+    cleaner = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    deleted = cleaner.prune_work_dir(
+        keep_last_n=0,
+        max_age_days=14,
+        dry_run=False,
+    )
+
+    assert deleted == []
+    assert j_dir.exists()
+
+
+def test_state_manager_none_or_untracked_skips_pruning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """If state_manager is None or job is untracked, refuse to prune and log a warning."""
+    import logging
+    import os
+    import time
+
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    old_time = time.time() - (20 * 86400)
+
+    # 1. Cleaner with state_manager=None
+    j_dir1 = work_dir / "job_unknown_1"
+    j_dir1.mkdir()
+    (j_dir1 / "temp.ts").write_text("data")
+    os.utime(j_dir1, (old_time, old_time))
+
+    cleaner_none = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=None,
+        permanent=True,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        deleted_none = cleaner_none.prune_work_dir(
+            keep_last_n=0,
+            max_age_days=14,
+            dry_run=False,
+        )
+
+    assert deleted_none == []
+    assert j_dir1.exists()
+    assert "cannot be classified (no state manager configured)" in caplog.text
+
+    # 2. Cleaner with state_manager, but job is untracked in SQLite
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+    j_dir2 = work_dir / "job_untracked_2"
+    j_dir2.mkdir()
+    (j_dir2 / "temp.ts").write_text("data")
+    os.utime(j_dir2, (old_time, old_time))
+
+    cleaner_tracked = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        deleted_untracked = cleaner_tracked.prune_work_dir(
+            keep_last_n=0,
+            max_age_days=14,
+            dry_run=False,
+        )
+
+    assert deleted_untracked == []
+    assert j_dir2.exists()
+    assert "has untracked job state; skipping pruning" in caplog.text
+
+
+def test_prune_rechecks_and_holds_job_lock(tmp_path: Path):
+    """Re-check job lock and hold lock right before deleting candidate dir."""
+    import os
+    import time
+
+    from autoshorts.core.job_lock import job_lock
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+
+    jid = "job_locked_prune"
+    j_dir = work_dir / jid
+    j_dir.mkdir()
+    (j_dir / "temp.ts").write_text("data")
+    old_time = time.time() - (20 * 86400)
+    os.utime(j_dir, (old_time, old_time))
+
+    job = Job(id=jid, source_url="https://youtube.com/watch?v=lock", status=JobStatus.COMPLETED)
+    state_mgr.save_job(job)
+
+    cleaner = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    # Acquire lock on the directory so cleaner detects it as locked
+    with job_lock(work_dir, jid):
+        deleted = cleaner.prune_work_dir(
+            keep_last_n=0,
+            max_age_days=14,
+            dry_run=False,
+        )
+        assert deleted == []
+        assert j_dir.exists()
+
+
+def test_rmtree_windows_readonly_file(tmp_path: Path):
+    """Verify shutil.rmtree on Windows clears read-only attribute and succeeds."""
+    import os
+    import stat
+    import time
+
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+
+    jid = "job_readonly_file"
+    j_dir = work_dir / jid
+    j_dir.mkdir()
+    ro_file = j_dir / "readonly.txt"
+    ro_file.write_text("cannot delete me easily")
+    os.chmod(ro_file, stat.S_IREAD)
+
+    old_time = time.time() - (20 * 86400)
+    os.utime(j_dir, (old_time, old_time))
+
+    job = Job(id=jid, source_url="https://youtube.com/watch?v=ro", status=JobStatus.COMPLETED)
+    state_mgr.save_job(job)
+
+    cleaner = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    deleted = cleaner.prune_work_dir(
+        keep_last_n=0,
+        max_age_days=14,
+        dry_run=False,
+    )
+
+    assert any(p == j_dir for p in deleted)
+    assert not j_dir.exists()
+
+
+def test_update_job_status_only_called_for_real_tracked_jobs(tmp_path: Path):
+    """Only call update_job_status for names that are real tracked job ids."""
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
+
+    work_dir = tmp_path / "work"
+    output_dir = tmp_path / "output"
+    work_dir.mkdir()
+    output_dir.mkdir()
+
+    state_mgr = StateManager(db_path=tmp_path / "state.db")
+
+    # Tracked job
+    jid = "job_real_tracked"
+    j_dir = work_dir / jid
+    j_dir.mkdir()
+    (j_dir / "temp.ts").write_text("data")
+    job = Job(id=jid, source_url="https://youtube.com/watch?v=real", status=JobStatus.COMPLETED)
+    state_mgr.save_job(job)
+
+    cleaner = SafetyCleaner(
+        work_dir=work_dir,
+        output_dir=output_dir,
+        allowed_roots=[work_dir, output_dir],
+        state_manager=state_mgr,
+        permanent=True,
+    )
+
+    deleted = cleaner.cleanup_job(jid, verified=True)
+    assert len(deleted) > 0
+    updated = state_mgr.get_job(jid)
+    assert updated is not None
+    assert updated.status == JobStatus.CLEANED
+
+    # Non-existent job id cleanup with force=True should not raise StateError
+    deleted_nonexistent = cleaner.cleanup_job("non_existent_job_123", force=True)
+    assert deleted_nonexistent == []
