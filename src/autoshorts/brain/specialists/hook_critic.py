@@ -263,11 +263,24 @@ class HookCriticAgent:
 
         lower = clean.lower()
         has_curiosity = any(
-            k in lower for k in ("secret", "truth", "why", "shock", "never", "nobody", "mistake", "warning", "trap")
+            k in lower
+            for k in (
+                "secret",
+                "truth",
+                "why",
+                "shock",
+                "never",
+                "nobody",
+                "mistake",
+                "warning",
+                "trap",
+            )
         )
 
         if not has_curiosity:
-            if any(term in lower for term in ("safe", "easy", "simple", "best", "common", "regular")):
+            if any(
+                term in lower for term in ("safe", "easy", "simple", "best", "common", "regular")
+            ):
                 # Counter-intuitive truth pattern interrupt
                 clean = f"The counter-intuitive truth about why {clean[:1].lower() + clean[1:]}"
             else:

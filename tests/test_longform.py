@@ -153,7 +153,9 @@ def test_render_scene_frames_across_new_genres(tmp_path: Path) -> None:
         ),
     ]
     scenes = scenes_for_topic("The Fall of Constantinople")
-    frames = list(render_scene_frames(sections, "Custom History", max_seconds_per_section=0.1, scenes=scenes))
+    frames = list(
+        render_scene_frames(sections, "Custom History", max_seconds_per_section=0.1, scenes=scenes)
+    )
     assert len(frames) == 6
     assert all(len(f) == 1920 * 1080 * 3 for f in frames)
 

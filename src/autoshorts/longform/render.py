@@ -41,7 +41,9 @@ def _find_music_bed(music_dir: Path | None = None) -> Path | None:
     return None
 
 
-def _synthesize_transition_pulse(path: Path, duration: float = 0.18, sample_rate: int = 48000) -> Path:
+def _synthesize_transition_pulse(
+    path: Path, duration: float = 0.18, sample_rate: int = 48000
+) -> Path:
     """Synthesize a subtle broadcast transition whoosh/pop pulse WAV."""
     path = Path(path)
     n_samples = max(1, int(duration * sample_rate))
@@ -96,9 +98,18 @@ def _concat_audio(
         mixed_out = work_dir / "narration_master.m4a"
         total_dur = max(0.5, sum(sa.duration for sa in sections))
         mix_cmd = [
-            get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-i", str(out),
-            "-stream_loop", "-1", "-i", str(Path(music_bed).resolve()),
+            get_ffmpeg_path(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-i",
+            str(out),
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(Path(music_bed).resolve()),
             "-filter_complex",
             (
                 f"[0:a]asplit=2[vo][sc];"
@@ -107,11 +118,22 @@ def _concat_audio(
                 f"[bg][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=250[ducked];"
                 f"[vo][ducked]amix=inputs=2:duration=first:dropout_transition=2[master]"
             ),
-            "-map", "[master]", "-c:a", "aac", "-b:a", "192k", str(mixed_out),
+            "-map",
+            "[master]",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            str(mixed_out),
         ]
         mix_proc = subprocess.run(
-            mix_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=600, check=False,
+            mix_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
+            check=False,
         )
         if mix_proc.returncode == 0 and mixed_out.is_file() and mixed_out.stat().st_size > 0:
             return mixed_out

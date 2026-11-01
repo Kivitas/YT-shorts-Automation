@@ -159,9 +159,7 @@ def _enrich_section(
             hook_callout = "SKEPTIC CHECK" if speaker == "skeptic" else "BOLD CLAIM"
         else:
             hook_callout = (
-                "CUE -> CRAVING -> RESPONSE -> REWARD"
-                if index % 2 == 0
-                else "1% DAILY COMPOUNDING"
+                "CUE -> CRAVING -> RESPONSE -> REWARD" if index % 2 == 0 else "1% DAILY COMPOUNDING"
             )
 
     comp_data = item.get("comparison_data")
@@ -203,7 +201,9 @@ def _curated_script(spec: TopicSpec, provider: str) -> LongformScript:
     subject = CURATED_TITLE_SUBJECTS.get(spec.key, "the complete visual breakdown")
     return LongformScript(
         topic=spec.key,
-        title=title_for(spec.label if spec.key not in CURATED_TITLE_SUBJECTS else spec.key, subject),
+        title=title_for(
+            spec.label if spec.key not in CURATED_TITLE_SUBJECTS else spec.key, subject
+        ),
         hook=spec.curated_hook,
         sections=sections,
         provider=provider,

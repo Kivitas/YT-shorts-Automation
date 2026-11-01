@@ -113,7 +113,7 @@ class BaseLLMProvider(ABC, LLMProvider):
             return {str(k).strip().upper(): str(v).strip() for k, v in options.items()}
 
         labels = [chr(ord("A") + i) for i in range(len(options))]
-        return {label: str(opt).strip() for label, opt in zip(labels, options)}
+        return {label: str(opt).strip() for label, opt in zip(labels, options, strict=False)}
 
     @staticmethod
     def compute_softmax(logits: Mapping[str, float]) -> dict[str, float]:
@@ -141,7 +141,7 @@ class BaseLLMProvider(ABC, LLMProvider):
             uniform = 1.0 / len(keys)
             return {k: uniform for k in keys}
 
-        return {k: exp_v / sum_exp for k, exp_v in zip(keys, exp_vals)}
+        return {k: exp_v / sum_exp for k, exp_v in zip(keys, exp_vals, strict=False)}
 
     def execute_with_retry(
         self,

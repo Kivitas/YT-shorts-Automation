@@ -1059,7 +1059,11 @@ def _synthesize_custom_spec(topic: str, genre: str | None = None) -> TopicSpec:
         for w in words
         if len(w) >= 3 and w.lower() not in {"the", "and", "for", "why", "how", "with", "from"}
     ]
-    lead_kw = cleaned[:28].strip() if len(cleaned) <= 28 else (sig_words[0] if sig_words else base.title_keywords[0])
+    lead_kw = (
+        cleaned[:28].strip()
+        if len(cleaned) <= 28
+        else (sig_words[0] if sig_words else base.title_keywords[0])
+    )
     keywords = tuple(dict.fromkeys([lead_kw, *sig_words[:3], *base.title_keywords]))
 
     custom_tags = [
@@ -1069,11 +1073,11 @@ def _synthesize_custom_spec(topic: str, genre: str | None = None) -> TopicSpec:
     ]
     merged_tags = tuple(dict.fromkeys([*custom_tags, *base.hashtags]))[:8]
     if len(merged_tags) < 5:
-        merged_tags = tuple(list(merged_tags) + [t for t in _SELF_IMPROVEMENT.hashtags if t not in merged_tags])[:8]
+        merged_tags = tuple(
+            list(merged_tags) + [t for t in _SELF_IMPROVEMENT.hashtags if t not in merged_tags]
+        )[:8]
 
-    hook = (
-        f"Everything most people believe about {cleaned} misses the one mechanism that actually drives the outcome."
-    )
+    hook = f"Everything most people believe about {cleaned} misses the one mechanism that actually drives the outcome."
     points = (
         (
             "The Hidden Premise",

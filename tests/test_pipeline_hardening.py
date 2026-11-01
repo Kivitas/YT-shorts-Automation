@@ -20,24 +20,39 @@ Covers the behaviours that previously let bad output pass silently:
 
 """
 
+from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from __future__ import annotationsfrom pathlib import Pathfrom unittest.mock import MagicMock, patchimport pytestfrom autoshorts.core.exceptions import AutoShortsErrorfrom autoshorts.core.models import (    CONFIRMING_VERIFICATION_KINDS,    UploadResult,    resolve_verification,)from autoshorts.edit_planner.edl_schema import clamp_edl, create_empty_edlfrom autoshorts.media.downloader import (    SECTION_NO_AUDIO,    SECTION_NO_VIDEO,    SECTION_OK,    Downloader,    SectionValidation,    validate_section_output,)# =============================================================================
+import pytest
+
+from autoshorts.core.exceptions import AutoShortsError
+from autoshorts.core.models import (
+    CONFIRMING_VERIFICATION_KINDS,
+    UploadResult,
+    resolve_verification,
+)
+from autoshorts.edit_planner.edl_schema import clamp_edl, create_empty_edl
+from autoshorts.media.downloader import (
+    SECTION_NO_AUDIO,
+    SECTION_NO_VIDEO,
+    SECTION_OK,
+    Downloader,
+    SectionValidation,
+    validate_section_output,
+)
+
+# =============================================================================
 
 # 1. Section output validation
 
 # =============================================================================
 
 
-
-
-
 def _probe(video: bool, audio: bool, duration: float = 40.0):
 
     return {"has_video": video, "has_audio": audio, "duration": duration}
-
-
-
 
 
 def test_validate_section_accepts_video_and_audio(tmp_path: Path):
@@ -47,16 +62,10 @@ def test_validate_section_accepts_video_and_audio(tmp_path: Path):
     f.write_bytes(b"payload")
 
     with patch(
-
         "autoshorts.media.downloader.probe_video_stream_info",
-
         return_value=_probe(True, True),
-
     ):
-
         result = validate_section_output(f)
-
-
 
     assert result.ok is True
 
@@ -67,11 +76,7 @@ def test_validate_section_accepts_video_and_audio(tmp_path: Path):
     assert result.size_bytes == len(b"payload")
 
 
-
-
-
 def test_validate_section_rejects_audio_only(tmp_path: Path):
-
     """A successful yt-dlp exit that yields audio only must not be accepted."""
 
     f = tmp_path / "cut.mp4"
@@ -79,25 +84,16 @@ def test_validate_section_rejects_audio_only(tmp_path: Path):
     f.write_bytes(b"audio only")
 
     with patch(
-
         "autoshorts.media.downloader.probe_video_stream_info",
-
         return_value=_probe(False, True),
-
     ):
-
         result = validate_section_output(f)
-
-
 
     assert result.ok is False
 
     assert result.reason == SECTION_NO_VIDEO
 
     assert "no video stream" in result.detail
-
-
-
 
 
 def test_validate_section_rejects_missing_audio(tmp_path: Path):
@@ -107,39 +103,25 @@ def test_validate_section_rejects_missing_audio(tmp_path: Path):
     f.write_bytes(b"video only")
 
     with patch(
-
         "autoshorts.media.downloader.probe_video_stream_info",
-
         return_value=_probe(True, False),
-
     ):
-
         result = validate_section_output(f)
-
-
 
     assert result.ok is False
 
     assert result.reason == SECTION_NO_AUDIO
 
 
-
-
-
 def test_validate_section_rejects_missing_and_empty_files(tmp_path: Path):
 
     assert validate_section_output(tmp_path / "nope.mp4").ok is False
-
-
 
     empty = tmp_path / "empty.mp4"
 
     empty.write_bytes(b"")
 
     assert validate_section_output(empty).ok is False
-
-
-
 
 
 def test_validate_section_rejects_absurdly_short_output(tmp_path: Path):
@@ -149,38 +131,24 @@ def test_validate_section_rejects_absurdly_short_output(tmp_path: Path):
     f.write_bytes(b"payload")
 
     with patch(
-
         "autoshorts.media.downloader.probe_video_stream_info",
-
         return_value=_probe(True, True, duration=0.05),
-
     ):
-
         result = validate_section_output(f)
-
-
 
     assert result.ok is False
 
     assert "shorter than" in result.detail
 
 
-
-
-
 def test_download_section_retries_then_fails_on_persistent_audio_only(tmp_path: Path):
-
     """The final attempt must raise, never silently accept a wrong output class."""
 
     target = tmp_path / "cut.mp4"
 
-
-
     def fake_run(cmd, **kwargs):
 
         import subprocess
-
-
 
         o_idx = cmd.index("-o")
 
@@ -188,25 +156,16 @@ def test_download_section_retries_then_fails_on_persistent_audio_only(tmp_path: 
 
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-
-
     bad = SectionValidation(ok=False, reason=SECTION_NO_VIDEO, detail="audio only")
 
     dl = Downloader(max_retries=2, retry_delay_sec=0.01)
 
     with (
-
         patch("subprocess.run", side_effect=fake_run),
-
         patch("autoshorts.media.downloader.validate_section_output", return_value=bad),
-
         pytest.raises(Exception) as exc_info,
-
     ):
-
         dl.download_section("https://youtu.be/dQw4w9WgXcQ", 0.0, 30.0, target)
-
-
 
     message = str(exc_info.value)
 
@@ -223,25 +182,17 @@ def test_download_section_retries_then_fails_on_persistent_audio_only(tmp_path: 
     assert dl.last_download_diagnostics["attempt_count"] == 2
 
 
-
-
-
 def test_download_section_succeeds_after_retry_and_records_diagnostics(tmp_path: Path):
 
     target = tmp_path / "cut.mp4"
 
     attempts: list[list[str]] = []
 
-
-
     def fake_run(cmd, **kwargs):
 
         import subprocess
 
-
-
         if "yt-dlp" in str(cmd[0]):
-
             attempts.append(list(cmd))
 
         o_idx = cmd.index("-o")
@@ -250,12 +201,8 @@ def test_download_section_succeeds_after_retry_and_records_diagnostics(tmp_path:
 
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-
-
     good = SectionValidation(
-
         ok=True, reason=SECTION_OK, has_video=True, has_audio=True, duration=30.0
-
     )
 
     dl = Downloader(max_retries=3, retry_delay_sec=0.01)
@@ -263,20 +210,12 @@ def test_download_section_succeeds_after_retry_and_records_diagnostics(tmp_path:
     diagnostics: dict = {}
 
     with (
-
         patch("subprocess.run", side_effect=fake_run),
-
         patch("autoshorts.media.downloader.validate_section_output", return_value=good),
-
     ):
-
         result = dl.download_section(
-
             "https://youtu.be/dQw4w9WgXcQ", 0.0, 30.0, target, diagnostics=diagnostics
-
         )
-
-
 
     assert result == target
 
@@ -291,45 +230,28 @@ def test_download_section_succeeds_after_retry_and_records_diagnostics(tmp_path:
     assert "--extractor-args" not in attempts[0]
 
 
-
-
-
 def test_default_format_spec_always_pairs_video_with_audio():
-
     """Every fallback tier must request a video+audio pair (or progressive muxed)."""
 
     from autoshorts.media.downloader import DEFAULT_FORMAT_SPEC
 
-
-
     for branch in DEFAULT_FORMAT_SPEC.split("/"):
-
         if not branch:
-
             continue
 
         has_video = (
-
             "video" in branch
-
             or branch.lstrip("best").startswith(("[", "best"))
-
             or branch.startswith("best[")
-
         )
 
         if "bestvideo" in branch:
-
             assert "+bestaudio" in branch, f"unpaired video branch: {branch}"
 
         if "bestvideo" not in branch and "+" in branch:
-
             pytest.fail(f"unexpected unpaired pair branch: {branch}")
 
         assert has_video or branch.startswith("best")
-
-
-
 
 
 # =============================================================================
@@ -339,20 +261,13 @@ def test_default_format_spec_always_pairs_video_with_audio():
 # =============================================================================
 
 
-
-
-
 def test_job_origin_kind_controls_local_source_detection(tmp_path: Path):
 
     from autoshorts.pipeline import ShortsPipeline
 
-
-
     local_file = tmp_path / "clip.mp4"
 
     local_file.write_bytes(b"video")
-
-
 
     # A YouTube job must never be reinterpreted as local, even if a same-named file exists.
 
@@ -366,8 +281,6 @@ def test_job_origin_kind_controls_local_source_detection(tmp_path: Path):
 
     assert ShortsPipeline._resolve_local_source(yt_job) is None
 
-
-
     # Explicit local origin resolves the file.
 
     local_job = MagicMock()
@@ -379,8 +292,6 @@ def test_job_origin_kind_controls_local_source_detection(tmp_path: Path):
     local_job.source_url = ""
 
     assert ShortsPipeline._resolve_local_source(local_job) == local_file.resolve()
-
-
 
     # A URL-shaped source is never treated as a path.
 
@@ -395,17 +306,11 @@ def test_job_origin_kind_controls_local_source_detection(tmp_path: Path):
     assert ShortsPipeline._resolve_local_source(url_job) is None
 
 
-
-
-
 # =============================================================================
 
 # 3. Editing provenance
 
 # =============================================================================
-
-
-
 
 
 def test_empty_edl_is_tagged_as_placeholder():
@@ -421,9 +326,6 @@ def test_empty_edl_is_tagged_as_placeholder():
     assert edl.has_micro_edits is False
 
 
-
-
-
 def test_clamp_edl_preserves_provenance():
 
     edl = create_empty_edl(clip_duration=40.0, fallback_reason="schema failed")
@@ -435,14 +337,9 @@ def test_clamp_edl_preserves_provenance():
     assert clamped.fallback_reason == "schema failed"
 
 
-
-
-
 def test_planner_records_why_it_degraded():
 
     from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
-
-
 
     planner = MultimodalEditPlanner(provider=None)
 
@@ -455,63 +352,37 @@ def test_planner_records_why_it_degraded():
     assert planner.last_fallback_reason
 
 
-
-
-
 def test_planner_marks_real_plan_source():
 
     from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
 
-
-
     payload = (
-
         '{"hook_in_sec": 0.0, "hook_out_sec": 20.0, "jump_cuts": [], "zoom_punch_ins": [],'
-
         ' "caption_corrections": [], "recommended_thumbnail_timestamp": 1.0,'
-
         ' "recommended_title": "A Title #Shorts", "recommended_hook": "Watch this",'
-
         ' "background_style_recommendation": "minecraft"}'
-
     )
 
-
-
     class _TranscriptOnlyProvider:
-
         """Provider exposing only complete(), i.e. no multimodal video analysis."""
-
-
 
         def complete(self, prompt: str, **kwargs: object) -> str:
 
             return payload
-
-
 
     provider = _TranscriptOnlyProvider()
 
     planner = MultimodalEditPlanner(provider=provider)
 
     with patch(
-
         "autoshorts.edit_planner.multimodal_planner.probe_clip_duration",
-
         return_value=30.0,
-
     ):
-
         edl = planner.generate_edl(Path("clip.mp4"), transcript_text="text")
-
-
 
     assert edl.source == "transcript"
 
     assert edl.is_placeholder is False
-
-
-
 
 
 # =============================================================================
@@ -521,35 +392,19 @@ def test_planner_marks_real_plan_source():
 # =============================================================================
 
 
-
-
-
 @pytest.mark.parametrize(
-
     "declared,verified,expected_kind,expected_confirmed",
-
     [
-
         ("api_confirmed", True, "api_confirmed", True),
-
         ("local_export", True, "local_export", True),
-
         ("studio_dom", True, "studio_dom", False),
-
         ("studio_dom", False, "unverified", False),
-
         ("api_confirmed", False, "unverified", False),
-
         (None, True, "api_confirmed", True),
-
         (None, False, "unverified", False),
-
         ("garbage", True, "api_confirmed", True),
-
     ],
-
 )
-
 def test_resolve_verification_matrix(declared, verified, expected_kind, expected_confirmed):
 
     kind, confirmed = resolve_verification(declared, verified)
@@ -559,15 +414,9 @@ def test_resolve_verification_matrix(declared, verified, expected_kind, expected
     assert confirmed is expected_confirmed
 
 
-
-
-
 def test_studio_dom_is_never_confirming():
 
     assert "studio_dom" not in CONFIRMING_VERIFICATION_KINDS
-
-
-
 
 
 def test_upload_result_defaults_to_unverified():
@@ -579,9 +428,6 @@ def test_upload_result_defaults_to_unverified():
     assert result.verification_kind == "unverified"
 
 
-
-
-
 # =============================================================================
 
 # 5. Re-render preflight
@@ -589,34 +435,23 @@ def test_upload_result_defaults_to_unverified():
 # =============================================================================
 
 
-
-
-
 def _make_pipeline(tmp_path: Path):
 
-    from autoshorts.core.state_manager import StateManager    from autoshorts.pipeline import ShortsPipeline
-
-
+    from autoshorts.core.state_manager import StateManager
+    from autoshorts.pipeline import ShortsPipeline
 
     state = StateManager(db_path=tmp_path / "state.db")
 
     return ShortsPipeline(state_manager=state)
 
 
-
-
-
 def test_rerender_refuses_without_selected_clip(tmp_path: Path, monkeypatch):
 
     from autoshorts.core.models import Job, JobStatus
 
-
-
     monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: tmp_path / "work")
 
     monkeypatch.setattr("autoshorts.pipeline.get_output_dir", lambda: tmp_path / "output")
-
-
 
     pipe = _make_pipeline(tmp_path)
 
@@ -624,45 +459,27 @@ def test_rerender_refuses_without_selected_clip(tmp_path: Path, monkeypatch):
 
     clip.write_bytes(b"video")
 
-
-
     job = Job(
-
         id="rerender_noclip",
-
         source_url="",
-
         status=JobStatus.READY_FOR_REVIEW,
-
         raw_video_path=str(clip),
-
         selected_clips=[],
-
     )
 
     pipe.state_manager.save_job(job)
 
-
-
     with pytest.raises(AutoShortsError):
-
         pipe.rerender_job("rerender_noclip")
-
-
-
 
 
 def test_rerender_refuses_on_empty_raw_cut(tmp_path: Path, monkeypatch):
 
     from autoshorts.core.models import ClipCandidate, ClipSelection, Job, JobStatus
 
-
-
     monkeypatch.setattr("autoshorts.pipeline.get_work_dir", lambda: tmp_path / "work")
 
     monkeypatch.setattr("autoshorts.pipeline.get_output_dir", lambda: tmp_path / "output")
-
-
 
     pipe = _make_pipeline(tmp_path)
 
@@ -670,41 +487,22 @@ def test_rerender_refuses_on_empty_raw_cut(tmp_path: Path, monkeypatch):
 
     empty.write_bytes(b"")
 
-
-
     job = Job(
-
         id="rerender_empty",
-
         source_url="",
-
         status=JobStatus.READY_FOR_REVIEW,
-
         raw_video_path=str(empty),
-
         selected_clips=[
-
             ClipSelection(candidate=ClipCandidate(start=0.0, end=20.0, text="hi there"))
-
         ],
-
     )
 
     pipe.state_manager.save_job(job)
 
-
-
     # Empty file + no way to regenerate => hard, explicit failure rather than a bad render.
 
     with pytest.raises(AutoShortsError):
-
         pipe.rerender_job("rerender_empty")
-
-
-
-
-
-
 
 
 # =============================================================================
@@ -714,7 +512,12 @@ def test_rerender_refuses_on_empty_raw_cut(tmp_path: Path, monkeypatch):
 
 def test_scheduler_destructive_cleanup_prevented_on_unconfirmed_studio_result(tmp_path: Path):
     """Verify unconfirmed Studio DOM scrapes (result.verified == False) NEVER trigger cleaner.cleanup_job."""
-    from datetime import UTC, datetime    from autoshorts.core.models import Job, JobStatus, UploadResult    from autoshorts.core.state_manager import StateManager    from autoshorts.quota.quota_tracker import QuotaTracker    from autoshorts.scheduler.spread_scheduler import SpreadScheduler
+    from datetime import UTC, datetime
+
+    from autoshorts.core.models import Job, JobStatus, UploadResult
+    from autoshorts.core.state_manager import StateManager
+    from autoshorts.quota.quota_tracker import QuotaTracker
+    from autoshorts.scheduler.spread_scheduler import SpreadScheduler
 
     db_path = tmp_path / "test.db"
     state_mgr = StateManager(db_path=db_path)
@@ -774,7 +577,10 @@ def test_scheduler_destructive_cleanup_prevented_on_unconfirmed_studio_result(tm
 
 def test_state_manager_atomic_slot_claiming(tmp_path: Path):
     """Verify claim_scheduled_slot atomically claims SCHEDULED slot and rejects duplicate claims."""
-    from datetime import UTC, datetime    from autoshorts.core.models import Job, JobStatus    from autoshorts.core.state_manager import StateManager
+    from datetime import UTC, datetime
+
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
 
     state_mgr = StateManager(db_path=tmp_path / "test_claim.db")
     job_id = "job_claim_1"
@@ -802,7 +608,13 @@ def test_state_manager_atomic_slot_claiming(tmp_path: Path):
 
 def test_attribution_auto_tune_and_winning_guidance_summary(tmp_path: Path, monkeypatch):
     """Verify auto_tune_config_from_winners persists to data/autotune_winners.json and guidance summary renders."""
-    from autoshorts.analytics.attribution import (        PerformanceAttributionEngine,        get_winning_guidance_summary,    )    from autoshorts.core.config import Settings    from autoshorts.core.models import Job, JobStatus, UploadResult    from autoshorts.core.state_manager import StateManager
+    from autoshorts.analytics.attribution import (
+        PerformanceAttributionEngine,
+        get_winning_guidance_summary,
+    )
+    from autoshorts.core.config import Settings
+    from autoshorts.core.models import Job, JobStatus, UploadResult
+    from autoshorts.core.state_manager import StateManager
 
     monkeypatch.setattr("autoshorts.core.paths.get_data_dir", lambda: tmp_path)
 
@@ -820,15 +632,17 @@ def test_attribution_auto_tune_and_winning_guidance_summary(tmp_path: Path, monk
     state_mgr.save_job(job)
 
     # Insert analytics record with high performance
-    state_mgr.upsert_video_analytics({
-        "video_id": "vid_attr_1",
-        "views": 10000,
-        "likes": 800,
-        "avg_view_duration_sec": 45.0,
-        "avg_view_percentage": 85.0,
-        "viewed_vs_swiped_pct": 80.0,
-        "job_id": "job_attr_1",
-    })
+    state_mgr.upsert_video_analytics(
+        {
+            "video_id": "vid_attr_1",
+            "views": 10000,
+            "likes": 800,
+            "avg_view_duration_sec": 45.0,
+            "avg_view_percentage": 85.0,
+            "viewed_vs_swiped_pct": 80.0,
+            "job_id": "job_attr_1",
+        }
+    )
 
     engine = PerformanceAttributionEngine(state_mgr)
     settings = Settings()
@@ -851,7 +665,10 @@ def test_attribution_auto_tune_and_winning_guidance_summary(tmp_path: Path, monk
 
 def test_pipeline_process_batch_parallel(tmp_path: Path, monkeypatch):
     """Verify process_batch processes in parallel using ThreadPoolExecutor and preserves job order."""
-    import threading    import time    from autoshorts.core.models import Job, JobStatus
+    import threading
+    import time
+
+    from autoshorts.core.models import Job, JobStatus
 
     pipe = _make_pipeline(tmp_path)
     pipe.concurrency = 3
@@ -884,7 +701,14 @@ def test_pipeline_process_batch_parallel(tmp_path: Path, monkeypatch):
 
 def test_pipeline_laya_rhythm_engine_integration(tmp_path: Path, monkeypatch):
     """Verify LayaRhythmEngine snaps zoom punches and computes duck_release_ms when bgm_path is set."""
-    from autoshorts.core.models import (        ClipCandidate,        ClipSelection,        EditDecisionList,        Job,        JobStatus,        ZoomPunchIn,    )
+    from autoshorts.core.models import (
+        ClipCandidate,
+        ClipSelection,
+        EditDecisionList,
+        Job,
+        JobStatus,
+        ZoomPunchIn,
+    )
 
     pipe = _make_pipeline(tmp_path)
 

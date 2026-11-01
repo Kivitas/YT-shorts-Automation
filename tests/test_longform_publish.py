@@ -126,7 +126,10 @@ def test_publish_respects_studio_and_local_modes(counter, tmp_path, monkeypatch)
     cfg_local = SimpleNamespace(
         upload=SimpleNamespace(mode="local", default_privacy_status="unlisted", category_id="27")
     )
-    assert pub.publish_longform(_result(tmp_path), config=cfg_studio) == "https://youtube.com/watch?v=studio1"
+    assert (
+        pub.publish_longform(_result(tmp_path), config=cfg_studio)
+        == "https://youtube.com/watch?v=studio1"
+    )
     assert pub.publish_longform(_result(tmp_path), config=cfg_local) == "file:///exported/v.mp4"
     assert modes_used == ["studio", "local"]
     assert pub.longform_uploads_today() == 2

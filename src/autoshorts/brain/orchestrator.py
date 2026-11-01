@@ -406,7 +406,9 @@ class MasterBrainOrchestrator:
         """Compose 40-second viral narrative structure with optional LLM generation."""
         if self.llm_provider is not None and hasattr(self.llm_provider, "complete"):
             try:
-                insights = "\n- ".join(research.key_insights[:3]) if research.key_insights else "N/A"
+                insights = (
+                    "\n- ".join(research.key_insights[:3]) if research.key_insights else "N/A"
+                )
                 prompt = f"""[ROLE: VIRAL SHORT-FORM SCRIPTWRITER]
 Topic: {topic}
 Opening Hook: {hook}
@@ -431,7 +433,7 @@ Return ONLY the plain narration script text with no stage directions, emojis, or
                         if lines and lines[-1].startswith("```"):
                             lines = lines[:-1]
                         generated = "\n".join(lines).strip()
-                    generated = generated.strip('"\'')
+                    generated = generated.strip("\"'")
                     return generated
             except Exception as e:
                 logger.warning("LLM script generation failed (%s); using deterministic script.", e)

@@ -950,7 +950,9 @@ def test_dashboard_longform_genres_endpoint(dashboard_client: dict[str, Any]):
         assert len(g["sample_topics"]) >= 2
 
 
-def test_dashboard_longform_create_endpoint(dashboard_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch):
+def test_dashboard_longform_create_endpoint(
+    dashboard_client: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """Verify POST /api/longform accepts topic, genre, visual_style, minutes up to 15, and forwards safely."""
     client: TestClient = dashboard_client["client"]
     from autoshorts.longform.types import LongformResult
@@ -1135,7 +1137,7 @@ def test_dashboard_index_html_track6_upgrades(dashboard_client: dict[str, Any]):
 
     # 8th Visual Caption Card (rapid)
     assert 'data-preset="rapid"' in html
-    assert '8 Animated ASS Typography Styles' in html
+    assert "8 Animated ASS Typography Styles" in html
 
     # Settings API key fields
     assert 'id="setting-eachlabs-key"' in html

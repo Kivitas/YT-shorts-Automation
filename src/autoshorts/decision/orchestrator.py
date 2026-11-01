@@ -206,7 +206,7 @@ class SemIfDecider(Decider):
         letters = [chr(ord("A") + i) for i in range(len(batch))]
         options = {
             letter: f"[{cand.start:.1f}s - {cand.end:.1f}s]: {cand.text[:90]}..."
-            for letter, cand in zip(letters, batch)
+            for letter, cand in zip(letters, batch, strict=False)
         }
 
         context = {
@@ -332,7 +332,7 @@ class SemIfDecider(Decider):
                     candidate=cand,
                     clip_index=i,
                     target_duration=max(
-                        10.0,
+                        1.0,
                         min(cand.duration, float(self.settings.job_defaults.max_duration_seconds)),
                     ),
                     background_style=bg_style,

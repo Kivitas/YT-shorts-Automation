@@ -239,7 +239,11 @@ def generate_sound_effects(
 ) -> EachLabsAsset:
     """Generate custom sound effects using each::sense AI."""
     text = _validate_prompt(prompt)
-    if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, int) or duration_seconds < 1:
+    if (
+        isinstance(duration_seconds, bool)
+        or not isinstance(duration_seconds, int)
+        or duration_seconds < 1
+    ):
         raise EachLabsError("duration_seconds must be a positive integer")
 
     content = f"Generate a sound effect: {text}. {duration_seconds} seconds long."
@@ -306,18 +310,19 @@ def generate_song(
 ) -> EachLabsAsset:
     """Generate complete song with vocals and instrumentals."""
     text = _validate_prompt(prompt)
-    if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, int) or duration_seconds < 5:
+    if (
+        isinstance(duration_seconds, bool)
+        or not isinstance(duration_seconds, int)
+        or duration_seconds < 5
+    ):
         raise EachLabsError("duration_seconds must be an integer >= 5")
 
     if lyrics and lyrics.strip():
         content = (
-            f"Generate a song, {duration_seconds} seconds long: {text}\n\n"
-            f"Lyrics:\n{lyrics.strip()}"
+            f"Generate a song, {duration_seconds} seconds long: {text}\n\nLyrics:\n{lyrics.strip()}"
         )
     else:
-        content = (
-            f"Generate a song with vocals and instrumentals, {duration_seconds} seconds long: {text}"
-        )
+        content = f"Generate a song with vocals and instrumentals, {duration_seconds} seconds long: {text}"
 
     messages = [{"role": "user", "content": content}]
     raw_text = _chat_completion_request(
@@ -389,7 +394,9 @@ def _check_download_url(url: str) -> None:
     if parts.username or parts.password or port not in (None, 443):
         raise EachLabsError("download URL must not carry credentials or a custom port")
     host = (parts.hostname or "").lower()
-    if host not in ("eachlabs.ai", "eachlabs.run") and not any(host.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES):
+    if host not in ("eachlabs.ai", "eachlabs.run") and not any(
+        host.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES
+    ):
         raise EachLabsError(f"download host not allowed: {host or '<none>'}")
 
 

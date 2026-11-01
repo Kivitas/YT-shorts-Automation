@@ -108,9 +108,7 @@ def _failure(reason: str) -> dict[str, Any]:
     return {"ok": False, "issues": [reason], "raw": {}}
 
 
-def check_delivery(
-    video_path: Path | str, platform: str = "shorts"
-) -> dict[str, Any]:
+def check_delivery(video_path: Path | str, platform: str = "shorts") -> dict[str, Any]:
     """Run check.py on ``video_path`` against ``platform`` spec (default: shorts); never raises.
 
     Returns ``{"ok": bool, "issues": [str], "raw": dict}``. ``issues`` lists every FAIL and WARN
@@ -201,9 +199,7 @@ def detect_scenes_and_highlights(
         return {"ok": False, "scenes": [], "highlights": [], "error": str(exc), "raw": {}}
 
 
-def detect_speech_silences(
-    video_path: Path | str, threshold_db: float = -38.0
-) -> dict[str, Any]:
+def detect_speech_silences(video_path: Path | str, threshold_db: float = -38.0) -> dict[str, Any]:
     """Detect speech silences and dead-air intervals in audio track."""
     try:
         args = [
@@ -322,15 +318,11 @@ def render_safe_zone_preview(
         if edge == "top":
             boxes.append(f"drawbox=x=0:y=0:w=iw:h=ih*{frac:g}:color=red@0.35:t=fill")
         elif edge == "bottom":
-            boxes.append(
-                f"drawbox=x=0:y=ih*(1-{frac:g}):w=iw:h=ih*{frac:g}:color=red@0.35:t=fill"
-            )
+            boxes.append(f"drawbox=x=0:y=ih*(1-{frac:g}):w=iw:h=ih*{frac:g}:color=red@0.35:t=fill")
         elif edge == "left":
             boxes.append(f"drawbox=x=0:y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill")
         else:
-            boxes.append(
-                f"drawbox=x=iw*(1-{frac:g}):y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill"
-            )
+            boxes.append(f"drawbox=x=iw*(1-{frac:g}):y=0:w=iw*{frac:g}:h=ih:color=red@0.20:t=fill")
 
     vf = ",".join(boxes) if boxes else "null"
     cmd = [

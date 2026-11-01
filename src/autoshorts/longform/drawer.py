@@ -458,7 +458,9 @@ def draw_character(
     for side in (-1, 1):
         ex = hx + side * 0.42 * r
         if blink:
-            draw.line([(ex - eye_w / 2, eye_y), (ex + eye_w / 2, eye_y)], fill=OUTLINE, width=line_w)
+            draw.line(
+                [(ex - eye_w / 2, eye_y), (ex + eye_w / 2, eye_y)], fill=OUTLINE, width=line_w
+            )
         else:
             draw.ellipse(
                 [ex - eye_w / 2, eye_y - eye_h / 2, ex + eye_w / 2, eye_y + eye_h / 2],
@@ -492,7 +494,9 @@ def draw_character(
 # ---------------------------------------------------------------------------
 # Stickers and sparkles
 # ---------------------------------------------------------------------------
-def _star(cx: float, cy: float, outer: float, inner: float, points: int) -> list[tuple[float, float]]:
+def _star(
+    cx: float, cy: float, outer: float, inner: float, points: int
+) -> list[tuple[float, float]]:
     pts = []
     for i in range(points * 2):
         rad = outer if i % 2 == 0 else inner
@@ -501,7 +505,9 @@ def _star(cx: float, cy: float, outer: float, inner: float, points: int) -> list
     return pts
 
 
-def _filled_poly(d: ImageDraw.ImageDraw, pts: list[tuple[float, float]], fill: tuple[int, int, int]) -> None:
+def _filled_poly(
+    d: ImageDraw.ImageDraw, pts: list[tuple[float, float]], fill: tuple[int, int, int]
+) -> None:
     d.polygon(pts, fill=fill)
     d.line(pts + [pts[0]], fill=OUTLINE, width=6, joint="curve")
 
@@ -513,10 +519,17 @@ def draw_sticker(
     if kind == "star":
         _filled_poly(d, _star(cx, cy, size, size * 0.45, 5), YELLOW)
     elif kind == "coin":
-        d.ellipse([cx - size, cy - size, cx + size, cy + size], fill=(255, 196, 40), outline=OUTLINE, width=6)
+        d.ellipse(
+            [cx - size, cy - size, cx + size, cy + size],
+            fill=(255, 196, 40),
+            outline=OUTLINE,
+            width=6,
+        )
         d.text((cx, cy), "$", font=load_font(int(size * 1.2)), fill=OUTLINE, anchor="mm")
     elif kind == "check":
-        d.ellipse([cx - size, cy - size, cx + size, cy + size], fill=GREEN, outline=OUTLINE, width=6)
+        d.ellipse(
+            [cx - size, cy - size, cx + size, cy + size], fill=GREEN, outline=OUTLINE, width=6
+        )
         d.line(
             [(cx - 0.45 * size, cy + 0.02 * size), (cx - 0.12 * size, cy + 0.36 * size), (cx + 0.5 * size, cy - 0.35 * size)],
             fill=WHITE, width=max(4, int(size * 0.22)), joint="curve",
@@ -533,7 +546,15 @@ def draw_sticker(
         _filled_poly(d, _star(cx, cy, size, size * 0.72, 12), (255, 80, 80))
         if label:
             font = _fit_font(d, label, int(size * 0.6), size * 1.6)
-            d.text((cx, cy), label, font=font, fill=WHITE, anchor="mm", stroke_width=3, stroke_fill=OUTLINE)
+            d.text(
+                (cx, cy),
+                label,
+                font=font,
+                fill=WHITE,
+                anchor="mm",
+                stroke_width=3,
+                stroke_fill=OUTLINE,
+            )
 
 
 def _draw_sparkles(d: ImageDraw.ImageDraw, t: float) -> None:
@@ -559,18 +580,30 @@ def _pop(age: float, life: float = 2.8) -> float:
 # Scenes: flat sets painted once per scene and cached + dynamic genre engines.
 # ---------------------------------------------------------------------------
 def _box(
-    d: ImageDraw.ImageDraw, box: Sequence[float], fill: tuple[int, int, int], radius: int = 18, width: int = 7
+    d: ImageDraw.ImageDraw,
+    box: Sequence[float],
+    fill: tuple[int, int, int],
+    radius: int = 18,
+    width: int = 7,
 ) -> None:
     d.rounded_rectangle(list(box), radius=radius, fill=fill, outline=OUTLINE, width=width)
 
 
-def _gradient(img: Image.Image, box: tuple[int, int, int, int], top: tuple[int, int, int], bottom: tuple[int, int, int]) -> None:
+def _gradient(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    top: tuple[int, int, int],
+    bottom: tuple[int, int, int],
+) -> None:
     x0, y0, x1, y1 = box
     d = ImageDraw.Draw(img)
     span = max(1, y1 - y0 - 1)
     for y in range(y0, y1):
         k = (y - y0) / span
-        d.line([(x0, y), (x1, y)], fill=tuple(round(top[i] + (bottom[i] - top[i]) * k) for i in range(3)))
+        d.line(
+            [(x0, y), (x1, y)],
+            fill=tuple(round(top[i] + (bottom[i] - top[i]) * k) for i in range(3)),
+        )
 
 
 def _paint_bedroom(img: Image.Image) -> None:
@@ -580,7 +613,9 @@ def _paint_bedroom(img: Image.Image) -> None:
     pts = [(x, 150 + 50 * math.sin(math.pi * x / WIDTH)) for x in range(0, WIDTH + 1, 40)]
     d.line(pts, fill=(120, 90, 40), width=3)
     for x, y in pts[::2]:
-        d.ellipse([x - 9, y - 9, x + 9, y + 9], fill=(255, 250, 210), outline=(120, 90, 40), width=3)
+        d.ellipse(
+            [x - 9, y - 9, x + 9, y + 9], fill=(255, 250, 210), outline=(120, 90, 40), width=3
+        )
     _box(d, (120, 200, 300, 350), (255, 110, 170))
     _box(d, (330, 230, 480, 330), (80, 200, 220))
     _box(d, (1450, 200, 1800, 520), (130, 215, 255), radius=10, width=10)
@@ -702,10 +737,16 @@ def _paint_money(img: Image.Image) -> None:
     d.ellipse([1360, 290, 1640, 570], fill=(120, 130, 145), outline=OUTLINE, width=8)
     for k in range(8):
         a = k * math.pi / 4
-        d.line([(1500, 430), (1500 + 120 * math.cos(a), 430 + 120 * math.sin(a))], fill=OUTLINE, width=10)
+        d.line(
+            [(1500, 430), (1500 + 120 * math.cos(a), 430 + 120 * math.sin(a))],
+            fill=OUTLINE,
+            width=10,
+        )
     for i in range(5):
         y = 850 - i * 34
-        d.rounded_rectangle([1180, y - 30, 1480, y], radius=8, fill=(120, 220, 120), outline=OUTLINE, width=6)
+        d.rounded_rectangle(
+            [1180, y - 30, 1480, y], radius=8, fill=(120, 220, 120), outline=OUTLINE, width=6
+        )
         d.rectangle([1300, y - 30, 1360, y], fill=WHITE, outline=OUTLINE, width=4)
     for x, y in [(300, 840), (360, 842), (420, 838), (330, 800), (390, 800)]:
         d.ellipse([x - 34, y - 18, x + 34, y + 18], fill=(255, 200, 40), outline=OUTLINE, width=6)
@@ -720,7 +761,9 @@ def _paint_parody(img: Image.Image) -> None:
     # Paint-explainer style chalkboard / comedy studio backdrop
     _box(d, (660, 185, 1260, 520), (248, 244, 228), radius=18, width=8)
     d.line([(720, 420), (880, 320), (1020, 390), (1190, 250)], fill=PINK, width=10, joint="curve")
-    d.text((960, 230), "EXPECTATION vs REALITY", font=load_font(28, True), fill=OUTLINE, anchor="mm")
+    d.text(
+        (960, 230), "EXPECTATION vs REALITY", font=load_font(28, True), fill=OUTLINE, anchor="mm"
+    )
 
 
 def _paint_dark_studio(img: Image.Image) -> None:
@@ -831,7 +874,9 @@ def _load_font_cached(size: int, bold: bool) -> Any:
         return ImageFont.load_default()
 
 
-def _fit_font(draw: ImageDraw.ImageDraw, text: str, size: int, max_w: float, bold: bool = True) -> Any:
+def _fit_font(
+    draw: ImageDraw.ImageDraw, text: str, size: int, max_w: float, bold: bool = True
+) -> Any:
     while size > 18:
         font = load_font(size, bold)
         if draw.textlength(text, font=font) <= max_w:
@@ -840,7 +885,9 @@ def _fit_font(draw: ImageDraw.ImageDraw, text: str, size: int, max_w: float, bol
     return load_font(18, bold)
 
 
-def _caption_chunk(words: list[dict[str, Any]], active: int, per_line: int = 7) -> tuple[int, list[dict[str, Any]]]:
+def _caption_chunk(
+    words: list[dict[str, Any]], active: int, per_line: int = 7
+) -> tuple[int, list[dict[str, Any]]]:
     start = (max(active, 0) // per_line) * per_line
     return start, words[start : start + per_line]
 
@@ -877,7 +924,13 @@ def _draw_caption(d: ImageDraw.ImageDraw, words: list[dict[str, Any]], t: float)
 
 
 def _draw_chrome(
-    d: ImageDraw.ImageDraw, title: str, index: int, count: int, t: float, words: list[dict[str, Any]], frac: float
+    d: ImageDraw.ImageDraw,
+    title: str,
+    index: int,
+    count: int,
+    t: float,
+    words: list[dict[str, Any]],
+    frac: float,
 ) -> None:
     d.rectangle([0, 0, WIDTH, 96], fill=PINK)
     tfont = _fit_font(d, title, 48, WIDTH - 360)
@@ -947,16 +1000,26 @@ def _resolve_engine_kind(sa: SectionAudio, scene: str) -> str:
         return "finance"
     if vm.startswith("motivation") or scene == "motivation":
         return "motivation"
-    if vm.startswith("parody") or scene == "parody" or getattr(sa.section, "speaker", "narrator") in ("skeptic", "cohost"):
+    if (
+        vm.startswith("parody")
+        or scene == "parody"
+        or getattr(sa.section, "speaker", "narrator") in ("skeptic", "cohost")
+    ):
         return "parody"
     return "classic"
 
 
-def _apply_camera_motion(img: Image.Image, t: float, dur: float, engine_kind: str, speaker: str) -> Image.Image:
+def _apply_camera_motion(
+    img: Image.Image, t: float, dur: float, engine_kind: str, speaker: str
+) -> Image.Image:
     """Apply subtle Ken-Burns zoom/pan or parody deadpan punch-in on the stage area."""
     zoom = 1.0 + 0.032 * (0.5 - 0.5 * math.cos(t * 0.55))
     focus_x, focus_y = WIDTH * 0.5, HEIGHT * 0.48
-    if engine_kind == "parody" and dur > 1.0 and (t > dur * 0.78 or speaker in ("skeptic", "cohost")):
+    if (
+        engine_kind == "parody"
+        and dur > 1.0
+        and (t > dur * 0.78 or speaker in ("skeptic", "cohost"))
+    ):
         # Deadpan punch-in toward the active speaker
         zoom = 1.06
         focus_x = 1360.0 if speaker in ("skeptic", "cohost") else 560.0
@@ -992,15 +1055,23 @@ def _draw_scene(
 
     if engine_kind in ("history", "science", "comparison", "finance", "motivation"):
         if engine_kind == "history":
-            draw_history_canvas(img, d, t, index, sa.section.heading, callout, sub_domain, load_font)
+            draw_history_canvas(
+                img, d, t, index, sa.section.heading, callout, sub_domain, load_font
+            )
         elif engine_kind == "science":
-            draw_science_canvas(img, d, t, index, sa.section.heading, callout, sub_domain, load_font)
+            draw_science_canvas(
+                img, d, t, index, sa.section.heading, callout, sub_domain, load_font
+            )
         elif engine_kind == "comparison":
-            draw_comparison_canvas(img, d, t, index, sa.section.heading, comp_data, sub_domain, load_font)
+            draw_comparison_canvas(
+                img, d, t, index, sa.section.heading, comp_data, sub_domain, load_font
+            )
         elif engine_kind == "finance":
             draw_finance_canvas(img, d, t, index, sa.section.heading, callout, load_font)
         else:
-            draw_motivation_canvas(img, d, t, index, sa.section.heading, callout, sub_domain, load_font)
+            draw_motivation_canvas(
+                img, d, t, index, sa.section.heading, callout, sub_domain, load_font
+            )
 
         # Articulated presenter character on the left stage pointing at the live canvas
         enter = ease_out_back(min(1.0, t / 0.55))
@@ -1143,7 +1214,9 @@ def _transition(kind: str, prev: Image.Image, cur: Image.Image, k: float) -> Ima
     out = prev.copy()
     if x > 0:
         out.paste(cur.crop((0, 0, x, HEIGHT)), (0, 0))
-    ImageDraw.Draw(out).rectangle([x - 14, 0, x + 14, HEIGHT], fill=YELLOW, outline=OUTLINE, width=6)
+    ImageDraw.Draw(out).rectangle(
+        [x - 14, 0, x + 14, HEIGHT], fill=YELLOW, outline=OUTLINE, width=6
+    )
     return out
 
 

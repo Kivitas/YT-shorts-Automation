@@ -99,8 +99,13 @@ All domain interfaces are defined as `@runtime_checkable` `typing.Protocol` clas
 from typing import Protocol, runtime_checkable, Sequence, Mapping, Any
 from pathlib import Path
 from autoshorts.core.models import (
-    ClipCandidate, ClipSelection, EditDecisionList, VideoMetadata, UploadResult
+    ClipCandidate,
+    ClipSelection,
+    EditDecisionList,
+    VideoMetadata,
+    UploadResult,
 )
+
 
 @runtime_checkable
 class LLMProvider(Protocol):
@@ -110,7 +115,10 @@ class LLMProvider(Protocol):
     def supports_logprobs(self) -> bool: ...
     def list_models(self) -> list[str]: ...
     def complete(self, prompt: str, **kwargs: Any) -> str: ...
-    def score_options(self, prompt: str, options: Sequence[str] | Mapping[str, str], **kwargs: Any) -> dict[str, float]: ...
+    def score_options(
+        self, prompt: str, options: Sequence[str] | Mapping[str, str], **kwargs: Any
+    ) -> dict[str, float]: ...
+
 
 @runtime_checkable
 class Decider(Protocol):
@@ -120,26 +128,41 @@ class Decider(Protocol):
         instructions: str | None = None,
         heatmap_points: Sequence[dict[str, float]] | None = None,
     ) -> list[ClipCandidate]: ...
-    def select_clips(self, candidates: Sequence[ClipCandidate], count: int = 1) -> list[ClipSelection]: ...
+    def select_clips(
+        self, candidates: Sequence[ClipCandidate], count: int = 1
+    ) -> list[ClipSelection]: ...
     def decide_action(self, action_key: str, context: Mapping[str, Any]) -> str: ...
+
 
 @runtime_checkable
 class Downloader(Protocol):
     def fetch_metadata(self, url: str) -> VideoMetadata: ...
     def fetch_heatmap(self, url: str) -> list[dict[str, float]]: ...
     def fetch_sponsor_segments(self, video_id: str) -> list[dict[str, Any]]: ...
-    def download_section(self, url: str, start_sec: float, end_sec: float, output_path: Path) -> Path: ...
+    def download_section(
+        self, url: str, start_sec: float, end_sec: float, output_path: Path
+    ) -> Path: ...
     def download_audio_only(self, url: str, output_path: Path) -> Path: ...
+
 
 @runtime_checkable
 class Transcriber(Protocol):
     def transcribe(self, audio_path: Path) -> list[dict[str, Any]]: ...
     def align_words(self, audio_path: Path, text: str | None = None) -> list[dict[str, Any]]: ...
 
+
 @runtime_checkable
 class EditPlanner(Protocol):
-    def generate_edl(self, video_clip_path: Path, transcript_text: str | None = None, instructions: str | None = None) -> EditDecisionList: ...
-    def detect_dead_air_cuts(self, transcript_words: Sequence[dict[str, Any]], threshold_sec: float = 0.45) -> list[dict[str, float]]: ...
+    def generate_edl(
+        self,
+        video_clip_path: Path,
+        transcript_text: str | None = None,
+        instructions: str | None = None,
+    ) -> EditDecisionList: ...
+    def detect_dead_air_cuts(
+        self, transcript_words: Sequence[dict[str, Any]], threshold_sec: float = 0.45
+    ) -> list[dict[str, float]]: ...
+
 
 @runtime_checkable
 class Compositor(Protocol):
@@ -155,7 +178,10 @@ class Compositor(Protocol):
         **kwargs: Any,
     ) -> Path: ...
     def generate_preview(self, source_clip: Path, output_path: Path, **kwargs: Any) -> Path: ...
-    def extract_hook_thumbnail(self, video_clip_path: Path, timestamp_sec: float, output_path: Path) -> Path: ...
+    def extract_hook_thumbnail(
+        self, video_clip_path: Path, timestamp_sec: float, output_path: Path
+    ) -> Path: ...
+
 
 @runtime_checkable
 class Uploader(Protocol):
@@ -172,6 +198,7 @@ class Uploader(Protocol):
     def generate_title_variants(self, base_title: str, hook_text: str) -> dict[str, str]: ...
     def verify(self, video_id: str) -> bool: ...
 
+
 @runtime_checkable
 class AnalyticsEngine(Protocol):
     def calculate_outlier_multiplier(self, views: int, channel_median_views: float) -> float: ...
@@ -179,10 +206,12 @@ class AnalyticsEngine(Protocol):
     def auto_tune_from_winners(self) -> dict[str, Any]: ...
     def export_telemetry(self, format: str = "json") -> str: ...
 
+
 @runtime_checkable
 class Cleaner(Protocol):
     def cleanup_job(self, job_id: str, force: bool = False) -> list[Path]: ...
     def assert_safe_to_delete(self, path: Path | str) -> None: ...
+
 
 @runtime_checkable
 class BrainOrchestrator(Protocol):
@@ -201,68 +230,164 @@ class BrainOrchestrator(Protocol):
     def preflight_check(self, mode: str = "mode_b") -> None: ...
     def get_plan(self, plan_id: str) -> Any | None: ...
 
+
 @runtime_checkable
 class HookCritic(Protocol):
-    async def evaluate_mode_b(self, hook_text: str, attempt: int = 1, prior_reviews: list[Any] | None = None) -> Any: ...
-    async def evaluate_mode_a(self, transcript_slice: str, start_sec: float, end_sec: float, candidate_index: int = 0) -> Any: ...
+    async def evaluate_mode_b(
+        self, hook_text: str, attempt: int = 1, prior_reviews: list[Any] | None = None
+    ) -> Any: ...
+    async def evaluate_mode_a(
+        self, transcript_slice: str, start_sec: float, end_sec: float, candidate_index: int = 0
+    ) -> Any: ...
+
 
 @runtime_checkable
 class ViralSeo(Protocol):
-    async def generate_seo(self, hook: str, topic: str = "", niche: str = "general", key_insights: list[str] | None = None) -> Any: ...
+    async def generate_seo(
+        self,
+        hook: str,
+        topic: str = "",
+        niche: str = "general",
+        key_insights: list[str] | None = None,
+    ) -> Any: ...
+
 
 @runtime_checkable
 class MusicScout(Protocol):
-    async def scout(self, script_or_transcript: str, duration_seconds: float | None = None, niche: str = "general") -> Any: ...
+    async def scout(
+        self,
+        script_or_transcript: str,
+        duration_seconds: float | None = None,
+        niche: str = "general",
+    ) -> Any: ...
+
 
 @runtime_checkable
 class RetentionEditor(Protocol):
-    async def plan(self, words_per_second: float = 2.5, speaker_layout_hint: str | None = None, transcript: str | None = None) -> Any: ...
+    async def plan(
+        self,
+        words_per_second: float = 2.5,
+        speaker_layout_hint: str | None = None,
+        transcript: str | None = None,
+    ) -> Any: ...
+
 
 @runtime_checkable
 class TimeSeriesForecaster(Protocol):
-    def detect_retention_cliffs(self, retention_data: Sequence[Any], timestamps: Sequence[float] | None = None, duration: float = 60.0) -> list[Any]: ...
+    def detect_retention_cliffs(
+        self,
+        retention_data: Sequence[Any],
+        timestamps: Sequence[float] | None = None,
+        duration: float = 60.0,
+    ) -> list[Any]: ...
     def forecast_trajectory(self, telemetry: Any, elapsed_hours: float | None = None) -> Any: ...
+
 
 @runtime_checkable
 class RhythmEngine(Protocol):
-    def analyze_rhythm(self, audio_input: Any = None, sample_rate: int = 22050, duration: float = 60.0) -> Any: ...
-    def snap_zoom_punch_ins(self, zoom_punch_ins: Sequence[Any], beats: Sequence[float] | None = None, confidence: float | None = None) -> list[Any]: ...
-    def snap_jump_cuts(self, jump_cuts: Sequence[Any], words: Sequence[Any], beats: Sequence[float] | None = None, confidence: float | None = None) -> list[Any]: ...
+    def analyze_rhythm(
+        self, audio_input: Any = None, sample_rate: int = 22050, duration: float = 60.0
+    ) -> Any: ...
+    def snap_zoom_punch_ins(
+        self,
+        zoom_punch_ins: Sequence[Any],
+        beats: Sequence[float] | None = None,
+        confidence: float | None = None,
+    ) -> list[Any]: ...
+    def snap_jump_cuts(
+        self,
+        jump_cuts: Sequence[Any],
+        words: Sequence[Any],
+        beats: Sequence[float] | None = None,
+        confidence: float | None = None,
+    ) -> list[Any]: ...
+
 
 @runtime_checkable
 class LayaHookRouter(Protocol):
     def score_hook(self, hook_text: str) -> Any: ...
 
+
 @runtime_checkable
 class FfmpegToolsSuite(Protocol):
-    def check_delivery(self, video_path: Path | str, platform: str = "shorts") -> dict[str, Any]: ...
-    def detect_black_bars(self, video_path: Path | str, seconds: float = 10.0, samples: int = 5) -> dict[str, Any]: ...
-    def detect_scenes_and_highlights(self, video_path: Path | str, highlights: int = 5, target_duration: float | None = None) -> dict[str, Any]: ...
-    def detect_speech_silences(self, video_path: Path | str, threshold_db: float = -38.0) -> dict[str, Any]: ...
-    def apply_speed_ramp(self, video_path: Path | str, output_path: Path | str, segments: list[Any]) -> Path: ...
-    def insert_broll_cutaways(self, main_video: Path | str, output_path: Path | str, insertions: list[dict[str, Any]], audio: str = "a") -> Path: ...
-    def render_safe_zone_preview(self, video_path: Path | str, output_path: Path | str, platform: str = "shorts") -> Path: ...
+    def check_delivery(
+        self, video_path: Path | str, platform: str = "shorts"
+    ) -> dict[str, Any]: ...
+    def detect_black_bars(
+        self, video_path: Path | str, seconds: float = 10.0, samples: int = 5
+    ) -> dict[str, Any]: ...
+    def detect_scenes_and_highlights(
+        self, video_path: Path | str, highlights: int = 5, target_duration: float | None = None
+    ) -> dict[str, Any]: ...
+    def detect_speech_silences(
+        self, video_path: Path | str, threshold_db: float = -38.0
+    ) -> dict[str, Any]: ...
+    def apply_speed_ramp(
+        self, video_path: Path | str, output_path: Path | str, segments: list[Any]
+    ) -> Path: ...
+    def insert_broll_cutaways(
+        self,
+        main_video: Path | str,
+        output_path: Path | str,
+        insertions: list[dict[str, Any]],
+        audio: str = "a",
+    ) -> Path: ...
+    def render_safe_zone_preview(
+        self, video_path: Path | str, output_path: Path | str, platform: str = "shorts"
+    ) -> Path: ...
+
 
 @runtime_checkable
 class VisualAssetFetcher(Protocol):
-    def fetch_broll_clips(self, queries: list[str] | str, target_duration: float = 3.0, max_results: int = 3, orientation: str = "portrait") -> list[Any]: ...
-    def fetch_stock_photos(self, queries: list[str] | str, max_results: int = 3, orientation: str = "portrait") -> list[Any]: ...
+    def fetch_broll_clips(
+        self,
+        queries: list[str] | str,
+        target_duration: float = 3.0,
+        max_results: int = 3,
+        orientation: str = "portrait",
+    ) -> list[Any]: ...
+    def fetch_stock_photos(
+        self, queries: list[str] | str, max_results: int = 3, orientation: str = "portrait"
+    ) -> list[Any]: ...
+
 
 @runtime_checkable
 class ThumbnailGenerator(Protocol):
-    def create_thumbnail(self, video_path: Path | str, title: str, output_path: Path | str, timestamp_sec: float | None = None, badge_text: str | None = None) -> Path: ...
+    def create_thumbnail(
+        self,
+        video_path: Path | str,
+        title: str,
+        output_path: Path | str,
+        timestamp_sec: float | None = None,
+        badge_text: str | None = None,
+    ) -> Path: ...
+
 
 @runtime_checkable
 class GenMediaClient(Protocol):
     def generate_music(self, prompt: str, duration_seconds: int = 30, **kwargs: Any) -> str: ...
-    def generate_sound_effects(self, prompt: str, duration_seconds: int = 3, **kwargs: Any) -> Any: ...
-    def generate_tts(self, text: str, voice: str = "Rachel", language: str = "en", **kwargs: Any) -> Any: ...
-    def generate_song(self, prompt: str, lyrics: str | None = None, duration_seconds: int = 30, **kwargs: Any) -> Any: ...
+    def generate_sound_effects(
+        self, prompt: str, duration_seconds: int = 3, **kwargs: Any
+    ) -> Any: ...
+    def generate_tts(
+        self, text: str, voice: str = "Rachel", language: str = "en", **kwargs: Any
+    ) -> Any: ...
+    def generate_song(
+        self, prompt: str, lyrics: str | None = None, duration_seconds: int = 30, **kwargs: Any
+    ) -> Any: ...
     def edit_video(self, video_url: str, prompt: str, **kwargs: Any) -> Any: ...
+
 
 @runtime_checkable
 class LongformRenderer(Protocol):
-    def generate_longform_video(self, topic: str, target_duration_sec: float = 180.0, genre: str = "auto", provider: str = "api", publish: bool = False) -> Any: ...
+    def generate_longform_video(
+        self,
+        topic: str,
+        target_duration_sec: float = 180.0,
+        genre: str = "auto",
+        provider: str = "api",
+        publish: bool = False,
+    ) -> Any: ...
 ```
 
 ---
@@ -321,9 +446,17 @@ To allow independent, conflict-free parallel engineering, each engineer owns an 
    Always import shared contracts, models, state manager, paths, and config from `autoshorts.core`:
    ```python
    from autoshorts.core import (
-       Settings, load_config, StateManager, Job, JobStatus,
-       ClipCandidate, EditDecisionList, LLMProvider,
-       escape_ffmpeg_filter_path, atomic_write, assert_safe_to_delete
+       Settings,
+       load_config,
+       StateManager,
+       Job,
+       JobStatus,
+       ClipCandidate,
+       EditDecisionList,
+       LLMProvider,
+       escape_ffmpeg_filter_path,
+       atomic_write,
+       assert_safe_to_delete,
    )
    ```
 2. **Secrets Protection**:

@@ -1482,7 +1482,9 @@ def test_complex_filtergraph_with_visual_momentum():
     assert "[top_momentum][bottom]vstack=inputs=2:shortest=1[stacked]" in fg
 
 
-def test_align_words_with_text_prompt_and_anchoring(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_align_words_with_text_prompt_and_anchoring(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """Verify that align_words passes initial_prompt=text and reconciles tokens against text."""
     transcriber = FasterWhisperTranscriber()
     fake_audio = tmp_path / "audio.wav"
@@ -1524,7 +1526,9 @@ def test_align_words_with_text_prompt_and_anchoring(monkeypatch: pytest.MonkeyPa
     assert words[1]["word"] == "WORLD!"
 
 
-def test_extract_thumbnail_fails_on_empty_or_missing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_extract_thumbnail_fails_on_empty_or_missing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """Verify that extract_thumbnail unlinks empty/corrupt files and raises RuntimeError."""
     from autoshorts.media.compositor import extract_thumbnail
 
@@ -1583,7 +1587,9 @@ def test_remap_words_for_jump_cuts_frame_quantization():
     assert abs(remapped[1].start - 0.833) < 0.005
 
 
-def test_remotion_overlay_captions_with_encoder_args_and_cleanup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_remotion_overlay_captions_with_encoder_args_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """Verify overlay_captions accepts encoder_args and cleans up output on failure."""
     from autoshorts.media.remotion_overlay import RemotionRenderError, overlay_captions
 
@@ -1660,4 +1666,3 @@ def test_thumbnail_maker_create_short_thumbnail(tmp_path: Path):
     out_thumb2 = tmp_path / "thumb_convenience.png"
     res2 = make_short_thumbnail(title="CRAZY HACK EXPOSED", output_path=out_thumb2, badge="VIRAL")
     assert res2.is_file()
-

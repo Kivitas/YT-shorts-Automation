@@ -617,7 +617,7 @@ def apply_settings_update(
     raw_yaml: dict[str, Any] = {}
     if target_config.is_file():
         try:
-            with open(target_config, "r", encoding="utf-8") as f:
+            with open(target_config, encoding="utf-8") as f:
                 loaded = yaml.safe_load(f)
                 if isinstance(loaded, dict):
                     raw_yaml = loaded

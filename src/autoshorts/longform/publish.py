@@ -113,4 +113,15 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
             raise RuntimeError("YouTube upload did not return a video URL.")
         _record_upload()
         logger.info("Published long-form video %s (mode=%s)", upload_result.url, upload_mode)
+
+        # Automatic post-upload cleanup: delete video from PC once uploaded
+        keep_master = getattr(getattr(cfg, "cleanup", None), "keep_master_mp4", False)
+        if not keep_master:
+            try:
+                if result.video_path and Path(result.video_path).is_file():
+                    Path(result.video_path).unlink(missing_ok=True)
+                    logger.info("Purged uploaded longform master MP4: %s", result.video_path)
+            except Exception as del_err:
+                logger.warning("Could not delete uploaded longform video: %s", del_err)
+
         return str(upload_result.url)

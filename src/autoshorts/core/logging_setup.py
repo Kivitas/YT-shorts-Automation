@@ -156,7 +156,9 @@ class LogStreamHandler(logging.Handler):
         """Unregister an active subscriber queue."""
         with self._lock:
             self._subscribers = [
-                (l, q) for (l, q) in self._subscribers if not (l is loop and q is queue)
+                (sub_loop, q)
+                for (sub_loop, q) in self._subscribers
+                if not (sub_loop is loop and q is queue)
             ]
 
     def get_history(self, limit: int | None = None) -> list[str]:

@@ -109,7 +109,7 @@ def compute_softmax(logits: Mapping[str, float]) -> dict[str, float]:
         uniform = 1.0 / len(keys)
         return {k: uniform for k in keys}
 
-    return {k: exp_v / sum_exp for k, exp_v in zip(keys, exp_vals)}
+    return {k: exp_v / sum_exp for k, exp_v in zip(keys, exp_vals, strict=False)}
 
 
 def evaluate_heuristic(text: str, duration_sec: float | None = None) -> float:

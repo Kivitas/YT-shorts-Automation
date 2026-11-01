@@ -7,14 +7,14 @@ audio plans, retention guardrails, and master orchestration state.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
 
-class AgentRole(str, Enum):
+class AgentRole(StrEnum):
     """Specialist agent roles participating in the SuperBrain swarm."""
 
     ORCHESTRATOR = "orchestrator"

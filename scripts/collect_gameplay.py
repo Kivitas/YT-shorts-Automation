@@ -93,9 +93,7 @@ def print_categories_list() -> None:
     print("-" * 80)
     for row in summary:
         has_man = f"Yes ({row['manifest_clips_count']})" if row["has_manifest"] else "No"
-        print(
-            f"{row['category']:<18} {row['clips_count']:<8} {has_man:<10} {row['default_query']}"
-        )
+        print(f"{row['category']:<18} {row['clips_count']:<8} {has_man:<10} {row['default_query']}")
     print("=" * 80)
 
 

@@ -95,7 +95,9 @@ def build_edl_prompt(
     if transcript_parts:
         transcript_section = "\n\n" + "\n\n".join(transcript_parts) + "\n"
     else:
-        transcript_section = "\n(No raw transcript provided; analyze spoken dialogue and visual cues directly)\n"
+        transcript_section = (
+            "\n(No raw transcript provided; analyze spoken dialogue and visual cues directly)\n"
+        )
 
     instructions_section = (
         f"\nOPERATOR EDITORIAL INSTRUCTIONS:\n{instructions.strip()}\n"

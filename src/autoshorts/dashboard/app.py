@@ -158,13 +158,20 @@ def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
     # Delivery QC status
     if "delivery" in raw_diag:
         diag["delivery"] = raw_diag["delivery"]
-    elif job.rendered_video_path or getattr(job, "status", None) in (JobStatus.COMPLETED, JobStatus.CLEANED):
+    elif job.rendered_video_path or getattr(job, "status", None) in (
+        JobStatus.COMPLETED,
+        JobStatus.CLEANED,
+    ):
         diag["delivery"] = {"ok": True, "issues": []}
 
     # Edit plan source
     edl_src = (
         (raw_diag.get("editing", {}).get("edl_source"))
-        or (raw_diag.get("edit_plan", {}).get("source") if isinstance(raw_diag.get("edit_plan"), dict) else raw_diag.get("edit_plan"))
+        or (
+            raw_diag.get("edit_plan", {}).get("source")
+            if isinstance(raw_diag.get("edit_plan"), dict)
+            else raw_diag.get("edit_plan")
+        )
         or (getattr(job.edl, "source", None) if job.edl else None)
         or "heuristic"
     )
@@ -176,7 +183,11 @@ def enrich_job_dict(job: Job, cfg: Settings) -> dict[str, Any]:
     # Subtitle timing source
     sub_timing = (
         (raw_diag.get("subtitles", {}).get("timing_source"))
-        or (raw_diag.get("subtitle_timing", {}).get("source") if isinstance(raw_diag.get("subtitle_timing"), dict) else raw_diag.get("subtitle_timing"))
+        or (
+            raw_diag.get("subtitle_timing", {}).get("source")
+            if isinstance(raw_diag.get("subtitle_timing"), dict)
+            else raw_diag.get("subtitle_timing")
+        )
         or raw_diag.get("subtitle_timing_source")
         or "whisper"
     )
@@ -407,7 +418,7 @@ def _load_studio_profiles() -> list[dict[str, Any]]:
     prof_file = _get_studio_profiles_file()
     if prof_file.is_file():
         try:
-            with open(prof_file, "r", encoding="utf-8") as f:
+            with open(prof_file, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     return data
@@ -468,7 +479,7 @@ def _load_channel_profiles() -> list[dict[str, Any]]:
     chan_file = _get_channel_profiles_file()
     if chan_file.is_file():
         try:
-            with open(chan_file, "r", encoding="utf-8") as f:
+            with open(chan_file, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     return data
@@ -1595,7 +1606,7 @@ def create_app(
             candidates_out.append(c_dict)
 
         selected_out: list[dict[str, Any]] = []
-        for s_idx, sel in enumerate(job.selected_clips):
+        for sel in job.selected_clips:
             s_dict = sel.model_dump()
             s_dict.setdefault("heatmap_score", getattr(sel.candidate, "heatmap_score", 0.0))
             s_dict.setdefault(
@@ -1659,7 +1670,7 @@ def create_app(
                 )
 
             chosen_cand = job.candidate_windows[idx]
-            target_dur = max(10.0, min(60.0, chosen_cand.duration or 45.0))
+            target_dur = max(1.0, min(60.0, chosen_cand.duration or 45.0))
             if job.selected_clips:
                 job.selected_clips[0].candidate = chosen_cand
                 job.selected_clips[0].clip_index = idx
@@ -2270,7 +2281,9 @@ def create_app(
     # Video Streaming & Download API
     # -------------------------------------------------------------------------
 
-    def _stream_video_range(path_str: str, request: Request, filename: str | None = None) -> Response:
+    def _stream_video_range(
+        path_str: str, request: Request, filename: str | None = None
+    ) -> Response:
         path = Path(path_str)
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Video file not found on disk")
@@ -2359,17 +2372,29 @@ def create_app(
         sec = payload.setdefault("secrets", {})
 
         eachlabs_key = (
-            (active_cfg.get_eachlabs_api_key_str() if hasattr(active_cfg, "get_eachlabs_api_key_str") else None)
+            (
+                active_cfg.get_eachlabs_api_key_str()
+                if hasattr(active_cfg, "get_eachlabs_api_key_str")
+                else None
+            )
             or os.environ.get("EACHLABS_API_KEY")
             or env_vars.get("EACHLABS_API_KEY")
         )
         pexels_key = (
-            (active_cfg.get_pexels_api_key_str() if hasattr(active_cfg, "get_pexels_api_key_str") else None)
+            (
+                active_cfg.get_pexels_api_key_str()
+                if hasattr(active_cfg, "get_pexels_api_key_str")
+                else None
+            )
             or os.environ.get("PEXELS_API_KEY")
             or env_vars.get("PEXELS_API_KEY")
         )
         pixabay_key = (
-            (active_cfg.get_pixabay_api_key_str() if hasattr(active_cfg, "get_pixabay_api_key_str") else None)
+            (
+                active_cfg.get_pixabay_api_key_str()
+                if hasattr(active_cfg, "get_pixabay_api_key_str")
+                else None
+            )
             or os.environ.get("PIXABAY_API_KEY")
             or env_vars.get("PIXABAY_API_KEY")
         )
@@ -2491,7 +2516,9 @@ def create_app(
         active_cfg = pipe.config if isinstance(getattr(pipe, "config", None), Settings) else cfg
         return {
             "success": True,
-            "settings": _enrich_public_settings(active_cfg, get_public_settings_payload(active_cfg)),
+            "settings": _enrich_public_settings(
+                active_cfg, get_public_settings_payload(active_cfg)
+            ),
         }
 
     @app.post("/api/settings/youtube-client-secret")

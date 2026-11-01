@@ -704,7 +704,9 @@ def test_reconcile_marks_stranded_upload_slots_failed_not_requeued(tmp_path: Pat
     """A queue row left UPLOADING by a crash becomes FAILED so it is never re-uploaded blindly."""
     sm = StateManager(tmp_path / "stranded_slots.db")
 
-    stranded = Job(id="job_stranded_up", source_url="https://youtu.be/stranded", status=JobStatus.UPLOADING)
+    stranded = Job(
+        id="job_stranded_up", source_url="https://youtu.be/stranded", status=JobStatus.UPLOADING
+    )
     sm.save_job(stranded)
     sm.enqueue_for_upload(
         job_id="job_stranded_up",

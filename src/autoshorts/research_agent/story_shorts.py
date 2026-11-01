@@ -262,7 +262,9 @@ def build_story_prompt(mood: str, topic: str | None) -> str:
     )
 
 
-def parse_story_response(raw: str, mood: str, provider: str, auto_adjust: bool = False) -> StoryDraft:
+def parse_story_response(
+    raw: str, mood: str, provider: str, auto_adjust: bool = False
+) -> StoryDraft:
     text = (raw or "").strip()
     text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
     text = re.sub(r"\s*```$", "", text).strip()

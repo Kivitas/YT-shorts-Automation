@@ -166,7 +166,11 @@ def test_generate_sound_effects_success(monkeypatch):
         seen["request"] = request
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": f"Sound effect: {OK_URL}"}}]},
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": f"Sound effect: {OK_URL}"}}
+                ]
+            },
         )
 
     with _client(handler) as client:
@@ -203,7 +207,11 @@ def test_generate_tts_success(monkeypatch):
         seen["request"] = request
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": f"Speech audio: {OK_URL}"}}]},
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": f"Speech audio: {OK_URL}"}}
+                ]
+            },
         )
 
     with _client(handler) as client:
@@ -231,7 +239,9 @@ def test_generate_song_with_lyrics(monkeypatch):
         seen["request"] = request
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": f"Song ready: {OK_URL}"}}]},
+            json={
+                "choices": [{"message": {"role": "assistant", "content": f"Song ready: {OK_URL}"}}]
+            },
         )
 
     with _client(handler) as client:
@@ -264,7 +274,11 @@ def test_edit_video_multimodal_request(monkeypatch):
         seen["request"] = request
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"role": "assistant", "content": f"Edited video: {edited_url}"}}]},
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": f"Edited video: {edited_url}"}}
+                ]
+            },
         )
 
     with _client(handler) as client:

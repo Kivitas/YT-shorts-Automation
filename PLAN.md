@@ -534,23 +534,23 @@ SEMIF_ACTION_TABLE = {
     "WINDOW_SELECTION": {
         "question": "Does this segment represent a complete, viral standalone hook?",
         "options": {"A": "Accept window", "B": "Reject window"},
-        "action": lambda choice, win: queue_window(win) if choice == "A" else drop_window(win)
+        "action": lambda choice, win: queue_window(win) if choice == "A" else drop_window(win),
     },
     "BACKGROUND_SELECTION": {
         "question": "Which background style best complements this topic?",
         "options": {"A": "High-speed Subway Surfers", "B": "Calm Minecraft Parkour"},
-        "action": lambda choice: "subway" if choice == "A" else "minecraft"
+        "action": lambda choice: "subway" if choice == "A" else "minecraft",
     },
     "HOOK_STYLE": {
         "question": "What hook visual matches the emotional tone?",
         "options": {"A": "Bold Question Card", "B": "Shocking Keyword Highlight"},
-        "action": lambda choice: "card" if choice == "A" else "keyword"
+        "action": lambda choice: "card" if choice == "A" else "keyword",
     },
     "UPLOAD_VERIFICATION_GATE": {
         "question": "Is this generated Short clear of rendering defects and within safe guidelines?",
         "options": {"A": "Approved for publish", "B": "Flag for manual creator review"},
-        "action": lambda choice: trigger_upload() if choice == "A" else flag_review()
-    }
+        "action": lambda choice: trigger_upload() if choice == "A" else flag_review(),
+    },
 }
 ```
 
@@ -927,14 +927,17 @@ Because the pipeline runs locally on the user's desktop, the PC may sleep, hiber
   - During active window hours when items are pending in `scheduler_queue`, the scheduler prevents Windows from entering idle sleep by invoking the Win32 API via `ctypes`:
     ```python
     import ctypes
+
     ES_CONTINUOUS = 0x80000000
     ES_SYSTEM_REQUIRED = 0x00000001
     ES_AWAYMODE_REQUIRED = 0x00000040
+
 
     def prevent_system_sleep():
         ctypes.windll.kernel32.SetThreadExecutionState(
             ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
         )
+
 
     def allow_system_sleep():
         ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
@@ -963,10 +966,13 @@ import random
 from datetime import datetime, timedelta
 import zoneinfo
 
+
 class SpreadScheduler:
     def __init__(self, db, quota_tracker, config):
         self.db = db
-        self.quota = quota_tracker  # Tracks upload_bucket (100 calls/day) & general_bucket (10k units/day)
+        self.quota = (
+            quota_tracker  # Tracks upload_bucket (100 calls/day) & general_bucket (10k units/day)
+        )
         self.config = config
         self.pt_zone = zoneinfo.ZoneInfo("America/Los_Angeles")
         self.local_zone = zoneinfo.ZoneInfo("localtime")
@@ -976,29 +982,33 @@ class SpreadScheduler:
         now = datetime.now()
         start_hour, start_min = map(int, self.config.active_window.start.split(":"))
         end_hour, end_min = map(int, self.config.active_window.end.split(":"))
-        
+
         window_start = now.replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
         window_end = now.replace(hour=end_hour, minute=end_min, second=0, microsecond=0)
-        
+
         if now > window_start:
-            window_start = now + timedelta(minutes=random.randint(self.config.min_gap_minutes, self.config.max_gap_minutes))
-            
+            window_start = now + timedelta(
+                minutes=random.randint(self.config.min_gap_minutes, self.config.max_gap_minutes)
+            )
+
         total_minutes = max(10, int((window_end - window_start).total_seconds() / 60))
         if count_to_schedule <= 0 or total_minutes <= 0:
             return []
-            
+
         nominal_gap = total_minutes / count_to_schedule
         slots = []
         current_time = window_start
-        
+
         for _ in range(count_to_schedule):
             jitter = random.uniform(-0.35, 0.35) * nominal_gap
-            gap = max(self.config.min_gap_minutes, min(self.config.max_gap_minutes, nominal_gap + jitter))
+            gap = max(
+                self.config.min_gap_minutes, min(self.config.max_gap_minutes, nominal_gap + jitter)
+            )
             current_time += timedelta(minutes=gap)
             if current_time >= window_end:
                 break
             slots.append(current_time)
-            
+
         return slots
 
     def check_rolling_hour_limit(self) -> bool:
@@ -1106,6 +1116,7 @@ FORBIDDEN_PROTECTED_PATHS = [
     os.path.abspath("./logs"),
     os.path.abspath("./tests"),
 ]
+
 
 def assert_safe_to_delete(target_path: str) -> None:
     abs_target = os.path.abspath(target_path)

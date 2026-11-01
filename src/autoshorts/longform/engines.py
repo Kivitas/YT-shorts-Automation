@@ -158,16 +158,30 @@ def draw_history_canvas(
 
     # Stylized continent / territory polygons (Western Empire, Anatolia, Levant, North Africa)
     west_territory = [
-        (560, 210), (760, 185), (940, 220), (1020, 310),
-        (910, 390), (740, 410), (580, 340),
+        (560, 210),
+        (760, 185),
+        (940, 220),
+        (1020, 310),
+        (910, 390),
+        (740, 410),
+        (580, 340),
     ]
     east_territory = [
-        (1090, 225), (1380, 195), (1680, 240), (1790, 360),
-        (1650, 480), (1340, 465), (1120, 370),
+        (1090, 225),
+        (1380, 195),
+        (1680, 240),
+        (1790, 360),
+        (1650, 480),
+        (1340, 465),
+        (1120, 370),
     ]
     south_territory = [
-        (620, 520), (980, 500), (1360, 535), (1740, 570),
-        (1710, 685), (600, 685),
+        (620, 520),
+        (980, 500),
+        (1360, 535),
+        (1740, 570),
+        (1710, 685),
+        (600, 685),
     ]
     for poly, fill_col, border_col in (
         (west_territory, (194, 166, 118), (110, 84, 48)),
@@ -178,7 +192,11 @@ def draw_history_canvas(
         draw.line(poly + [poly[0]], fill=border_col, width=5, joint="curve")
 
     # Animated territory control pulse around the capital choke point (e.g. Constantinople / Rome)
-    capitals = [(1055, 345, "STRAITS CITADEL"), (790, 295, "WESTERN SEAT"), (1460, 335, "EASTERN GARRISON")]
+    capitals = [
+        (1055, 345, "STRAITS CITADEL"),
+        (790, 295, "WESTERN SEAT"),
+        (1460, 335, "EASTERN GARRISON"),
+    ]
     for cx, cy, cname in capitals:
         pulse_r = 16 + 8 * (0.5 + 0.5 * math.sin(t * 4.0 + cx * 0.01))
         draw.ellipse(
@@ -201,7 +219,9 @@ def draw_history_canvas(
     route_progress = _ease_out((t * 0.42) % 1.0)
     troop_route = [(790, 295), (920, 320), (1055, 345), (1260, 340), (1460, 335)]
     trade_route = [(680, 585), (960, 460), (1055, 345), (1380, 265), (1670, 290)]
-    _draw_progressive_polyline(draw, troop_route, route_progress, NEON_CRIMSON, width=7, with_arrow=True)
+    _draw_progressive_polyline(
+        draw, troop_route, route_progress, NEON_CRIMSON, width=7, with_arrow=True
+    )
     _draw_progressive_polyline(
         draw,
         trade_route,
@@ -260,7 +280,11 @@ def draw_history_canvas(
     # Animated timeline playhead sweeping across eras
     active_frac = ((index + min(1.0, t / 6.0)) / max(1, len(eras) - 1)) % 1.0
     px = 565 + int(span * active_frac)
-    draw.polygon([(px, y_line - 6), (px - 14, y_line - 32), (px + 14, y_line - 32)], fill=NEON_CRIMSON, outline=OUTLINE)
+    draw.polygon(
+        [(px, y_line - 6), (px - 14, y_line - 32), (px + 14, y_line - 32)],
+        fill=NEON_CRIMSON,
+        outline=OUTLINE,
+    )
     draw.ellipse([px - 9, y_line - 9, px + 9, y_line + 9], fill=NEON_GOLD, outline=OUTLINE, width=3)
 
 
@@ -287,18 +311,28 @@ def draw_science_canvas(
     for gy in range(140, 850, 80):
         draw.line([(520, gy), (1850, gy)], fill=(22, 34, 58), width=2)
 
-    draw.rounded_rectangle(
-        [520, 135, 1850, 845], radius=22, outline=NEON_CYAN, width=4
-    )
+    draw.rounded_rectangle([520, 135, 1850, 845], radius=22, outline=NEON_CYAN, width=4)
 
     h_low = f"{heading} {callout} {sub_domain}".lower()
     if "chem" in h_low or "atom" in h_low or "molecul" in h_low:
         mode = "chemistry"
     elif "astro" in h_low or "black hole" in h_low or "orbit" in h_low or "planet" in h_low:
         mode = "astrophysics"
-    elif "phys" in h_low or "quantum" in h_low or "relativ" in h_low or "force" in h_low or "wave" in h_low:
+    elif (
+        "phys" in h_low
+        or "quantum" in h_low
+        or "relativ" in h_low
+        or "force" in h_low
+        or "wave" in h_low
+    ):
         mode = "physics"
-    elif "bio" in h_low or "dna" in h_low or "brain" in h_low or "dopamine" in h_low or "cell" in h_low:
+    elif (
+        "bio" in h_low
+        or "dna" in h_low
+        or "brain" in h_low
+        or "dopamine" in h_low
+        or "cell" in h_low
+    ):
         mode = "biology"
     else:
         mode = ("biology", "chemistry", "physics", "astrophysics")[index % 4]
@@ -306,7 +340,9 @@ def draw_science_canvas(
     if mode == "chemistry":
         # Left panel: Bohr Atom with orbiting electrons
         cx, cy = 860, 470
-        for shell_idx, (rx, ry, tilt) in enumerate(((185, 76, 0.45), (185, 76, -0.45), (150, 150, 0.0))):
+        for shell_idx, (rx, ry, tilt) in enumerate(
+            ((185, 76, 0.45), (185, 76, -0.45), (150, 150, 0.0))
+        ):
             pts = []
             for step in range(48):
                 ang = 2 * math.pi * step / 48
@@ -321,11 +357,24 @@ def draw_science_canvas(
                 x0, y0 = rx * math.cos(e_ang), ry * math.sin(e_ang)
                 ex = cx + x0 * math.cos(tilt) - y0 * math.sin(tilt)
                 ey = cy + x0 * math.sin(tilt) + y0 * math.cos(tilt)
-                draw.ellipse([ex - 11, ey - 11, ex + 11, ey + 11], fill=NEON_CYAN, outline=WHITE, width=2)
+                draw.ellipse(
+                    [ex - 11, ey - 11, ex + 11, ey + 11], fill=NEON_CYAN, outline=WHITE, width=2
+                )
 
         # Glowing nucleus cluster
-        for nx, ny, col in ((-12, -8, NEON_CRIMSON), (12, -6, NEON_GOLD), (0, 12, NEON_CRIMSON), (-8, 10, NEON_GOLD), (10, 8, NEON_CRIMSON)):
-            draw.ellipse([cx + nx - 16, cy + ny - 16, cx + nx + 16, cy + ny + 16], fill=col, outline=OUTLINE, width=3)
+        for nx, ny, col in (
+            (-12, -8, NEON_CRIMSON),
+            (12, -6, NEON_GOLD),
+            (0, 12, NEON_CRIMSON),
+            (-8, 10, NEON_GOLD),
+            (10, 8, NEON_CRIMSON),
+        ):
+            draw.ellipse(
+                [cx + nx - 16, cy + ny - 16, cx + nx + 16, cy + ny + 16],
+                fill=col,
+                outline=OUTLINE,
+                width=3,
+            )
 
         # Right panel: Vibrating Molecular Bonds (H2O / Covalent Network)
         mcx, mcy = 1480, 450
@@ -348,7 +397,13 @@ def draw_science_canvas(
     elif mode == "physics":
         # Left panel: Free-body Force Vector diagram + harmonic pendulum
         bx, by = 830, 500
-        draw.rounded_rectangle([bx - 55, by - 55, bx + 55, by + 55], radius=12, fill=(58, 88, 140), outline=WHITE, width=4)
+        draw.rounded_rectangle(
+            [bx - 55, by - 55, bx + 55, by + 55],
+            radius=12,
+            fill=(58, 88, 140),
+            outline=WHITE,
+            width=4,
+        )
         draw.text((bx, by), "m", font=fnt(34, True), fill=WHITE, anchor="mm")
         pulse = 1.0 + 0.12 * math.sin(t * 4.0)
         _draw_arrow_segment(draw, (bx, by - 55), (bx, by - int(175 * pulse)), NEON_EMERALD, width=7)
@@ -360,7 +415,13 @@ def draw_science_canvas(
 
         # Right panel: Constructive Wave Interference Oscilloscope
         wx0, wx1, wy0 = 1180, 1790, 480
-        draw.rounded_rectangle([wx0 - 20, 250, wx1 + 20, 730], radius=16, fill=(16, 26, 46), outline=(60, 95, 145), width=3)
+        draw.rounded_rectangle(
+            [wx0 - 20, 250, wx1 + 20, 730],
+            radius=16,
+            fill=(16, 26, 46),
+            outline=(60, 95, 145),
+            width=3,
+        )
         wave1, wave2, super_wave = [], [], []
         for step in range(80):
             f = step / 79
@@ -393,19 +454,41 @@ def draw_science_canvas(
             draw.line([(mid_x, y), (x2, y)], fill=c_right, width=6)
             r1 = 13 if z1 >= 0 else 9
             r2 = 13 if z1 < 0 else 9
-            draw.ellipse([x1 - r1, y - r1, x1 + r1, y + r1], fill=WHITE if z1 >= 0 else (110, 140, 190), outline=OUTLINE, width=2)
-            draw.ellipse([x2 - r2, y - r2, x2 + r2, y + r2], fill=WHITE if z1 < 0 else (110, 140, 190), outline=OUTLINE, width=2)
+            draw.ellipse(
+                [x1 - r1, y - r1, x1 + r1, y + r1],
+                fill=WHITE if z1 >= 0 else (110, 140, 190),
+                outline=OUTLINE,
+                width=2,
+            )
+            draw.ellipse(
+                [x2 - r2, y - r2, x2 + r2, y + r2],
+                fill=WHITE if z1 < 0 else (110, 140, 190),
+                outline=OUTLINE,
+                width=2,
+            )
 
         # Neural Synapse / Cell Signaling Diagram on Right
         ncx, ncy = 1470, 490
-        draw.ellipse([ncx - 190, ncy - 140, ncx + 190, ncy + 140], fill=(24, 58, 76), outline=NEON_EMERALD, width=5)
-        draw.ellipse([ncx - 75, ncy - 60, ncx + 75, ncy + 60], fill=(48, 110, 140), outline=NEON_CYAN, width=4)
+        draw.ellipse(
+            [ncx - 190, ncy - 140, ncx + 190, ncy + 140],
+            fill=(24, 58, 76),
+            outline=NEON_EMERALD,
+            width=5,
+        )
+        draw.ellipse(
+            [ncx - 75, ncy - 60, ncx + 75, ncy + 60],
+            fill=(48, 110, 140),
+            outline=NEON_CYAN,
+            width=4,
+        )
         draw.text((ncx, ncy), "NUCLEUS", font=fnt(22, True), fill=WHITE, anchor="mm")
         for v_idx in range(6):
             ang = t * 1.8 + v_idx * (math.pi / 3)
             vx = ncx + 135 * math.cos(ang)
             vy = ncy + 95 * math.sin(ang)
-            draw.ellipse([vx - 14, vy - 14, vx + 14, vy + 14], fill=NEON_GOLD, outline=OUTLINE, width=2)
+            draw.ellipse(
+                [vx - 14, vy - 14, vx + 14, vy + 14], fill=NEON_GOLD, outline=OUTLINE, width=2
+            )
         badge = "MOLECULAR BIOLOGY: DNA BASE PAIRS (A-T / G-C)"
 
     else:  # astrophysics
@@ -432,12 +515,22 @@ def draw_science_canvas(
 
         # Glowing Accretion Disk & Event Horizon
         for r_disk, col in ((135, (180, 60, 30)), (105, (255, 130, 30)), (78, NEON_GOLD)):
-            draw.ellipse([acx - r_disk, acy - r_disk * 0.42, acx + r_disk, acy + r_disk * 0.42], outline=col, width=8)
-        draw.ellipse([acx - 46, acy - 46, acx + 46, acy + 46], fill=OBSIDIAN, outline=WHITE, width=3)
+            draw.ellipse(
+                [acx - r_disk, acy - r_disk * 0.42, acx + r_disk, acy + r_disk * 0.42],
+                outline=col,
+                width=8,
+            )
+        draw.ellipse(
+            [acx - 46, acy - 46, acx + 46, acy + 46], fill=OBSIDIAN, outline=WHITE, width=3
+        )
 
         # Orbiting planets
-        for p_idx, (orx, ory, p_col, pr) in enumerate(((320, 145, NEON_CYAN, 18), (460, 210, NEON_EMERALD, 24))):
-            draw.ellipse([acx - orx, acy - ory, acx + orx, acy + ory], outline=(60, 100, 150), width=2)
+        for p_idx, (orx, ory, p_col, pr) in enumerate(
+            ((320, 145, NEON_CYAN, 18), (460, 210, NEON_EMERALD, 24))
+        ):
+            draw.ellipse(
+                [acx - orx, acy - ory, acx + orx, acy + ory], outline=(60, 100, 150), width=2
+            )
             pang = t * (1.7 - p_idx * 0.5) + p_idx * 2.0
             px = acx + orx * math.cos(pang)
             py = acy + ory * math.sin(pang)
@@ -445,7 +538,9 @@ def draw_science_canvas(
         badge = "ASTROPHYSICS: SPACETIME CURVATURE & ORBITS"
 
     # Top science formula badge
-    draw.rounded_rectangle([550, 155, 1820, 222], radius=14, fill=(18, 28, 48), outline=NEON_CYAN, width=3)
+    draw.rounded_rectangle(
+        [550, 155, 1820, 222], radius=14, fill=(18, 28, 48), outline=NEON_CYAN, width=3
+    )
     draw.text((1185, 188), badge, font=fnt(24, True), fill=NEON_CYAN, anchor="mm")
 
 
@@ -465,7 +560,9 @@ def draw_comparison_canvas(
     """Render either a Side-by-Side VS Battle with racing stat bars or an S-to-F Tier-List Board."""
     fnt = font_loader or _default_font
     data = comparison_data or {}
-    mode = str(data.get("mode") or ("tier" if "tier" in f"{sub_domain} {heading}".lower() else "vs"))
+    mode = str(
+        data.get("mode") or ("tier" if "tier" in f"{sub_domain} {heading}".lower() else "vs")
+    )
 
     draw.rectangle([0, STAGE_TOP, 1920, STAGE_BOTTOM], fill=(14, 16, 28))
 
@@ -494,9 +591,23 @@ def draw_comparison_canvas(
         for r_idx, (t_label, t_col) in enumerate(tier_Specs):
             y0 = start_y + r_idx * (row_h + 8)
             y1 = y0 + row_h
-            draw.rounded_rectangle([board_x0, y0, board_x1, y1], radius=12, fill=(24, 28, 44), outline=(52, 60, 88), width=3)
-            draw.rounded_rectangle([board_x0, y0, board_x0 + 115, y1], radius=12, fill=t_col, outline=OUTLINE, width=4)
-            draw.text((board_x0 + 57, (y0 + y1) // 2), t_label, font=fnt(48, True), fill=OUTLINE, anchor="mm")
+            draw.rounded_rectangle(
+                [board_x0, y0, board_x1, y1],
+                radius=12,
+                fill=(24, 28, 44),
+                outline=(52, 60, 88),
+                width=3,
+            )
+            draw.rounded_rectangle(
+                [board_x0, y0, board_x0 + 115, y1], radius=12, fill=t_col, outline=OUTLINE, width=4
+            )
+            draw.text(
+                (board_x0 + 57, (y0 + y1) // 2),
+                t_label,
+                font=fnt(48, True),
+                fill=OUTLINE,
+                anchor="mm",
+            )
 
             items = tiers_map.get(t_label, [])
             for c_idx, item_name in enumerate(items[:3]):
@@ -517,7 +628,13 @@ def draw_comparison_canvas(
                     outline=NEON_GOLD if is_fresh else WHITE,
                     width=4 if is_fresh else 2,
                 )
-                draw.text(((ix0 + ix1) // 2, (iy0 + iy1) // 2), str(item_name)[:20], font=fnt(24, True), fill=WHITE, anchor="mm")
+                draw.text(
+                    ((ix0 + ix1) // 2, (iy0 + iy1) // 2),
+                    str(item_name)[:20],
+                    font=fnt(24, True),
+                    fill=WHITE,
+                    anchor="mm",
+                )
         return
 
     # Mode: Side-by-Side VS Battle with 5 animated racing stat bars
@@ -532,15 +649,21 @@ def draw_comparison_canvas(
     ]
 
     # Contender header cards
-    draw.rounded_rectangle([520, 150, 1080, 250], radius=16, fill=(44, 20, 36), outline=NEON_CRIMSON, width=5)
+    draw.rounded_rectangle(
+        [520, 150, 1080, 250], radius=16, fill=(44, 20, 36), outline=NEON_CRIMSON, width=5
+    )
     draw.text((800, 200), left_name[:18], font=fnt(34, True), fill=WHITE, anchor="mm")
 
-    draw.rounded_rectangle([1280, 150, 1840, 250], radius=16, fill=(18, 42, 58), outline=NEON_CYAN, width=5)
+    draw.rounded_rectangle(
+        [1280, 150, 1840, 250], radius=16, fill=(18, 42, 58), outline=NEON_CYAN, width=5
+    )
     draw.text((1560, 200), right_name[:18], font=fnt(34, True), fill=WHITE, anchor="mm")
 
     # Central VS lightning badge
     vs_r = 48 + int(4 * math.sin(t * 6.0))
-    draw.ellipse([1180 - vs_r, 200 - vs_r, 1180 + vs_r, 200 + vs_r], fill=NEON_GOLD, outline=OUTLINE, width=6)
+    draw.ellipse(
+        [1180 - vs_r, 200 - vs_r, 1180 + vs_r, 200 + vs_r], fill=NEON_GOLD, outline=OUTLINE, width=6
+    )
     draw.text((1180, 200), "VS", font=fnt(36, True), fill=OUTLINE, anchor="mm")
 
     # 5 Racing Stat Bars (0-100%)
@@ -554,13 +677,17 @@ def draw_comparison_canvas(
         cur_r = round(r_val * race)
 
         # Center stat label pill
-        draw.rounded_rectangle([1070, ry, 1290, ry + 58], radius=12, fill=(28, 34, 52), outline=WHITE, width=3)
+        draw.rounded_rectangle(
+            [1070, ry, 1290, ry + 58], radius=12, fill=(28, 34, 52), outline=WHITE, width=3
+        )
         draw.text((1180, ry + 29), label, font=fnt(22, True), fill=NEON_GOLD, anchor="mm")
 
         # Left bar (grows leftward from 1055 to 540)
         max_bar_w = 490
         lw = max(8, int(max_bar_w * (cur_l / 100.0)))
-        draw.rounded_rectangle([1055 - max_bar_w, ry + 10, 1055, ry + 48], radius=10, fill=(30, 34, 48))
+        draw.rounded_rectangle(
+            [1055 - max_bar_w, ry + 10, 1055, ry + 48], radius=10, fill=(30, 34, 48)
+        )
         draw.rounded_rectangle(
             [1055 - lw, ry + 10, 1055, ry + 48],
             radius=10,
@@ -572,7 +699,9 @@ def draw_comparison_canvas(
 
         # Right bar (grows rightward from 1305 to 1795)
         rw = max(8, int(max_bar_w * (cur_r / 100.0)))
-        draw.rounded_rectangle([1305, ry + 10, 1305 + max_bar_w, ry + 48], radius=10, fill=(30, 34, 48))
+        draw.rounded_rectangle(
+            [1305, ry + 10, 1305 + max_bar_w, ry + 48], radius=10, fill=(30, 34, 48)
+        )
         draw.rounded_rectangle(
             [1305, ry + 10, 1305 + rw, ry + 48],
             radius=10,
@@ -600,7 +729,9 @@ def draw_finance_canvas(
     draw.rectangle([0, STAGE_TOP, 1920, STAGE_BOTTOM], fill=OBSIDIAN)
 
     chart_x0, chart_y0, chart_x1, chart_y1 = 540, 220, 1820, 760
-    draw.rounded_rectangle([510, 140, 1850, 840], radius=20, fill=(14, 18, 28), outline=(42, 56, 82), width=4)
+    draw.rounded_rectangle(
+        [510, 140, 1850, 840], radius=20, fill=(14, 18, 28), outline=(42, 56, 82), width=4
+    )
 
     # Financial grid lines
     for gx in range(chart_x0, chart_x1 + 1, 160):
@@ -609,7 +740,11 @@ def draw_finance_canvas(
         draw.line([(chart_x0, gy), (chart_x1, gy)], fill=SLATE_GRID, width=2)
 
     # Axes
-    draw.line([(chart_x0, chart_y0), (chart_x0, chart_y1), (chart_x1, chart_y1)], fill=(120, 140, 175), width=4)
+    draw.line(
+        [(chart_x0, chart_y0), (chart_x0, chart_y1), (chart_x1, chart_y1)],
+        fill=(120, 140, 175),
+        width=4,
+    )
 
     progress = min(1.0, 0.18 + _ease_out((t % 5.5) / 4.2) * 0.82)
     steps = max(4, int(70 * progress))
@@ -619,7 +754,7 @@ def draw_finance_canvas(
     h = chart_y1 - chart_y0
 
     for s in range(steps + 1):
-        xf = (s / 70.0)
+        xf = s / 70.0
         x = chart_x0 + xf * w
         # Exponential compounding trajectory: (e^(3.2*xf) - 1) / (e^3.2 - 1)
         yf_comp = (math.exp(3.1 * xf) - 1.0) / (math.exp(3.1) - 1.0)
@@ -634,18 +769,31 @@ def draw_finance_canvas(
     if len(base_pts) >= 2:
         draw.line(base_pts, fill=NEON_CRIMSON, width=5)
         bx, by = base_pts[-1]
-        draw.text((bx - 20, by + 26), "IDLE CASH / INFLATION", font=fnt(20, True), fill=NEON_CRIMSON, anchor="rm")
+        draw.text(
+            (bx - 20, by + 26),
+            "IDLE CASH / INFLATION",
+            font=fnt(20, True),
+            fill=NEON_CRIMSON,
+            anchor="rm",
+        )
 
     if len(comp_pts) >= 2:
         # Glowing emerald aura + core curve
         draw.line(comp_pts, fill=(8, 95, 62), width=18, joint="curve")
         draw.line(comp_pts, fill=NEON_EMERALD, width=7, joint="curve")
         lead_x, lead_y = comp_pts[-1]
-        draw.ellipse([lead_x - 13, lead_y - 13, lead_x + 13, lead_y + 13], fill=NEON_GOLD, outline=WHITE, width=3)
+        draw.ellipse(
+            [lead_x - 13, lead_y - 13, lead_x + 13, lead_y + 13],
+            fill=NEON_GOLD,
+            outline=WHITE,
+            width=3,
+        )
 
     # Live dollar counter badge
     live_dollars = int(10000 * math.exp(3.85 * progress))
-    draw.rounded_rectangle([545, 160, 1140, 232], radius=14, fill=(18, 32, 28), outline=NEON_EMERALD, width=3)
+    draw.rounded_rectangle(
+        [545, 160, 1140, 232], radius=14, fill=(18, 32, 28), outline=NEON_EMERALD, width=3
+    )
     draw.text(
         (842, 196),
         f"COMPOUND PORTFOLIO: ${live_dollars:,}",
@@ -666,7 +814,13 @@ def draw_finance_canvas(
             outline=NEON_GOLD if active_pill else (60, 75, 105),
             width=3,
         )
-        draw.text((px0 + 200, 801), p_text, font=fnt(20, True), fill=NEON_GOLD if active_pill else WHITE, anchor="mm")
+        draw.text(
+            (px0 + 200, 801),
+            p_text,
+            font=fnt(20, True),
+            fill=NEON_GOLD if active_pill else WHITE,
+            anchor="mm",
+        )
 
 
 # ===========================================================================
@@ -685,7 +839,9 @@ def draw_motivation_canvas(
     """Render minimalist high-contrast obsidian kinetic diagram (4-node Habit Loop or Value Equation)."""
     fnt = font_loader or _default_font
     draw.rectangle([0, STAGE_TOP, 1920, STAGE_BOTTOM], fill=(8, 9, 15))
-    draw.rounded_rectangle([510, 138, 1850, 842], radius=22, fill=(12, 14, 22), outline=(48, 54, 76), width=3)
+    draw.rounded_rectangle(
+        [510, 138, 1850, 842], radius=22, fill=(12, 14, 22), outline=(48, 54, 76), width=3
+    )
 
     use_value_eq = ("value" in f"{sub_domain} {heading} {callout}".lower()) or (index % 2 == 1)
 
@@ -720,7 +876,9 @@ def draw_motivation_canvas(
                 outline=n_col if is_hi else WHITE,
                 width=5 if is_hi else 3,
             )
-            draw.text((nx, ny), n_label, font=fnt(24, True), fill=n_col if is_hi else WHITE, anchor="mm")
+            draw.text(
+                (nx, ny), n_label, font=fnt(24, True), fill=n_col if is_hi else WHITE, anchor="mm"
+            )
 
         draw.text((cx, cy), "HABIT LOOP", font=fnt(30, True), fill=(150, 165, 195), anchor="mm")
     else:
@@ -741,7 +899,13 @@ def draw_motivation_canvas(
                 outline=b_col if is_hi else (75, 85, 115),
                 width=5 if is_hi else 2,
             )
-            draw.text(((x0 + x1) // 2, (y0 + y1) // 2), b_label, font=fnt(26, True), fill=b_col if is_hi else WHITE, anchor="mm")
+            draw.text(
+                ((x0 + x1) // 2, (y0 + y1) // 2),
+                b_label,
+                font=fnt(26, True),
+                fill=b_col if is_hi else WHITE,
+                anchor="mm",
+            )
 
         # Division bar and operators
         draw.text((1180, 295), "×", font=fnt(44, True), fill=WHITE, anchor="mm")
