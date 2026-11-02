@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from autoshorts.core.paths import PROJECT_ROOT
+from autoshorts.core.theme import ACCENT_YELLOW, TEXT_PRIMARY
 from autoshorts.media.ass_styler import (
     TimedWord,
     offset_words_for_hook,
@@ -38,6 +39,11 @@ class RemotionUnavailableError(RuntimeError):
 
 class RemotionRenderError(RuntimeError):
     """Raised when the Remotion render or the FFmpeg overlay step fails."""
+
+
+def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    """Format an RGB theme token as '#RRGGBB' for Remotion props."""
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
 
 
 def _remotion_binary(project_dir: Path) -> Path:
@@ -96,9 +102,9 @@ def write_caption_plan(
         "durationSec": max(0.5, float(duration_sec)),
         "fps": fps,
         "wordsPerPage": words_per_page,
-        "activeColor": "#FFFF00",
-        "primaryColor": "#FFFFFF",
-        "fontSize": 84 if style_preset == "rapid" else 76,
+        "activeColor": rgb_to_hex(ACCENT_YELLOW),
+        "primaryColor": rgb_to_hex(TEXT_PRIMARY),
+        "fontSize": 60 if style_preset == "kurz" else (84 if style_preset == "rapid" else 76),
         "bottomPercent": 38,
     }
     path.parent.mkdir(parents=True, exist_ok=True)

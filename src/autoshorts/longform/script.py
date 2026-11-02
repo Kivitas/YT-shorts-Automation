@@ -338,7 +338,7 @@ def build_script(
     try:
         name = "gemini" if provider == "api" else "local"
         llm = get_provider(name=name, settings=config)
-        raw = llm.complete(_build_prompt(spec, float(minutes)))
+        raw = llm.complete(_build_prompt(spec, float(minutes)), max_tokens=4096)
         return _validate_llm(_parse_json(raw), spec, float(minutes), provider)
     except Exception as exc:
         logger.warning("LLM script for %s unusable (%s); using curated script.", spec.key, exc)

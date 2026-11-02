@@ -15,12 +15,24 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from autoshorts.core.theme import (
+    ACCENT_CORAL,
+    ACCENT_GREEN,
+    ACCENT_PURPLE,
+    ACCENT_TEAL,
+    ACCENT_YELLOW,
+    BG_DEEP,
+    BG_SURFACE,
+    ease_in_out_cubic,
+    lerp_rgb,
+)
 from autoshorts.longform.engines import (
     draw_comparison_canvas,
     draw_finance_canvas,
     draw_history_canvas,
     draw_motivation_canvas,
     draw_science_canvas,
+    font_candidates,
 )
 from autoshorts.longform.types import MAX_VIDEO_SECONDS, VISEME_SHAPES, SectionAudio
 
@@ -33,22 +45,23 @@ TRANSITION_SECONDS = 0.7
 STAGE_TOP = 96
 STAGE_BOTTOM = 880
 
-OUTLINE = (18, 18, 24)
+# Palette: aliases onto the shared flat theme tokens (core/theme.py).
+OUTLINE = BG_DEEP  # dark ink for pupils, brows and text; no longer used as a stroke colour
 WHITE = (255, 255, 255)
-YELLOW = (255, 214, 40)
-PINK = (255, 72, 120)
-GREEN = (60, 200, 90)
-CYAN = (0, 228, 255)
-CAPTION_BG = (22, 18, 48)
+YELLOW = ACCENT_YELLOW
+PINK = ACCENT_CORAL
+GREEN = ACCENT_GREEN
+CYAN = ACCENT_TEAL
+CAPTION_BG = BG_SURFACE
 WOOD = (176, 110, 60)
 PANTS = (40, 52, 112)
 SHOE = (34, 34, 46)
 PEACH = (255, 206, 166)
 BROWN_SKIN = (205, 140, 100)
-SHIRT_RED = (235, 62, 72)
+SHIRT_RED = ACCENT_CORAL
 SHIRT_BLUE = (40, 130, 250)
-SHIRT_TEAL = (24, 184, 168)
-SHIRT_PURPLE = (150, 90, 235)
+SHIRT_TEAL = ACCENT_TEAL
+SHIRT_PURPLE = ACCENT_PURPLE
 HAIR_BROWN = (92, 52, 28)
 HAIR_BLACK = (30, 28, 34)
 MOUTH_DARK = (120, 24, 44)
@@ -56,7 +69,7 @@ TONGUE_PINK = (235, 96, 120)
 
 MAIN_SHIRTS = (SHIRT_RED, SHIRT_BLUE, SHIRT_PURPLE)
 MOODS = ("happy", "shocked", "deadpan", "smug", "hyped", "thinking", "angry", "worried")
-TRANSITIONS = ("slide", "zoom", "iris", "wipe")
+TRANSITIONS = ("slide", "zoom", "iris", "wipe", "crossfade", "push")
 STICKER_KINDS = ("star", "boom", "coin", "check", "arrow")
 STICKER_LABELS = ("WOW", "NO WAY", "REAL", "YES", "STOP", "KEY")
 STICKER_CYCLE = 5.0  # seconds between pops for one sticker slot
@@ -232,10 +245,22 @@ def viseme_at(words: Sequence[dict[str, Any]], t: float) -> str:
 # ---------------------------------------------------------------------------
 # Characters
 # ---------------------------------------------------------------------------
-def _blob(
-    draw: ImageDraw.ImageDraw, cx: float, cy: float, rx: float, ry: float, fill: Any, out: int
+def _limb(
+    draw: ImageDraw.ImageDraw, pts: list[tuple[float, float]], width: float, fill: Any
 ) -> None:
-    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=fill, outline=OUTLINE, width=out)
+    """Flat limb: a thick polyline with round joints and ends, no outline."""
+    w = max(1, round(width))
+    draw.line(pts, fill=fill, width=w, joint="curve")
+    rad = w / 2
+    for x, y in pts:
+        draw.ellipse([x - rad, y - rad, x + rad, y + rad], fill=fill)
+
+
+def _blob(
+    draw: ImageDraw.ImageDraw, cx: float, cy: float, rx: float, ry: float, fill: Any, out: int = 0
+) -> None:
+    """Flat filled ellipse. ``out`` is kept for call compatibility and ignored."""
+    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=fill)
 
 
 def _brow(mood: str, side: int, r: float) -> tuple[float, float]:
@@ -271,8 +296,6 @@ def _draw_mouth(
         draw.ellipse(
             [mx - rx, my - ry * 0.7, mx + rx, my + ry * 1.1],
             fill=MOUTH_DARK,
-            outline=OUTLINE,
-            width=line_w,
         )
         draw.ellipse(
             [mx - rx * 0.65, my + ry * 0.15, mx + rx * 0.65, my + ry * 0.95],
@@ -289,8 +312,6 @@ def _draw_mouth(
         draw.ellipse(
             [mx - rx, my - ry * 0.8, mx + rx, my + ry],
             fill=MOUTH_DARK,
-            outline=OUTLINE,
-            width=line_w,
         )
         draw.ellipse(
             [mx - rx * 0.55, my + ry * 0.1, mx + rx * 0.55, my + ry * 0.8],
@@ -304,8 +325,6 @@ def _draw_mouth(
             [mx - rx, my - ry * 0.6, mx + rx, my + ry],
             radius=max(3, int(0.08 * r)),
             fill=MOUTH_DARK,
-            outline=OUTLINE,
-            width=line_w,
         )
         draw.line(
             [(mx - rx * 0.78, my + ry * 0.1), (mx + rx * 0.78, my + ry * 0.1)],
@@ -327,8 +346,6 @@ def _draw_mouth(
         draw.ellipse(
             [mx - 0.16 * r, my - 0.2 * r, mx + 0.16 * r, my + 0.2 * r],
             fill=MOUTH_DARK,
-            outline=OUTLINE,
-            width=line_w,
         )
     elif mood in ("excited", "hyped"):
         draw.pieslice(
@@ -336,8 +353,6 @@ def _draw_mouth(
             0,
             180,
             fill=MOUTH_DARK,
-            outline=OUTLINE,
-            width=line_w,
         )
     elif mood in ("angry", "worried"):
         draw.arc([mx - mw, my, mx + mw, my + 0.5 * r], 180, 360, fill=OUTLINE, width=line_w)
@@ -374,13 +389,14 @@ def draw_character(
     pointer_stick: bool = False,
     is_speaking: bool = False,
 ) -> None:
-    """Draw an articulated round-headed 2D character with real-time viseme lip-sync.
+    """Draw a flat-vector round-headed character with real-time viseme lip-sync.
 
-    ``origin`` is the hip in pixels. ``flip`` mirrors the pose left/right.
-    ``mood`` sets the eyebrows and resting mouth; ``viseme`` drives active speech shapes.
+    Flat fills only: round-capped limbs, a rounded-rectangle torso, a filled head with a
+    hair cap, soft blush and simple eyes and brows. ``origin`` is the hip in pixels.
+    ``flip`` mirrors the pose left/right. ``mood`` sets the eyebrows and resting mouth;
+    ``viseme`` drives active speech shapes.
     """
     ox, oy = origin
-    out = max(2, round(4 * scale))  # outline thickness
     arm_w = round(11 * scale)
     leg_w = round(13 * scale)
     line_w = max(2, round(0.07 * 30 * scale))
@@ -393,64 +409,53 @@ def draw_character(
     hx, hy = p("head")
     r = 30 * scale
 
-    # Optional active-speaker stage floor ring
+    # Optional active-speaker stage floor disc
     if is_speaking:
         foot_y = oy + 104 * scale
         draw.ellipse(
             [ox - 48 * scale, foot_y - 12 * scale, ox + 48 * scale, foot_y + 14 * scale],
-            fill=(255, 214, 40),
-            outline=OUTLINE,
-            width=max(2, out // 2),
+            fill=YELLOW,
         )
 
     legs = [[(ox, oy), p(f"{s}_knee"), p(f"{s}_foot")] for s in ("l", "r")]
     arms = [[neck, p(f"{s}_elbow"), p(f"{s}_hand")] for s in ("l", "r")]
 
-    # Black outline first, then coloured limbs on top.
     for chain in legs:
-        draw.line(chain, fill=OUTLINE, width=leg_w + 2 * out, joint="curve")
-    for chain in arms:
-        draw.line(chain, fill=OUTLINE, width=arm_w + 2 * out, joint="curve")
-    for chain in legs:
-        draw.line(chain, fill=PANTS, width=leg_w, joint="curve")
-    for chain in arms:
-        draw.line(chain, fill=shirt, width=arm_w, joint="curve")
+        _limb(draw, chain, leg_w, PANTS)
 
     tw = 17 * scale
     draw.rounded_rectangle(
         [ox - tw, neck[1] - 4 * scale, ox + tw, oy + 8 * scale],
-        radius=round(10 * scale), fill=shirt, outline=OUTLINE, width=out,
-    )  # fmt: skip
+        radius=round(10 * scale),
+        fill=shirt,
+    )
+    for chain in arms:
+        _limb(draw, chain, arm_w, shirt)
 
     # Optional pointer stick extending from the pointing hand toward charts/diagrams
     if pointer_stick:
         rhx, rhy = p("r_hand")
         tip_x = rhx + 95 * scale * flip
         tip_y = rhy - 42 * scale
-        draw.line([(rhx, rhy), (tip_x, tip_y)], fill=OUTLINE, width=max(4, round(5 * scale)))
-        draw.line([(rhx, rhy), (tip_x, tip_y)], fill=YELLOW, width=max(2, round(2.5 * scale)))
+        draw.line([(rhx, rhy), (tip_x, tip_y)], fill=YELLOW, width=max(3, round(3 * scale)))
         draw.ellipse(
             [tip_x - 6 * scale, tip_y - 6 * scale, tip_x + 6 * scale, tip_y + 6 * scale],
             fill=PINK,
-            outline=OUTLINE,
-            width=2,
         )
 
     for chain in arms:
-        _blob(draw, chain[-1][0], chain[-1][1], 9 * scale, 9 * scale, skin, out)
+        _blob(draw, chain[-1][0], chain[-1][1], 9 * scale, 9 * scale, skin)
     for s in ("l", "r"):
         fx, fy = p(f"{s}_foot")
-        _blob(draw, fx, fy, 12 * scale, 7 * scale, SHOE, out)
+        _blob(draw, fx, fy, 12 * scale, 7 * scale, SHOE)
 
-    # Big round head with a small hair curl on top.
-    draw.ellipse([hx - r, hy - r, hx + r, hy + r], fill=skin, outline=OUTLINE, width=out)
-    draw.arc(
-        [hx - 0.25 * r, hy - 1.28 * r, hx + 0.4 * r, hy - 0.86 * r],
-        200,
-        330,
-        fill=hair,
-        width=line_w + 2,
-    )
+    # Head: flat skin disc, hair as a cap, soft blush on both cheeks.
+    draw.ellipse([hx - r, hy - r, hx + r, hy + r], fill=skin)
+    draw.chord([hx - r, hy - r, hx + r, hy + r], 200, 340, fill=hair)
+    blush = lerp_rgb(skin, PINK, 0.3)
+    for side in (-1, 1):
+        bx, by, br = hx + side * 0.62 * r, hy + 0.28 * r, 0.13 * r
+        draw.ellipse([bx - br, by - br * 0.7, bx + br, by + br * 0.7], fill=blush)
 
     eye_w, eye_h = 0.36 * r, 0.46 * r
     eye_y = hy - 0.02 * r
@@ -464,8 +469,8 @@ def draw_character(
         else:
             draw.ellipse(
                 [ex - eye_w / 2, eye_y - eye_h / 2, ex + eye_w / 2, eye_y + eye_h / 2],
-                fill=WHITE, outline=OUTLINE, width=max(2, line_w // 2),
-            )  # fmt: skip
+                fill=WHITE,
+            )
             if mood == "deadpan":
                 # Half-lidded deadpan expression
                 draw.chord(
@@ -473,8 +478,6 @@ def draw_character(
                     180,
                     360,
                     fill=skin,
-                    outline=OUTLINE,
-                    width=max(2, line_w // 2),
                 )
             pr = 0.15 * r
             px, py = ex + look, eye_y + 0.04 * r
@@ -483,8 +486,9 @@ def draw_character(
         by = hy - 0.5 * r
         draw.line(
             [(hx + side * 0.8 * r, by + outer), (hx + side * 0.22 * r, by + inner)],
-            fill=OUTLINE, width=max(3, line_w),
-        )  # fmt: skip
+            fill=OUTLINE,
+            width=max(3, line_w),
+        )
 
     mx, my = hx, hy + 0.42 * r
     norm_viseme = viseme if viseme in VISEME_SHAPES else "REST"
@@ -509,7 +513,6 @@ def _filled_poly(
     d: ImageDraw.ImageDraw, pts: list[tuple[float, float]], fill: tuple[int, int, int]
 ) -> None:
     d.polygon(pts, fill=fill)
-    d.line(pts + [pts[0]], fill=OUTLINE, width=6, joint="curve")
 
 
 def draw_sticker(
@@ -522,14 +525,10 @@ def draw_sticker(
         d.ellipse(
             [cx - size, cy - size, cx + size, cy + size],
             fill=(255, 196, 40),
-            outline=OUTLINE,
-            width=6,
         )
         d.text((cx, cy), "$", font=load_font(int(size * 1.2)), fill=OUTLINE, anchor="mm")
     elif kind == "check":
-        d.ellipse(
-            [cx - size, cy - size, cx + size, cy + size], fill=GREEN, outline=OUTLINE, width=6
-        )
+        d.ellipse([cx - size, cy - size, cx + size, cy + size], fill=GREEN)
         d.line(
             [(cx - 0.45 * size, cy + 0.02 * size), (cx - 0.12 * size, cy + 0.36 * size), (cx + 0.5 * size, cy - 0.35 * size)],
             fill=WHITE, width=max(4, int(size * 0.22)), joint="curve",
@@ -552,8 +551,6 @@ def draw_sticker(
                 font=font,
                 fill=WHITE,
                 anchor="mm",
-                stroke_width=3,
-                stroke_fill=OUTLINE,
             )
 
 
@@ -586,7 +583,7 @@ def _box(
     radius: int = 18,
     width: int = 7,
 ) -> None:
-    d.rounded_rectangle(list(box), radius=radius, fill=fill, outline=OUTLINE, width=width)
+    d.rounded_rectangle(list(box), radius=radius, fill=fill)
 
 
 def _gradient(
@@ -595,15 +592,12 @@ def _gradient(
     top: tuple[int, int, int],
     bottom: tuple[int, int, int],
 ) -> None:
+    """Paint a flat vertical gradient (one solid line per row) inside ``box``."""
     x0, y0, x1, y1 = box
     d = ImageDraw.Draw(img)
     span = max(1, y1 - y0 - 1)
     for y in range(y0, y1):
-        k = (y - y0) / span
-        d.line(
-            [(x0, y), (x1, y)],
-            fill=tuple(round(top[i] + (bottom[i] - top[i]) * k) for i in range(3)),
-        )
+        d.line([(x0, y), (x1, y)], fill=lerp_rgb(top, bottom, (y - y0) / span))
 
 
 def _paint_bedroom(img: Image.Image) -> None:
@@ -629,8 +623,8 @@ def _paint_bedroom(img: Image.Image) -> None:
     _box(d, (100, 540, 230, 590), WHITE, radius=20)
     _box(d, (95, 600, 555, 720), (60, 120, 230), radius=30)
     _box(d, (1200, 640, 1600, 668), WOOD, radius=6)
-    d.rectangle([1220, 668, 1244, 880], fill=WOOD, outline=OUTLINE, width=6)
-    d.rectangle([1556, 668, 1580, 880], fill=WOOD, outline=OUTLINE, width=6)
+    d.rectangle([1220, 668, 1244, 880], fill=WOOD)
+    d.rectangle([1556, 668, 1580, 880], fill=WOOD)
     _box(d, (1290, 470, 1500, 620), (40, 40, 70))
     _box(d, (1305, 485, 1485, 605), (80, 210, 255), radius=6)
     _box(d, (760, 820, 1160, 900), (120, 220, 160), radius=40)
@@ -648,7 +642,7 @@ def _paint_gym(img: Image.Image) -> None:
     _box(d, (760, 800, 1320, 870), (255, 90, 90), radius=30)
     for i in range(4):
         x = 1460 + i * 90
-        d.rectangle([x, 640, x + 70, 656], fill=(90, 90, 100), outline=OUTLINE, width=5)
+        d.rectangle([x, 640, x + 70, 656], fill=(90, 90, 100))
         _box(d, (x - 14, 620, x + 8, 676), (240, 80, 80), radius=6, width=5)
         _box(d, (x + 62, 620, x + 84, 676), (240, 80, 80), radius=6, width=5)
 
@@ -661,22 +655,22 @@ def _paint_kitchen(img: Image.Image) -> None:
             fill = (120, 220, 200) if (row + col) % 2 == 0 else WHITE
             d.rectangle([col * 60, 380 + row * 36, col * 60 + 60, 416 + row * 36], fill=fill)
     d.rectangle([0, 610, WIDTH, HEIGHT], fill=(255, 140, 60))
-    d.rectangle([0, 560, WIDTH, 610], fill=(250, 250, 245), outline=OUTLINE, width=6)
+    d.rectangle([0, 560, WIDTH, 610], fill=(250, 250, 245))
     for x in range(0, WIDTH, 320):
         d.line([(x, 630), (x, 880)], fill=OUTLINE, width=6)
     _box(d, (1560, 200, 1800, 560), (240, 250, 255))
     d.line([(1560, 400), (1800, 400)], fill=OUTLINE, width=6)
-    d.ellipse([290, 190, 370, 270], fill=WHITE, outline=OUTLINE, width=8)
+    d.ellipse([290, 190, 370, 270], fill=WHITE)
     d.line([(330, 230), (330, 205)], fill=OUTLINE, width=6)
     d.line([(330, 230), (358, 245)], fill=OUTLINE, width=6)
-    d.ellipse([650, 528, 770, 562], fill=WHITE, outline=OUTLINE, width=6)
-    d.ellipse([682, 500, 728, 540], fill=(255, 80, 80), outline=OUTLINE, width=5)
+    d.ellipse([650, 528, 770, 562], fill=WHITE)
+    d.ellipse([682, 500, 728, 540], fill=(255, 80, 80))
 
 
 def _paint_street(img: Image.Image) -> None:
     _gradient(img, (0, 0, WIDTH, 760), (255, 140, 90), (255, 226, 150))
     d = ImageDraw.Draw(img)
-    d.ellipse([1380, 260, 1580, 460], fill=(255, 240, 130), outline=OUTLINE, width=8)
+    d.ellipse([1380, 260, 1580, 460], fill=(255, 240, 130))
     buildings = [
         (60, 200, 430, (70, 60, 120)), (280, 160, 300, (100, 70, 150)),
         (460, 240, 500, (50, 50, 95)), (720, 180, 360, (100, 70, 150)),
@@ -685,7 +679,7 @@ def _paint_street(img: Image.Image) -> None:
     ]  # fmt: skip
     for x0, w, h, col in buildings:
         top = 760 - h
-        d.rectangle([x0, top, x0 + w, 760], fill=col, outline=OUTLINE, width=6)
+        d.rectangle([x0, top, x0 + w, 760], fill=col)
         for wy in range(top + 30, 740, 70):
             for wx in range(x0 + 24, x0 + w - 30, 60):
                 d.rectangle([wx, wy, wx + 26, wy + 36], fill=(255, 226, 120))
@@ -702,23 +696,23 @@ def _paint_office(img: Image.Image) -> None:
     pts = [(1040, 450), (1140, 400), (1230, 420), (1330, 330), (1430, 300), (1520, 220)]
     d.line(pts, fill=GREEN, width=14, joint="curve")
     for x, y in pts:
-        d.ellipse([x - 12, y - 12, x + 12, y + 12], fill=WHITE, outline=OUTLINE, width=5)
+        d.ellipse([x - 12, y - 12, x + 12, y + 12], fill=WHITE)
     _box(d, (90, 200, 430, 520), (255, 240, 190))
     d.line([(260, 200), (260, 520)], fill=OUTLINE, width=8)
-    d.rectangle([1080, 640, 1700, 668], fill=WHITE, outline=OUTLINE, width=6)
-    d.rectangle([1100, 668, 1120, 880], fill=(230, 230, 240), outline=OUTLINE, width=5)
-    d.rectangle([1660, 668, 1680, 880], fill=(230, 230, 240), outline=OUTLINE, width=5)
+    d.rectangle([1080, 640, 1700, 668], fill=WHITE)
+    d.rectangle([1100, 668, 1120, 880], fill=(230, 230, 240))
+    d.rectangle([1660, 668, 1680, 880], fill=(230, 230, 240))
     _box(d, (1240, 470, 1420, 630), (40, 40, 70))
     _box(d, (1255, 485, 1405, 615), (120, 220, 255), radius=6)
-    d.ellipse([160, 560, 260, 720], fill=GREEN, outline=OUTLINE, width=6)
-    d.ellipse([240, 520, 340, 690], fill=(40, 180, 100), outline=OUTLINE, width=6)
+    d.ellipse([160, 560, 260, 720], fill=GREEN)
+    d.ellipse([240, 520, 340, 690], fill=(40, 180, 100))
     _filled_poly(d, [(200, 740), (300, 740), (285, 860), (215, 860)], (255, 130, 60))
 
 
 def _paint_beach(img: Image.Image) -> None:
     _gradient(img, (0, 0, WIDTH, 640), (255, 170, 90), (255, 218, 140))
     d = ImageDraw.Draw(img)
-    d.ellipse([1380, 210, 1620, 450], fill=(255, 246, 170), outline=OUTLINE, width=8)
+    d.ellipse([1380, 210, 1620, 450], fill=(255, 246, 170))
     d.rectangle([0, 640, WIDTH, 780], fill=(60, 190, 255))
     for x in range(40, WIDTH, 220):
         d.arc([x, 680, x + 90, 720], 200, 340, fill=WHITE, width=6)
@@ -733,8 +727,8 @@ def _paint_beach(img: Image.Image) -> None:
 def _paint_money(img: Image.Image) -> None:
     _gradient(img, (0, 0, WIDTH, HEIGHT), (40, 180, 130), (20, 130, 100))
     d = ImageDraw.Draw(img)
-    d.ellipse([1300, 230, 1700, 630], fill=(150, 160, 175), outline=OUTLINE, width=10)
-    d.ellipse([1360, 290, 1640, 570], fill=(120, 130, 145), outline=OUTLINE, width=8)
+    d.ellipse([1300, 230, 1700, 630], fill=(150, 160, 175))
+    d.ellipse([1360, 290, 1640, 570], fill=(120, 130, 145))
     for k in range(8):
         a = k * math.pi / 4
         d.line(
@@ -744,13 +738,11 @@ def _paint_money(img: Image.Image) -> None:
         )
     for i in range(5):
         y = 850 - i * 34
-        d.rounded_rectangle(
-            [1180, y - 30, 1480, y], radius=8, fill=(120, 220, 120), outline=OUTLINE, width=6
-        )
-        d.rectangle([1300, y - 30, 1360, y], fill=WHITE, outline=OUTLINE, width=4)
+        d.rounded_rectangle([1180, y - 30, 1480, y], radius=8, fill=(120, 220, 120))
+        d.rectangle([1300, y - 30, 1360, y], fill=WHITE)
     for x, y in [(300, 840), (360, 842), (420, 838), (330, 800), (390, 800)]:
-        d.ellipse([x - 34, y - 18, x + 34, y + 18], fill=(255, 200, 40), outline=OUTLINE, width=6)
-    d.ellipse([720, 600, 880, 840], fill=(245, 245, 225), outline=OUTLINE, width=8)
+        d.ellipse([x - 34, y - 18, x + 34, y + 18], fill=(255, 200, 40))
+    d.ellipse([720, 600, 880, 840], fill=(245, 245, 225))
     d.text((800, 710), "$", font=load_font(140, True), fill=(60, 160, 80), anchor="mm")
 
 
@@ -821,31 +813,9 @@ def _scene_background(name: str) -> Image.Image:
 # ---------------------------------------------------------------------------
 # Fonts and captions
 # ---------------------------------------------------------------------------
-_FONT_PATHS = {
-    "bold": r"C:\Windows\Fonts\arialbd.ttf",
-    "regular": r"C:\Windows\Fonts\arial.ttf",
-}
 _FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
-    "bold": (
-        r"C:\Windows\Fonts\arialbd.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "Arial Bold",
-        "DejaVuSans-Bold",
-    ),
-    "regular": (
-        r"C:\Windows\Fonts\arial.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "Arial",
-        "DejaVuSans",
-    ),
+    "bold": font_candidates(True),
+    "regular": font_candidates(False),
 }
 _warned_font = False
 
@@ -859,8 +829,7 @@ def load_font(size: int, bold: bool = True) -> Any:
 def _load_font_cached(size: int, bold: bool) -> Any:
     global _warned_font
     key = "bold" if bold else "regular"
-    candidates = (_FONT_PATHS[key], *_FONT_CANDIDATES[key])
-    for path in dict.fromkeys(candidates):
+    for path in _FONT_CANDIDATES[key]:
         try:
             return ImageFont.truetype(path, size)
         except OSError:
@@ -918,7 +887,6 @@ def _draw_caption(d: ImageDraw.ImageDraw, words: list[dict[str, Any]], t: float)
         is_active = base + i == active
         d.text(
             (x, 912), s, font=font, fill=YELLOW if is_active else WHITE,
-            stroke_width=4, stroke_fill=OUTLINE,
         )  # fmt: skip
         x += d.textlength(s, font=font) + space
 
@@ -934,12 +902,12 @@ def _draw_chrome(
 ) -> None:
     d.rectangle([0, 0, WIDTH, 96], fill=PINK)
     tfont = _fit_font(d, title, 48, WIDTH - 360)
-    d.text((48, 22), title, font=tfont, fill=WHITE, stroke_width=3, stroke_fill=OUTLINE)
+    d.text((48, 22), title, font=tfont, fill=WHITE)
     cfont = load_font(34, True)
     counter = f"{index + 1} / {count}"
     d.text(
         (WIDTH - 48 - d.textlength(counter, font=cfont), 28), counter, font=cfont,
-        fill=YELLOW, stroke_width=3, stroke_fill=OUTLINE,
+        fill=YELLOW,
     )  # fmt: skip
     _draw_caption(d, words, t)
     d.rectangle([0, 1030, WIDTH, 1080], fill=CAPTION_BG)
@@ -954,7 +922,7 @@ def _draw_heading(img: Image.Image, heading: str, t: float) -> None:
     h = 104
     card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     cd = ImageDraw.Draw(card)
-    cd.rounded_rectangle([0, 0, w - 1, h - 1], radius=20, fill=YELLOW, outline=OUTLINE, width=7)
+    cd.rounded_rectangle([0, 0, w - 1, h - 1], radius=20, fill=YELLOW)
     cd.text((36, 18), heading, font=font, fill=OUTLINE)
     card = card.rotate(-2, resample=Image.BICUBIC, expand=True)
     k = ease_out_back(min(1.0, t / 0.55))
@@ -1190,13 +1158,22 @@ def _draw_scene(
 
 
 def _transition(kind: str, prev: Image.Image, cur: Image.Image, k: float) -> Image.Image:
-    """Blend the previous section's last frame into the next one. ``k`` runs 0 to 1."""
+    """Blend the previous section's last frame into the next one. ``k`` runs 0 to 1 (eased)."""
     if kind == "slide":
         x = int(k * WIDTH)
         out = Image.new("RGB", (WIDTH, HEIGHT))
         out.paste(prev, (-x, 0))
         out.paste(cur, (WIDTH - x, 0))
         return out
+    if kind == "push":
+        # The new scene pushes the old one up and off the top of the frame.
+        y = int(k * HEIGHT)
+        out = Image.new("RGB", (WIDTH, HEIGHT))
+        out.paste(prev, (0, -y))
+        out.paste(cur, (0, HEIGHT - y))
+        return out
+    if kind == "crossfade":
+        return Image.blend(prev, cur, k)
     if kind == "zoom":
         s = 0.4 + 0.6 * k
         w, h = int(WIDTH * s), int(HEIGHT * s)
@@ -1209,14 +1186,12 @@ def _transition(kind: str, prev: Image.Image, cur: Image.Image, k: float) -> Ima
         cx, cy = WIDTH / 2, HEIGHT / 2
         ImageDraw.Draw(mask).ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=255)
         return Image.composite(cur, prev, mask)
-    # wipe: the new scene is revealed behind a bright bar.
+    # wipe: the new scene is revealed behind a flat yellow bar.
     x = int(k * WIDTH)
     out = prev.copy()
     if x > 0:
         out.paste(cur.crop((0, 0, x, HEIGHT)), (0, 0))
-    ImageDraw.Draw(out).rectangle(
-        [x - 14, 0, x + 14, HEIGHT], fill=YELLOW, outline=OUTLINE, width=6
-    )
+    ImageDraw.Draw(out).rectangle([x - 7, 0, x + 7, HEIGHT], fill=YELLOW)
     return out
 
 
@@ -1261,7 +1236,7 @@ def _frames(
         for f in range(n):
             img = _draw_scene(sa, title, f / FPS, idx, len(sections), elapsed, total, scene)
             if prev_last is not None and f < trans_frames:
-                img = _transition(kind, prev_last, img, ease_in_out((f + 1) / trans_frames))
+                img = _transition(kind, prev_last, img, ease_in_out_cubic((f + 1) / trans_frames))
             yield img.tobytes()
         if img is not None:
             prev_last = img

@@ -10,6 +10,9 @@ from autoshorts.uploader.errors import TransientUploadError
 
 logger = logging.getLogger(__name__)
 
+# Exponential backoff between verification polls: base, 2x, 4x, ... capped at MAX_POLL_DELAY_SEC.
+MAX_POLL_DELAY_SEC = 60.0
+
 
 class YouTubeVerifier:
     """Polls uploader verification until processing succeeds, fails, or times out."""
@@ -33,7 +36,8 @@ class YouTubeVerifier:
         Args:
             video_id: YouTube 11-char video ID.
             max_retries: Maximum polling attempts (default 10).
-            delay_sec: Delay between polls in seconds (default 3.0s).
+            delay_sec: First delay between polls in seconds (default 3.0s). Each later delay
+                doubles (3, 6, 12, 24, ...) and is capped at 60 s.
 
         Returns:
             True if video verified successfully, False if timed out.
@@ -58,7 +62,8 @@ class YouTubeVerifier:
             # Any other UploadError propagates immediately: polling cannot change it.
 
             if attempt < attempts:
-                time.sleep(delay)
+                wait = min(MAX_POLL_DELAY_SEC, delay * (2 ** (attempt - 1)))
+                time.sleep(wait)
 
         logger.warning(f"Video {video_id} failed to verify within {attempts} attempts.")
         return False

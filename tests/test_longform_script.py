@@ -76,7 +76,7 @@ class _FakeLLM:
     def __init__(self, raw):
         self.raw = raw
 
-    def complete(self, prompt):
+    def complete(self, prompt, **kwargs):
         assert "Safety rules" in prompt
         return self.raw
 

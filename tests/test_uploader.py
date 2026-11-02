@@ -624,7 +624,7 @@ def test_youtube_api_post_upload_actions(dummy_video: Path):
     uploader = YouTubeApiUploader(youtube_service=mock_service)
 
     # Direct helper test
-    assert uploader.add_to_playlist("post_vid_123", "PL999") is True
+    assert uploader.add_to_playlist("post_vid_123", "PL999").ok is True
     mock_service.playlistItems().insert.assert_called_with(
         part="snippet",
         body={
@@ -635,7 +635,7 @@ def test_youtube_api_post_upload_actions(dummy_video: Path):
         },
     )
 
-    assert uploader.post_comment("post_vid_123", "Hello world") == "comm_1"
+    assert uploader.post_comment("post_vid_123", "Hello world").value == "comm_1"
     mock_service.commentThreads().insert.assert_called_with(
         part="snippet",
         body={

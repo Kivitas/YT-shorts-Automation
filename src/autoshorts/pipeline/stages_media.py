@@ -52,7 +52,11 @@ def select_gameplay_background(
     import autoshorts.media.dopamine_effects as _de
     import autoshorts.pipeline as pipeline_mod
     from autoshorts.core.paths import get_assets_dir
-    from autoshorts.media.background_fetcher import normalize_category
+    from autoshorts.media.background_fetcher import (
+        BACKGROUND_VIDEO_EXTENSIONS,
+        is_valid_background_file,
+        normalize_category,
+    )
 
     # If pick_background_asset has been monkeypatched in tests, honor the mock
     pick_fn = getattr(pipeline_mod, "pick_background_asset", _de.pick_background_asset)
@@ -80,50 +84,42 @@ def select_gameplay_background(
     if bg_dir.is_dir():
         manifest_file = bg_dir / "manifest.json"
         manifest_l = bg_dir / "manifest.jsonl"
+        manifest_items: list[Any] = []
         if manifest_file.is_file():
             try:
                 data = json.loads(manifest_file.read_text(encoding="utf-8"))
-                items = (
-                    data.get("videos")
-                    or data.get("files")
-                    or (data if isinstance(data, list) else [])
-                )
-                for item in items:
-                    fname = (
-                        item.get("filename") or item.get("path")
-                        if isinstance(item, dict)
-                        else str(item)
+                if isinstance(data, dict):
+                    # Collector writes "clips"; older manifests used "videos" or "files".
+                    manifest_items = (
+                        data.get("clips") or data.get("videos") or data.get("files") or []
                     )
-                    if fname:
-                        fp = bg_dir / fname if not Path(fname).is_absolute() else Path(fname)
-                        if fp.is_file() and fp.stat().st_size > 1024:
-                            candidates.append(fp)
+                elif isinstance(data, list):
+                    manifest_items = data
             except Exception as m_err:
                 logger.debug("Failed to parse background manifest.json in %s: %s", bg_dir, m_err)
         elif manifest_l.is_file():
             try:
                 for line in manifest_l.read_text(encoding="utf-8").splitlines():
                     if line.strip():
-                        item = json.loads(line.strip())
-                        fname = (
-                            item.get("filename") or item.get("path")
-                            if isinstance(item, dict)
-                            else str(item)
-                        )
-                        if fname:
-                            fp = bg_dir / fname if not Path(fname).is_absolute() else Path(fname)
-                            if fp.is_file() and fp.stat().st_size > 1024:
-                                candidates.append(fp)
+                        manifest_items.append(json.loads(line.strip()))
             except Exception as ml_err:
                 logger.debug("Failed to parse background manifest.jsonl in %s: %s", bg_dir, ml_err)
 
+        for item in manifest_items:
+            fname = (
+                item.get("filename") or item.get("path") if isinstance(item, dict) else str(item)
+            )
+            if fname:
+                fp = bg_dir / fname if not Path(fname).is_absolute() else Path(fname)
+                if is_valid_background_file(fp):
+                    candidates.append(fp)
+
         # 2. If no manifest entries, scan directory directly for video files
         if not candidates:
-            valid_exts = {".mp4", ".mov", ".mkv", ".webm"}
             candidates = [
                 p
                 for p in bg_dir.iterdir()
-                if p.is_file() and p.suffix.lower() in valid_exts and p.stat().st_size > 1024
+                if p.suffix.lower() in BACKGROUND_VIDEO_EXTENSIONS and is_valid_background_file(p)
             ]
 
     # 3. If candidates found, rotate / randomize selection
@@ -336,11 +332,21 @@ class MediaMixin:
             except Exception as fmt_err:  # pragma: no cover - never block editing
                 logger.debug("Format classification skipped: %s", fmt_err)
 
-            # Attach recommended titles/hooks from EDL if provided
-            if edl.recommended_title:
-                sel.title = edl.recommended_title
-            if edl.recommended_hook:
-                sel.hook_text = edl.recommended_hook
+            # The selected clip's title and hook win. EDL suggestions are only logged.
+            if edl.recommended_title and edl.recommended_title != sel.title:
+                logger.info(
+                    "Job %s: EDL suggests title %r; keeping selected title %r.",
+                    job.id,
+                    edl.recommended_title,
+                    sel.title,
+                )
+            if edl.recommended_hook and edl.recommended_hook != sel.hook_text:
+                logger.info(
+                    "Job %s: EDL suggests hook %r; keeping selected hook %r.",
+                    job.id,
+                    edl.recommended_hook,
+                    sel.hook_text,
+                )
 
             # Provenance: is this a real plan, a degraded plan, or a placeholder?
             # Values are type-checked so a stubbed planner cannot leak a non-serializable
@@ -781,16 +787,23 @@ class MediaMixin:
                 or getattr(job, "dopamine_level", None)
                 or self.config.job_defaults.dopamine_level
             )
-            bg_style = (
-                background_category
-                or getattr(job, "background_category", None)
-                or sel.background_style
-                or self.config.job_defaults.background_category
-            )
+            # A stale "none" (from a preset) must not hide a real category the user picked.
+            bg_chain = [
+                background_category,
+                getattr(job, "background_category", None),
+                sel.background_style,
+            ]
+            bg_real = [c for c in bg_chain if c and str(c).strip().lower() != "none"]
+            if bg_real:
+                bg_style = bg_real[0]
+            elif any(c and str(c).strip().lower() == "none" for c in bg_chain):
+                bg_style = "none"
+            else:
+                bg_style = self.config.job_defaults.background_category
             import autoshorts.pipeline as pipeline_mod
 
             bg_fn = getattr(pipeline_mod, "select_gameplay_background", select_gameplay_background)
-            bg_file, _ = bg_fn(category=bg_style)
+            bg_file, bg_offset = bg_fn(category=bg_style)
 
             branding_cfg = getattr(self.config, "branding", None)
             audio_cfg = getattr(self.config, "audio_mastering", None)
@@ -828,6 +841,7 @@ class MediaMixin:
                 "source_clip": Path(job.raw_video_path),  # type: ignore[arg-type]
                 "edl": job.edl,
                 "background_path": bg_file,
+                "background_offset": bg_offset,
                 "subtitles_path": Path(job.subtitles_path),  # type: ignore[arg-type]
                 "output_path": master_path,
                 "dopamine_level": dopamine,
@@ -847,12 +861,7 @@ class MediaMixin:
                     rhythm_engine = LayaRhythmEngine()
                     grid = rhythm_engine.analyze_rhythm(bgm_file)
                     duck_release_ms = int(grid.ducking_release_ms)
-                    if job.edl and job.edl.zoom_punch_ins:
-                        job.edl.zoom_punch_ins = rhythm_engine.snap_zoom_punch_ins(
-                            job.edl.zoom_punch_ins,
-                            beats=grid.beats,
-                            confidence=grid.confidence,
-                        )
+                    # zoom_punch_ins were already beat-snapped in the EDL stage.
                     job.record_diagnostic(
                         "rhythm",
                         duck_release_ms=duck_release_ms,

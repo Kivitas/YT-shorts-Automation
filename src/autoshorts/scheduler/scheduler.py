@@ -600,8 +600,37 @@ class SpreadScheduler:
                     result.raw_response["fallback"] = "studio_automation"
                     result.raw_response["fallback_reason"] = "quota_exhausted"
 
-            # Mark slot and job completed
             quota_spent = 1 if api_quota_spent else 0
+            # Branch on the raw check, not result.verified: a Studio DOM check is "queried" (not
+            # confirmed) yet still a successful upload. Cleanup below stays gated on confirmation.
+            if not verified:
+                # The video is live, so the slot is not re-queued (that would upload a duplicate).
+                # It is not COMPLETED either: it stays in the non-complete FAILED slot status so
+                # an operator can confirm the video manually.
+                logger.warning(
+                    "Job %s: upload %s is NOT verified (verification=%s); slot marked FAILED "
+                    "instead of COMPLETED. Confirm the video manually.",
+                    job_id,
+                    result.video_id,
+                    result.verification_kind,
+                )
+                self.state_manager.update_scheduled_slot_status(
+                    job_id=job_id,
+                    status="FAILED",
+                    youtube_video_id=result.video_id,
+                    quota_spent=quota_spent,
+                )
+                job = self.state_manager.get_job(job_id)
+                if job:
+                    job.upload_result = result
+                    job.error_message = (
+                        f"Uploaded as {result.video_id} but not verified; confirm manually."
+                    )
+                    job.status = JobStatus.FAILED
+                    self.state_manager.save_job(job)
+                return result
+
+            # Mark slot and job completed
             self.state_manager.update_scheduled_slot_status(
                 job_id=job_id,
                 status="COMPLETED",

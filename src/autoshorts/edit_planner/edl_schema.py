@@ -75,6 +75,17 @@ def validate_edl(data: str | Mapping[str, Any], strict_keys: bool = False) -> Ed
     return EditDecisionList.model_validate(parsed_dict)
 
 
+def is_planner_fallback(edl: EditDecisionList) -> bool:
+    """True when the EDL is a planner fallback (no real editing decisions were made).
+
+    Reads the ``planner_fallback`` field when the model defines it, and otherwise falls back to
+    the ``empty_fallback`` source tag that every planner fallback path already sets.
+    """
+    if getattr(edl, "planner_fallback", False) is True:
+        return True
+    return edl.source == "empty_fallback"
+
+
 def create_empty_edl(
     clip_duration: float = 45.0,
     title: str = "",

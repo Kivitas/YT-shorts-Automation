@@ -7,6 +7,7 @@ non-overlapping selection.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 import re
@@ -235,6 +236,19 @@ DANGLING_ARTICLES = {
     "their",
     "our",
 }
+
+# Word-aligned boundary padding (seconds). Applied only when word timestamps exist.
+WORD_PAD_START_SECONDS = 0.30
+WORD_PAD_END_SECONDS = 0.40
+# A nominal window start that falls inside a spoken word snaps to that word's onset
+# when the onset is no more than this far away.
+WORD_ONSET_MAX_SHIFT_SECONDS = 1.00
+# Hook-first selection: window starts whose first N seconds contain a strong hook
+# (classify_semantic_hook().is_hook) receive HOOK_FIRST_START_BONUS in start selection.
+HOOK_FIRST_WINDOW_SECONDS = 4.0
+HOOK_FIRST_START_BONUS = 12.0
+# Bonus added to the heuristic fallback score (no LLM) when the window opens with a hook.
+HOOK_FIRST_SCORE_BONUS = 0.10
 
 
 def cluster_heatmap_spikes(
@@ -665,19 +679,110 @@ def _normalize_segments(
             end = float(item.get("end", 0.0))
             duration = float(item.get("duration", 0.0))
             text = str(item.get("text", "")).strip()
+            raw_words = item.get("words")
         else:
             start = float(getattr(item, "start", 0.0) or 0.0)
             end = float(getattr(item, "end", 0.0) or 0.0)
             duration = float(getattr(item, "duration", 0.0) or 0.0)
             text = str(getattr(item, "text", "") or "").strip()
+            raw_words = getattr(item, "words", None)
         if end <= start and duration > 0.0:
             end = start + duration
         end = max(end, start)  # never let a segment end before it starts
         if text:
-            norm_segments.append({"start": start, "end": end, "text": text})
+            norm_segments.append(
+                {"start": start, "end": end, "text": text, "words": _normalize_words(raw_words)}
+            )
 
     norm_segments.sort(key=lambda s: s["start"])
     return norm_segments
+
+
+def _normalize_words(raw: Any) -> list[dict[str, Any]]:
+    """Normalize optional per-word timings ({start, end, word}) attached to a segment.
+
+    Returns an empty list when no usable word timestamps are present.
+    """
+    if not raw or isinstance(raw, (str, bytes)):
+        return []
+    words: list[dict[str, Any]] = []
+    for w in raw:
+        if isinstance(w, Mapping):
+            w_start, w_end, w_text = w.get("start"), w.get("end"), w.get("word", w.get("text", ""))
+        else:
+            w_start = getattr(w, "start", None)
+            w_end = getattr(w, "end", None)
+            w_text = getattr(w, "word", "")
+        try:
+            s = float(w_start)
+            e = float(w_end)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(s) and math.isfinite(e)):
+            continue
+        words.append({"start": s, "end": max(e, s), "word": str(w_text or "")})
+    words.sort(key=lambda x: x["start"])
+    return words
+
+
+def _snap_to_word_onset(
+    t: float, words: Sequence[dict[str, Any]], word_starts: Sequence[float]
+) -> float:
+    """Move t to the start of the spoken word it falls inside, when that start is within 1.0 s."""
+    if not words:
+        return t
+    idx = bisect.bisect_right(word_starts, t) - 1
+    if idx < 0:
+        return t
+    word = words[idx]
+    if word["start"] < t < word["end"] and t - word["start"] <= WORD_ONSET_MAX_SHIFT_SECONDS:
+        return word["start"]
+    return t
+
+
+def _padded_start(segments: Sequence[dict[str, Any]], idx: int) -> float:
+    """Start of segment idx padded 0.30 s before its first spoken word (word-aligned only)."""
+    seg = segments[idx]
+    words = seg.get("words") or []
+    if not words:
+        return seg["start"]
+    first = min(seg["start"], words[0]["start"])
+    candidate = max(0.0, first - WORD_PAD_START_SECONDS)
+    if idx > 0:
+        # Never reach back into the previous sentence's audio.
+        candidate = max(candidate, segments[idx - 1]["end"])
+    return min(candidate, seg["start"])
+
+
+def _padded_end(segments: Sequence[dict[str, Any]], idx: int, transcript_end: float) -> float:
+    """End of segment idx padded 0.40 s after its last spoken word (word-aligned only)."""
+    seg = segments[idx]
+    words = seg.get("words") or []
+    if not words:
+        return seg["end"]
+    candidate = max(seg["end"], words[-1]["end"]) + WORD_PAD_END_SECONDS
+    if idx + 1 < len(segments):
+        nxt = segments[idx + 1]
+        nxt_words = nxt.get("words") or []
+        bound = nxt_words[0]["start"] if nxt_words else nxt["start"]
+        # Never run into the next sentence's first spoken word.
+        candidate = min(candidate, max(bound, seg["end"]))
+    return min(candidate, max(transcript_end, seg["end"]))
+
+
+def _hook_first_bonus(segments: Sequence[dict[str, Any]], idx: int) -> float:
+    """Return HOOK_FIRST_START_BONUS when the first few seconds from segment idx hold a hook."""
+    window_start = segments[idx]["start"]
+    parts: list[str] = []
+    for seg in segments[idx:]:
+        if seg["start"] >= window_start + HOOK_FIRST_WINDOW_SECONDS:
+            break
+        parts.append(seg["text"])
+    if not parts:
+        return 0.0
+    if classify_semantic_hook(" ".join(parts))["is_hook"]:
+        return HOOK_FIRST_START_BONUS
+    return 0.0
 
 
 def slice_transcript_windows(
@@ -690,16 +795,33 @@ def slice_transcript_windows(
     chapters: Sequence[VideoChapter] | None = None,
     sponsor_segments: Sequence[SponsorSegment] | None = None,
     skip_sponsors: bool = True,
+    word_boundaries: bool = True,
+    hook_first: bool = True,
 ) -> list[ClipCandidate]:
     """Generate 30-60 second candidate transcript windows with sentence boundary snapping.
 
     Populates heatmap_score, hook_strength, and matching chapter_title on each candidate,
     and filters out sponsor-overlapping windows when skip_sponsors=True (preserving the
     cleanest fallback windows if all windows overlap).
+
+    word_boundaries (default True): when segments carry word timings, snap a nominal start
+    that falls inside a word to that word's onset (within 1.0 s), pad the start 0.30 s before
+    the first spoken word and the end 0.40 s after the last spoken word, clamped so padding
+    never crosses into neighbouring sentences. Segments without word timings are unchanged.
+
+    hook_first (default True): add HOOK_FIRST_START_BONUS to start candidates whose first
+    HOOK_FIRST_WINDOW_SECONDS contain a strong hook, so hook-led windows win start selection.
     """
     segments = _normalize_segments(transcript)
     if not segments:
         return []
+
+    all_words = (
+        sorted((w for s in segments for w in s.get("words") or []), key=lambda w: w["start"])
+        if word_boundaries
+        else []
+    )
+    word_starts = [w["start"] for w in all_words]
 
     def _build_candidate(start_t: float, end_t: float, text_str: str) -> ClipCandidate:
         s_t = round(start_t, 2)
@@ -732,14 +854,24 @@ def slice_transcript_windows(
     candidates: list[ClipCandidate] = []
     seen_intervals: set[tuple[int, int]] = set()
 
+    def _end_at(j: int) -> float:
+        """Window end for segment j: word-padded when word timings are used."""
+        if word_boundaries:
+            return _padded_end(segments, j, total_duration)
+        return segments[j]["end"]
+
     current_t = 0.0
     while current_t + min_duration_seconds <= total_duration:
-        nominal_end_t = current_t + window_duration_seconds
+        # Speech-onset anchor: a nominal start inside a spoken word moves to that word's start.
+        anchor_t = (
+            _snap_to_word_onset(current_t, all_words, word_starts) if word_boundaries else current_t
+        )
+        nominal_end_t = anchor_t + window_duration_seconds
 
         # 1. Locate start segment snapped strictly to the beginning of a sentence or clause
         nominal_start_idx = len(segments) - 1
         for i, s in enumerate(segments):
-            if s["start"] >= current_t:
+            if s["start"] >= anchor_t:
                 nominal_start_idx = i
                 break
 
@@ -751,11 +883,14 @@ def slice_transcript_windows(
         search_max = min(len(segments), nominal_start_idx + 4)
 
         for candidate_idx in range(search_min, search_max):
-            dist = abs(segments[candidate_idx]["start"] - current_t)
+            dist = abs(segments[candidate_idx]["start"] - anchor_t)
             if dist > 6.0:
                 continue
 
             score = 10.0 - dist * 1.5
+            # The hook bonus only applies to clean sentence starts, so a hook
+            # cannot pull a mid-sentence continuation into the start slot.
+            sentence_start = candidate_idx == 0
 
             if candidate_idx == 0:
                 score += 50.0  # Video start
@@ -764,6 +899,7 @@ def slice_transcript_windows(
                 cur_text = segments[candidate_idx]["text"]
                 if _is_sentence_boundary(prev_text):
                     score += 45.0
+                    sentence_start = cur_text[:1].isupper()
                     if _starts_with_clean_opener(cur_text):
                         score += 15.0
                 elif _is_clause_boundary(prev_text):
@@ -771,12 +907,17 @@ def slice_transcript_windows(
                 elif segments[candidate_idx]["start"] - segments[candidate_idx - 1]["end"] >= 0.35:
                     score += 15.0
 
+            if hook_first and sentence_start:
+                score += _hook_first_bonus(segments, candidate_idx)
+
             if score > best_boundary_score:
                 best_boundary_score = score
                 best_start_idx = candidate_idx
 
         start_idx = best_start_idx
-        actual_start = segments[start_idx]["start"]
+        actual_start = (
+            _padded_start(segments, start_idx) if word_boundaries else segments[start_idx]["start"]
+        )
 
         # 2. Locate end segment snapped strictly to the end of a sentence or clause
         end_idx = start_idx
@@ -785,13 +926,14 @@ def slice_transcript_windows(
 
         for j in range(start_idx, len(segments)):
             seg = segments[j]
-            seg_dur = seg["end"] - actual_start
+            seg_end = _end_at(j)
+            seg_dur = seg_end - actual_start
 
             if seg_dur > max_duration_seconds:
                 break
 
             if seg_dur >= min_duration_seconds:
-                dist_to_nominal = abs(seg["end"] - nominal_end_t)
+                dist_to_nominal = abs(seg_end - nominal_end_t)
                 boundary_score = 15.0 - dist_to_nominal * 0.5
                 if _is_sentence_boundary(seg["text"]):
                     boundary_score += 40.0
@@ -803,7 +945,7 @@ def slice_transcript_windows(
                     best_end_idx = j
 
                 # If sentence boundary reached target nominal end, stop searching
-                if _is_sentence_boundary(seg["text"]) and seg["end"] >= nominal_end_t:
+                if _is_sentence_boundary(seg["text"]) and seg_end >= nominal_end_t:
                     break
 
         if best_end_idx is not None:
@@ -811,12 +953,12 @@ def slice_transcript_windows(
         else:
             # Fallback to last segment within max_duration
             for j in range(start_idx, len(segments)):
-                if segments[j]["end"] - actual_start <= max_duration_seconds:
+                if _end_at(j) - actual_start <= max_duration_seconds:
                     end_idx = j
                 else:
                     break
 
-        actual_end = segments[end_idx]["end"]
+        actual_end = _end_at(end_idx)
         duration = actual_end - actual_start
 
         if min_duration_seconds <= duration <= max_duration_seconds + 0.5:
@@ -872,6 +1014,8 @@ def generate_candidate_windows(
     chapters: Sequence[VideoChapter] | None = None,
     sponsor_segments: Sequence[SponsorSegment] | None = None,
     skip_sponsors: bool = True,
+    word_boundaries: bool = True,
+    hook_first: bool = True,
     **kwargs: Any,
 ) -> list[ClipCandidate]:
     """Alias for slice_transcript_windows with flexible keyword argument support."""
@@ -894,6 +1038,8 @@ def generate_candidate_windows(
         chapters=chapters,
         sponsor_segments=sponsor_segments,
         skip_sponsors=skip_sponsors,
+        word_boundaries=word_boundaries,
+        hook_first=hook_first,
     )
 
 

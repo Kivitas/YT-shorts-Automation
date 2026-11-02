@@ -53,12 +53,12 @@ STORY_PITCH = "+6Hz"
 MOOD_VOICE_PROFILES: dict[str, dict[str, str]] = {
     "sad": {
         "voice": "en-US-GuyNeural",
-        "rate": "-10%",
+        "rate": "-3%",
         "pitch": "-4Hz",
     },
     "heartbreak": {
         "voice": "en-US-GuyNeural",
-        "rate": "-12%",
+        "rate": "-3%",
         "pitch": "-5Hz",
     },
     "angry": {
@@ -73,7 +73,7 @@ MOOD_VOICE_PROFILES: dict[str, dict[str, str]] = {
     },
     "scary": {
         "voice": "en-US-ChristopherNeural",
-        "rate": "-15%",
+        "rate": "-3%",
         "pitch": "-8Hz",
     },
     "wholesome": {
@@ -83,7 +83,7 @@ MOOD_VOICE_PROFILES: dict[str, dict[str, str]] = {
     },
     "emotional": {
         "voice": "en-US-GuyNeural",
-        "rate": "-8%",
+        "rate": "-3%",
         "pitch": "-3Hz",
     },
     "advice": {

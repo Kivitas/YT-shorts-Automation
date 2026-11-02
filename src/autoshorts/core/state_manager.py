@@ -641,6 +641,19 @@ class StateManager:
             finally:
                 conn.close()
 
+    def get_slot_video_id(self, job_id: str) -> str | None:
+        """Return the YouTube video ID recorded for a job's scheduler slot, if any."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT youtube_video_id FROM scheduler_queue WHERE job_id = ?;",
+                    (job_id,),
+                ).fetchone()
+                return row[0] if row and row[0] else None
+            finally:
+                conn.close()
+
     def count_uploads_since(self, since: datetime) -> int:
         """Count completed uploads since a timestamp (used for rolling 60-min rate limit)."""
         with self._lock:

@@ -29,16 +29,16 @@ def counter(tmp_path, monkeypatch):
     return path
 
 
-def test_cap_is_four_per_day(counter):
-    assert pub.longform_remaining_today() == 4
-    for _ in range(4):
+def test_cap_is_twenty_per_day(counter):
+    assert pub.longform_remaining_today() == 20
+    for _ in range(20):
         pub._record_upload()
-    assert pub.longform_uploads_today() == 4
+    assert pub.longform_uploads_today() == 20
     assert pub.longform_remaining_today() == 0
 
 
 def test_publish_refused_at_cap_without_uploading(counter, tmp_path, monkeypatch):
-    for _ in range(4):
+    for _ in range(20):
         pub._record_upload()
     import autoshorts.uploader.youtube_api as yt
 

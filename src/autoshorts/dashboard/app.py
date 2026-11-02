@@ -386,7 +386,7 @@ DEFAULT_STUDIO_PROFILES = [
         "name": "⚡ Rapid Kinetic",
         "description": "High-velocity word-by-word kinetic captions with extreme dopamine pacing",
         "layout_mode": "split_50_50",
-        "style_preset": "rapid",
+        "style_preset": "kurz",
         "color_grading": "vibrant",
         "dopamine_level": "extreme",
         "background_category": "subway",
@@ -1780,6 +1780,16 @@ def create_app(
                 detail=f"Job {job_id} is {job.status.value}; only FAILED jobs can be retried",
             )
 
+        existing_video_id = state_mgr.get_slot_video_id(job_id)
+        if existing_video_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Job {job_id} is already live as {existing_video_id}; "
+                    "confirm it manually instead of retrying"
+                ),
+            )
+
         parallel_runner.submit_job(job_id)
         return {"success": True, "message": f"Job {job_id} scheduled for retry."}
 
@@ -1834,7 +1844,12 @@ def create_app(
     @app.post("/api/jobs/batch-retry")
     async def batch_retry_jobs(background_tasks: BackgroundTasks) -> dict[str, Any]:
         """Retry all failed jobs in background worker tasks."""
-        failed_jobs = state_mgr.list_jobs(status=JobStatus.FAILED)
+        # A slot with a video ID is already live on YouTube; re-running it would upload a duplicate.
+        failed_jobs = [
+            j
+            for j in state_mgr.list_jobs(status=JobStatus.FAILED)
+            if state_mgr.get_slot_video_id(j.id) is None
+        ]
         for j in failed_jobs:
             parallel_runner.submit_job(j.id)
         return {
@@ -3354,6 +3369,8 @@ def create_app(
             "snapshot_id": snap.get("snapshot_id"),
             "edl": optimized_edl.model_dump(),
             "audit": report.model_dump(),
+            # The EDL changed, but the rendered video does not until the job is re-rendered.
+            "rerender_required": True,
         }
 
     @app.get("/api/jobs/{job_id}/snapshots")

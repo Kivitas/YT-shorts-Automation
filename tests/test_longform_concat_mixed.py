@@ -14,7 +14,8 @@ def _wav(path: Path, rate: int, seconds: float = 0.5) -> Path:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(rate)
-        w.writeframes(b"\x00\x00" * int(rate * seconds))
+        # Non-silent samples: the narration trim removes pure silence, so use a tone-like value.
+        w.writeframes(b"\x10\x10" * int(rate * seconds))
     return path
 
 

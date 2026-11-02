@@ -1030,7 +1030,9 @@ def test_pipeline_auto_trim_silence_smart_crop_and_candidates_endpoints(
         json={"min_gap_sec": 0.5},
     )
     assert r_trim.status_code == 200
-    assert r_trim.json()["jump_cuts_added"] == 2
+    # Re-running is idempotent: the cuts from the first run are kept and not duplicated.
+    assert r_trim.json()["jump_cuts_added"] == 0
+    assert len(r_trim.json()["jump_cuts"]) == 2
 
 
 # =============================================================================
@@ -1300,7 +1302,7 @@ def test_pipeline_metadata_forwarding_in_handoff(test_env: dict[str, Any], tmp_p
 
 
 def test_pipeline_gameplay_background_selection_manifest_and_fallback(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ):
     """Verify select_gameplay_background reads manifest if present, rotates/randomizes, and gracefully falls back with a clear log when empty."""
     import logging
@@ -1316,6 +1318,12 @@ def test_pipeline_gameplay_background_selection_manifest_and_fallback(
     vid1.write_bytes(b"\x00" * 2048)
     manifest = bg_mc / "manifest.json"
     manifest.write_text(json.dumps({"files": ["mc_clip_01.mp4"]}), encoding="utf-8")
+    # The clip is a tiny dummy, so check presence only; the real validity rule has its own tests.
+    from autoshorts.media import background_fetcher as bf
+
+    monkeypatch.setattr(
+        bf, "is_valid_background_file", lambda p: Path(p).is_file() and Path(p).stat().st_size > 0
+    )
 
     chosen, offset = select_gameplay_background(category="minecraft", assets_dir=assets_dir)
     assert chosen is not None

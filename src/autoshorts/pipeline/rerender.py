@@ -207,6 +207,9 @@ class RerenderMixin:
             except Exception as e:
                 logger.debug("Failed reading aligned_words.json for job %s: %s", job_id, e)
 
+        # Planner cuts are kept. Dead-air cuts are added only where they do not overlap them.
+        existing_cuts: list[JumpCut] = list(job.edl.jump_cuts) if job.edl is not None else []
+
         cuts: list[JumpCut] = []
         detector_fn = None
         for mod_name in (
@@ -249,13 +252,20 @@ class RerenderMixin:
                         )
                     )
 
+        new_cuts = [
+            c
+            for c in cuts
+            if not any(c.cut_start < e.cut_end and e.cut_start < c.cut_end for e in existing_cuts)
+        ]
+        merged = sorted([*existing_cuts, *new_cuts], key=lambda c: c.cut_start)
+
         if job.edl is None:
             job.edl = create_empty_edl()
-        job.edl.jump_cuts = cuts
+        job.edl.jump_cuts = merged
         self.state_manager.save_job(job)
 
         return {
             "job_id": job_id,
-            "jump_cuts_added": len(cuts),
-            "jump_cuts": [c.model_dump() for c in cuts],
+            "jump_cuts_added": len(new_cuts),
+            "jump_cuts": [c.model_dump() for c in merged],
         }

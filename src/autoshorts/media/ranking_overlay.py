@@ -10,9 +10,10 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 
-from autoshorts.media.ass_styler import escape_ass_text, format_ass_timestamp, hex_to_ass_color
+from autoshorts.core.theme import ACCENT_YELLOW
+from autoshorts.media.ass_styler import escape_ass_text, format_ass_timestamp, rgb_to_ass_color
 
-ACCENT_COLOR = hex_to_ass_color("#FFE600")
+ACCENT_COLOR = rgb_to_ass_color(ACCENT_YELLOW)
 PRIMARY_COLOR = "&H00FFFFFF"
 OUTLINE_COLOR = "&H00000000"
 BACK_COLOR = "&H80000000"

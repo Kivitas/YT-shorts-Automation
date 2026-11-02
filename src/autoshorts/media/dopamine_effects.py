@@ -409,7 +409,11 @@ def find_user_background_videos(
     assets_dir: Path | None = None,
 ) -> list[Path]:
     """Find all valid video files in assets/backgrounds/<category>/."""
-    from autoshorts.media.background_fetcher import normalize_category
+    from autoshorts.media.background_fetcher import (
+        BACKGROUND_VIDEO_EXTENSIONS,
+        is_valid_background_file,
+        normalize_category,
+    )
 
     base = assets_dir or get_assets_dir()
     clean_cat = normalize_category(category)
@@ -420,11 +424,10 @@ def find_user_background_videos(
             return []
         bg_dir = literal_dir
 
-    valid_extensions = {".mp4", ".mov", ".mkv", ".webm"}
     return [
         p
         for p in bg_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in valid_extensions and p.stat().st_size > 0
+        if p.suffix.lower() in BACKGROUND_VIDEO_EXTENSIONS and is_valid_background_file(p)
     ]
 
 

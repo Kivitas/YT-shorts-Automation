@@ -14,7 +14,7 @@ from autoshorts.core.paths import get_output_dir, get_work_dir
 from autoshorts.longform.drawer import FPS, HEIGHT, WIDTH, render_scene_frames, scenes_for_topic
 from autoshorts.longform.script import build_script, description_for
 from autoshorts.longform.thumbnail import make_thumbnail
-from autoshorts.longform.tts import synthesize_sections
+from autoshorts.longform.tts import SECTION_GAP_SECONDS, synthesize_sections
 from autoshorts.longform.types import (
     MAX_VIDEO_SECONDS,
     LongformResult,
@@ -62,6 +62,37 @@ def _synthesize_transition_pulse(
     return path
 
 
+# Silence inserted between sections so each narration beat breathes. Sections are not trimmed:
+# word timings are relative to each section's start, so trimming would desync the captions.
+NARRATION_COMPRESSOR = "acompressor=threshold=0.1:ratio=3:attack=20:release=250"
+
+
+def _narration_filter_graph(count: int) -> str:
+    """Build the filter_complex graph: per-section resample, gaps, concat, light compression.
+
+    Input ``i`` is section ``i``. Output label is ``[outc]``. Pure string builder, no ffmpeg call.
+    """
+    if count < 1:
+        raise ValueError("count must be at least 1")
+    parts = []
+    for i in range(count):
+        parts.append(
+            f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]"
+        )
+    labels: list[str] = []
+    for i in range(count):
+        labels.append(f"[a{i}]")
+        if i < count - 1:
+            parts.append(
+                f"anullsrc=sample_rate=48000:channel_layout=stereo,"
+                f"atrim=0:{SECTION_GAP_SECONDS:.2f}[g{i}]"
+            )
+            labels.append(f"[g{i}]")
+    n_segments = len(labels)
+    graph = ";".join(parts) + f";{''.join(labels)}concat=n={n_segments}:v=0:a=1[cat]"
+    return graph + f";[cat]{NARRATION_COMPRESSOR}[outc]"
+
+
 def _concat_audio(
     sections: list[SectionAudio],
     work_dir: Path,
@@ -78,15 +109,10 @@ def _concat_audio(
     work_dir.mkdir(parents=True, exist_ok=True)
     out = work_dir / "narration.m4a"
     cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-nostdin"]
-    parts = []
-    for i, sa in enumerate(sections):
+    for sa in sections:
         cmd += ["-i", str(Path(sa.audio_path).resolve())]
-        parts.append(
-            f"[{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]"
-        )
-    labels = "".join(f"[a{i}]" for i in range(len(sections)))
-    graph = ";".join(parts) + f";{labels}concat=n={len(sections)}:v=0:a=1[outa]"
-    cmd += ["-filter_complex", graph, "-map", "[outa]", "-c:a", "aac", "-b:a", "192k", str(out)]
+    graph = _narration_filter_graph(len(sections))
+    cmd += ["-filter_complex", graph, "-map", "[outc]", "-c:a", "aac", "-b:a", "192k", str(out)]
     proc = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=600, check=False,

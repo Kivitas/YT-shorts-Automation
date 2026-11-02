@@ -164,7 +164,8 @@ fi
 if ! command -v ffprobe >/dev/null 2>&1; then
     if [ "$IS_GITBASH" -eq 1 ] && command -v winget.exe >/dev/null 2>&1; then
         info "Installing full FFmpeg (with ffprobe) through winget - one time..."
-        winget.exe install --id Gyan.FFmpeg --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1             || notice "winget could not install FFmpeg; durations use a slower fallback."
+        winget.exe install --id Gyan.FFmpeg --exact --silent --accept-package-agreements --accept-source-agreements >/dev/null 2>&1 \
+            || notice "winget could not install FFmpeg; durations use a slower fallback."
         winget_links="$(cygpath -u "$LOCALAPPDATA")/Microsoft/WinGet/Links"
         [ -d "$winget_links" ] && export PATH="$winget_links:$PATH"
     elif command -v brew >/dev/null 2>&1; then

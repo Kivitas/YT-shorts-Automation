@@ -7,6 +7,15 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from autoshorts.core.theme import (
+    ACCENT_CORAL,
+    ACCENT_GREEN,
+    ACCENT_PURPLE,
+    ACCENT_TEAL,
+    ACCENT_YELLOW,
+    BG_DEEP,
+    BG_SURFACE,
+)
 from autoshorts.longform.drawer import (
     OUTLINE,
     POSES,
@@ -19,20 +28,21 @@ from autoshorts.longform.drawer import (
 )
 
 THUMB_W, THUMB_H = 1280, 720
-BG_TOP = (12, 16, 30)
+BG_TOP = BG_DEEP
 BG_BOTTOM = (26, 18, 48)
-RAY_A = (36, 48, 86)
+RAY_A = BG_SURFACE
 RAY_B = (20, 26, 52)
-NEON_CYAN = (0, 228, 255)
-NEON_EMERALD = (16, 215, 138)
-NEON_CRIMSON = (255, 72, 104)
+# Badge colours come from the shared flat theme tokens.
+NEON_CYAN = ACCENT_TEAL
+NEON_EMERALD = ACCENT_GREEN
+NEON_CRIMSON = ACCENT_CORAL
 
 _GENRE_BADGES: dict[str, tuple[str, tuple[int, int, int]]] = {
-    "history": ("HISTORICAL DEEP DIVE", (255, 196, 60)),
+    "history": ("HISTORICAL DEEP DIVE", ACCENT_YELLOW),
     "science": ("SCIENCE EXPLAINED", NEON_CYAN),
     "comparison": ("ULTIMATE VS BREAKDOWN", NEON_CRIMSON),
     "finance": ("WEALTH & COMPOUNDING", NEON_EMERALD),
-    "parody": ("REALITY VS EXPECTATION", (255, 96, 180)),
+    "parody": ("REALITY VS EXPECTATION", ACCENT_PURPLE),
     "motivation": ("MINDSET & SYSTEMS", NEON_CYAN),
     "self_improvement": ("HIGH-RETENTION GUIDE", YELLOW),
 }
@@ -100,13 +110,13 @@ def make_thumbnail(title: str, out_path: Path, genre: str = "auto") -> Path:
     chart_pts = [(790, 560), (880, 510), (960, 440), (1055, 310), (1185, 150)]
     d.line(chart_pts, fill=NEON_EMERALD, width=10, joint="curve")
     for px, py in chart_pts:
-        d.ellipse([px - 10, py - 10, px + 10, py + 10], fill=YELLOW, outline=OUTLINE, width=3)
+        d.ellipse([px - 10, py - 10, px + 10, py + 10], fill=YELLOW)
 
     # Neon accent badge at top-left
     badge_label, badge_col = _infer_badge(title, genre)
     bfont = load_font(26, True)
     bw = int(d.textlength(badge_label, font=bfont)) + 48
-    d.rounded_rectangle([56, 56, 56 + bw, 112], radius=16, fill=badge_col, outline=OUTLINE, width=4)
+    d.rounded_rectangle([56, 56, 56 + bw, 112], radius=16, fill=badge_col)
     d.text((56 + bw // 2, 84), badge_label, font=bfont, fill=OUTLINE, anchor="mm")
 
     # High-contrast multi-line impact typography
@@ -127,13 +137,11 @@ def make_thumbnail(title: str, out_path: Path, genre: str = "auto") -> Path:
                 [48, y - 6, 48 + tw, y + line_h - 10],
                 radius=16,
                 fill=YELLOW,
-                outline=OUTLINE,
-                width=5,
             )
             d.text((66, y), ln, font=font, fill=OUTLINE)
         else:
             d.text((64, y + 6), ln, font=font, fill=(8, 8, 12))
-            d.text((58, y), ln, font=font, fill=WHITE, stroke_width=10, stroke_fill=OUTLINE)
+            d.text((58, y), ln, font=font, fill=WHITE)
         y += line_h
 
     # Expressive character focal point with active viseme mouth & stickers

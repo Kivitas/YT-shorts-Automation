@@ -330,6 +330,9 @@ NICHE_TOPIC_TEMPLATES: dict[str, list[dict[str, Any]]] = {
 
 YOUTUBE_TITLE_MAX_CHARS = 100
 
+# Shorts narration rate: slightly brisker than the Edge default so pacing feels less robotic.
+SHORTS_EDGE_RATE = "+12%"
+
 # Upper bound for one edge-tts synthesis before falling back to Kokoro / offline audio.
 _TTS_TIMEOUT_SEC = 45.0
 
@@ -479,7 +482,7 @@ async def _async_synthesize_edge_tts(
     voice: str,
     output_audio_path: Path,
     output_words_path: Path,
-    rate: str = "+0%",
+    rate: str = SHORTS_EDGE_RATE,
     pitch: str = "+0Hz",
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Asynchronously synthesize neural voiceover using edge_tts Communicate."""
@@ -689,7 +692,7 @@ def synthesize_neural_tts(
     voice: str,
     output_audio_path: Path,
     output_words_path: Path,
-    rate: str = "+0%",
+    rate: str = SHORTS_EDGE_RATE,
     pitch: str = "+0Hz",
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Synthesize studio-quality voiceover via Microsoft Edge TTS with aligned words.
@@ -735,7 +738,12 @@ def synthesize_neural_tts(
         kokoro_result = _try_kokoro_tts(text, voice, output_audio_path, output_words_path)
         if kokoro_result is not None:
             return kokoro_result
-        logger.info("TTS engine used: offline fallback")
+        logger.error(
+            "ROBOTIC FALLBACK VOICE IN USE: sine-tone narration replaces speech. "
+            "Reason: edge-tts failed (%s) and Kokoro was unavailable or failed. "
+            "Check network access to Microsoft Edge TTS.",
+            tts_err,
+        )
         return _fallback_synthesize_audio(text, output_audio_path, output_words_path)
 
 
@@ -791,6 +799,7 @@ def create_faceless_short_job(
         voice=req.voice,
         output_audio_path=tts_audio_path,
         output_words_path=aligned_words_path,
+        rate=SHORTS_EDGE_RATE,
     )
 
     # 5. Build base visual cut

@@ -188,11 +188,13 @@ exit /b !RC!
 
 :run_check
 echo Pre-flight diagnostics
-echo   Python:     & "%PYTHON_EXE%" --version
+echo   Platform:   Windows %PROCESSOR_ARCHITECTURE%
+"%PYTHON_EXE%" -c "import sys; print('  Python:     ' + sys.version.split()[0])"
 where ffprobe >nul 2>&1
 if !ERRORLEVEL! equ 0 (echo   ffprobe:    found) else (echo   ffprobe:    missing ^(slower durations^))
 if exist ".env" (echo   .env:       present) else (echo   .env:       missing)
-echo   Port %PORT%: checked at launch
+"%PYTHON_EXE%" -c "import socket; s=socket.socket(); busy=s.connect_ex(('127.0.0.1', %PORT%))==0; s.close(); print('  Port %PORT%: ' + ('in use' if busy else 'free'))"
+"%PYTHON_EXE%" -c "import glob; print('  Background clips: ' + str(len(glob.glob('assets/backgrounds/**/*.mp4', recursive=True))))"
 echo %C_GREEN%[ OK ]%C_RESET% Pre-flight complete
 pause
 exit /b 0

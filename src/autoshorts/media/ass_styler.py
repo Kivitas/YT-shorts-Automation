@@ -21,6 +21,12 @@ from typing import Any
 from autoshorts.core.config import SubtitlesConfig
 from autoshorts.core.models import JumpCut
 from autoshorts.core.paths import atomic_write
+from autoshorts.core.theme import (
+    ACCENT_TEAL,
+    ACCENT_YELLOW,
+    BG_DEEP,
+    TEXT_PRIMARY,
+)
 
 
 @dataclass
@@ -144,8 +150,29 @@ def strip_emojis(text: str) -> str:
     return re.sub(r" +", " ", cleaned).strip()
 
 
+def rgb_to_ass_color(rgb: tuple[int, int, int], alpha: int = 0) -> str:
+    """Convert an RGB theme token to an ASS &HAABBGGRR& colour string (alpha 0 = opaque)."""
+    r, g, b = rgb
+    return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}&"
+
+
+# Flat "kurz" look: semi-transparent dark pill behind the active word, no stroke, no glow.
+_KURZ_PILL_ALPHA = 0x4D  # ~70% opaque backing box
+
 # 7 Distinct Caption Style Presets per PLAN.md & visual polish specification
 CAPTION_PRESETS: dict[str, dict[str, Any]] = {
+    "kurz": {
+        "font_name": "Montserrat Medium",
+        "font_size": 60,
+        "active_color": rgb_to_ass_color(ACCENT_YELLOW),  # Flat accent highlight
+        "emphasis_color": rgb_to_ass_color(ACCENT_TEAL),
+        "primary_color": rgb_to_ass_color(TEXT_PRIMARY),
+        "outline_color": rgb_to_ass_color(BG_DEEP, _KURZ_PILL_ALPHA),  # Pill box colour
+        "back_color": rgb_to_ass_color(BG_DEEP, _KURZ_PILL_ALPHA),
+        "border_style": 3,  # Opaque-style box, no stroke glyph outline
+        "outline": 8,  # Box padding only (BorderStyle=3 draws the box with this size)
+        "shadow": 0,  # No drop shadow or glow
+    },
     "neon": {
         "font_name": "Montserrat ExtraBold",
         "font_size": 76,

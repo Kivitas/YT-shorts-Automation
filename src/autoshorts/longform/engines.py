@@ -1,4 +1,4 @@
-"""Specialized visual engines for the 5 long-form genres (History, Science, Comparison, Finance, Motivation)."""
+"""Visual engines for the 5 long-form genres (History, Science, Comparison, Finance, Motivation)."""
 
 from __future__ import annotations
 
@@ -8,39 +8,69 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from autoshorts.core.theme import (
+    ACCENT_CORAL,
+    ACCENT_GREEN,
+    ACCENT_PURPLE,
+    ACCENT_TEAL,
+    ACCENT_YELLOW,
+    BG_DEEP,
+    BG_SURFACE,
+    FONT_BODY,
+    FONT_DISPLAY,
+)
+
 STAGE_LEFT = 60
 STAGE_RIGHT = 1860
 STAGE_TOP = 104
 STAGE_BOTTOM = 868
 
-OUTLINE = (18, 18, 24)
+# Palette: aliases onto the shared flat theme tokens (core/theme.py).
+OUTLINE = BG_DEEP  # dark ink for text and pupils; no longer used as a stroke colour
 WHITE = (255, 255, 255)
-OBSIDIAN = (10, 12, 20)
-SLATE_GRID = (26, 34, 52)
-NEON_CYAN = (0, 228, 255)
-NEON_EMERALD = (16, 215, 138)
-NEON_GOLD = (255, 208, 44)
-NEON_CRIMSON = (255, 72, 104)
-NEON_PURPLE = (168, 96, 255)
+OBSIDIAN = BG_DEEP
+SLATE_GRID = BG_SURFACE
+NEON_CYAN = ACCENT_TEAL
+NEON_EMERALD = ACCENT_GREEN
+NEON_GOLD = ACCENT_YELLOW
+NEON_CRIMSON = ACCENT_CORAL
+NEON_PURPLE = ACCENT_PURPLE
+
+_FALLBACK_FONTS: dict[bool, tuple[str, ...]] = {
+    True: (
+        r"C:\Windows\Fonts\arialbd.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "Arial Bold",
+        "DejaVuSans-Bold",
+    ),
+    False: (
+        r"C:\Windows\Fonts\arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "Arial",
+        "DejaVuSans",
+    ),
+}
+
+
+def font_candidates(bold: bool) -> tuple[str, ...]:
+    # Font files to try in order: theme families first, then the Arial/DejaVu fallback chain.
+    style = "Bold" if bold else "Regular"
+    themed: list[str] = []
+    for name in FONT_DISPLAY if bold else FONT_BODY:
+        themed.extend((f"{name}-{style}.ttf", f"{name}.ttf"))
+    return tuple(dict.fromkeys((*themed, *_FALLBACK_FONTS[bold])))
 
 
 def _default_font(size: int, bold: bool = True) -> Any:
-    candidates = (
-        (
-            r"C:\Windows\Fonts\arialbd.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        )
-        if bold
-        else (
-            r"C:\Windows\Fonts\arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        )
-    )
-    for path in candidates:
+    for path in font_candidates(bold):
         try:
             return ImageFont.truetype(path, size)
         except OSError:
@@ -80,7 +110,7 @@ def _draw_arrow_segment(
         p1[0] - ux * head_size - px * (head_size * 0.55),
         p1[1] - uy * head_size - py * (head_size * 0.55),
     )
-    draw.polygon([tip, left, right], fill=color, outline=OUTLINE)
+    draw.polygon([tip, left, right], fill=color)
 
 
 def _draw_progressive_polyline(
@@ -120,7 +150,6 @@ def _draw_progressive_polyline(
             drawn.append(tip)
             break
     if len(drawn) >= 2:
-        draw.line(drawn, fill=OUTLINE, width=width + 4, joint="curve")
         draw.line(drawn, fill=color, width=width, joint="curve")
         if with_arrow:
             _draw_arrow_segment(draw, prev, tip, color, width=width, head_size=18.0)
@@ -204,15 +233,13 @@ def draw_history_canvas(
             outline=NEON_GOLD,
             width=3,
         )
-        draw.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], fill=NEON_CRIMSON, outline=OUTLINE, width=3)
+        draw.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], fill=NEON_CRIMSON)
         draw.text(
             (cx, cy - 24),
             cname,
             font=fnt(18, True),
             fill=WHITE,
             anchor="mm",
-            stroke_width=2,
-            stroke_fill=OUTLINE,
         )
 
     # Progressive troop movement & trade route arrows
@@ -283,9 +310,8 @@ def draw_history_canvas(
     draw.polygon(
         [(px, y_line - 6), (px - 14, y_line - 32), (px + 14, y_line - 32)],
         fill=NEON_CRIMSON,
-        outline=OUTLINE,
     )
-    draw.ellipse([px - 9, y_line - 9, px + 9, y_line + 9], fill=NEON_GOLD, outline=OUTLINE, width=3)
+    draw.ellipse([px - 9, y_line - 9, px + 9, y_line + 9], fill=NEON_GOLD)
 
 
 # ===========================================================================
@@ -372,8 +398,6 @@ def draw_science_canvas(
             draw.ellipse(
                 [cx + nx - 16, cy + ny - 16, cx + nx + 16, cy + ny + 16],
                 fill=col,
-                outline=OUTLINE,
-                width=3,
             )
 
         # Right panel: Vibrating Molecular Bonds (H2O / Covalent Network)
@@ -457,14 +481,10 @@ def draw_science_canvas(
             draw.ellipse(
                 [x1 - r1, y - r1, x1 + r1, y + r1],
                 fill=WHITE if z1 >= 0 else (110, 140, 190),
-                outline=OUTLINE,
-                width=2,
             )
             draw.ellipse(
                 [x2 - r2, y - r2, x2 + r2, y + r2],
                 fill=WHITE if z1 < 0 else (110, 140, 190),
-                outline=OUTLINE,
-                width=2,
             )
 
         # Neural Synapse / Cell Signaling Diagram on Right
@@ -486,9 +506,7 @@ def draw_science_canvas(
             ang = t * 1.8 + v_idx * (math.pi / 3)
             vx = ncx + 135 * math.cos(ang)
             vy = ncy + 95 * math.sin(ang)
-            draw.ellipse(
-                [vx - 14, vy - 14, vx + 14, vy + 14], fill=NEON_GOLD, outline=OUTLINE, width=2
-            )
+            draw.ellipse([vx - 14, vy - 14, vx + 14, vy + 14], fill=NEON_GOLD)
         badge = "MOLECULAR BIOLOGY: DNA BASE PAIRS (A-T / G-C)"
 
     else:  # astrophysics
@@ -598,9 +616,7 @@ def draw_comparison_canvas(
                 outline=(52, 60, 88),
                 width=3,
             )
-            draw.rounded_rectangle(
-                [board_x0, y0, board_x0 + 115, y1], radius=12, fill=t_col, outline=OUTLINE, width=4
-            )
+            draw.rounded_rectangle([board_x0, y0, board_x0 + 115, y1], radius=12, fill=t_col)
             draw.text(
                 (board_x0 + 57, (y0 + y1) // 2),
                 t_label,
@@ -661,9 +677,7 @@ def draw_comparison_canvas(
 
     # Central VS lightning badge
     vs_r = 48 + int(4 * math.sin(t * 6.0))
-    draw.ellipse(
-        [1180 - vs_r, 200 - vs_r, 1180 + vs_r, 200 + vs_r], fill=NEON_GOLD, outline=OUTLINE, width=6
-    )
+    draw.ellipse([1180 - vs_r, 200 - vs_r, 1180 + vs_r, 200 + vs_r], fill=NEON_GOLD)
     draw.text((1180, 200), "VS", font=fnt(36, True), fill=OUTLINE, anchor="mm")
 
     # 5 Racing Stat Bars (0-100%)

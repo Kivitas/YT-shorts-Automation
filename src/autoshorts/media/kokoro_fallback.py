@@ -55,7 +55,10 @@ def kokoro_available() -> bool:
     return all((model_dir / name).is_file() for name in MODEL_FILES)
 
 
-def synthesize_kokoro(text: str, voice: str, output_wav: Path, speed: float = 1.0) -> Path:
+KOKORO_SPEED = 1.1
+
+
+def synthesize_kokoro(text: str, voice: str, output_wav: Path, speed: float = KOKORO_SPEED) -> Path:
     """Synthesize ``text`` to ``output_wav`` with the Kokoro CLI."""
     binary = _find_binary()
     if binary is None:

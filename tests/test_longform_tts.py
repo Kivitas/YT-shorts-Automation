@@ -19,7 +19,7 @@ def _script():
 
 
 def _install_fakes(monkeypatch, edge_fails=True, kokoro_fails=False):
-    async def fake_edge(text, voice, audio, words):
+    async def fake_edge(text, voice, audio, words, rate="+0%"):
         if edge_fails:
             raise ConnectionError("offline")
         audio.write_bytes(b"mp3")
@@ -62,7 +62,8 @@ def test_kokoro_used_when_edge_fails(monkeypatch, tmp_path):
     assert [p.audio_path.name for p in out] == ["section_00.wav", "section_01.wav"]
     assert calls == ["en-US-ChristopherNeural", "en-US-ChristopherNeural"]
     assert out[0].words[0]["word"] == "a"
-    assert tts.total_duration(out) == pytest.approx(4.0)
+    # Two 2.0s sections plus one inter-section gap.
+    assert tts.total_duration(out) == pytest.approx(4.0 + tts.SECTION_GAP_SECONDS)
 
 
 def test_secondary_speaker_switches_voice(monkeypatch, tmp_path):
@@ -86,7 +87,8 @@ def test_edge_used_when_available(monkeypatch, tmp_path):
     _install_fakes(monkeypatch, edge_fails=False)
     out = tts.synthesize_sections(_script(), tmp_path, voice="en-US-AriaNeural")
     assert out[0].audio_path.name == "section_00.mp3"
-    assert tts.total_duration(out) == pytest.approx(2.0)
+    # Two 1.0s sections plus one inter-section gap.
+    assert tts.total_duration(out) == pytest.approx(2.0 + tts.SECTION_GAP_SECONDS)
 
 
 def test_both_fail_raises(monkeypatch, tmp_path):

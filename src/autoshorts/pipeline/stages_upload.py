@@ -17,6 +17,7 @@ from autoshorts.core.models import (
     VideoMetadata,
     resolve_verification,
 )
+from autoshorts.media.ffmpeg_tools import check_delivery
 from autoshorts.pipeline.common import _upload_succeeded
 from autoshorts.uploader.description_builder import (
     build_short_description,
@@ -30,8 +31,51 @@ from autoshorts.uploader.youtube_api import YouTubeApiUploader
 logger = logging.getLogger("autoshorts.pipeline")
 
 
+# check.py rows that block an upload. Everything else (duration, fps, loudness, file size,
+# resolution shortfall) is logged as a warning and never blocks.
+HARD_DELIVERY_CHECKS = frozenset({"aspect", "video codec"})
+
+
+def _hard_delivery_failures(delivery: dict[str, Any]) -> list[str]:
+    """Return the hard failures (wrong frame shape, missing or wrong video codec) in a QC result."""
+    rows = delivery.get("raw", {}).get("checks") if isinstance(delivery.get("raw"), dict) else None
+    hard: list[str] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("check", ""))
+        if row.get("status") == "FAIL" and name in HARD_DELIVERY_CHECKS:
+            hard.append(f"{name}: {row.get('value')} (expected {row.get('expected')})")
+    return hard
+
+
 class UploadMixin:
     """Stage methods for upload and scheduling."""
+
+    def _delivery_gate(self: Any, job: Job) -> None:
+        """QC the rendered file before it is uploaded.
+
+        Blocks (raises UploadError) only on hard failures: wrong aspect or a missing/wrong video
+        codec. Other check.py findings are logged as warnings. The result is stored on the job
+        under diagnostics["delivery_qc"]. A QC tool that cannot run never blocks the upload.
+        """
+        path = getattr(job, "rendered_video_path", None)
+        if not path:
+            return
+        delivery = check_delivery(Path(path))
+        hard = _hard_delivery_failures(delivery)
+        issues = list(delivery.get("issues") or [])
+        job.record_diagnostic(
+            "delivery_qc",
+            ok=bool(delivery.get("ok")),
+            hard_failures=hard,
+            issues=issues,
+        )
+        soft = [i for i in issues if i.split(":", 1)[0] not in HARD_DELIVERY_CHECKS]
+        if soft:
+            logger.warning("Job %s: delivery QC warnings: %s", job.id, "; ".join(soft))
+        if hard:
+            raise UploadError(f"Job {job.id}: delivery QC blocked upload: {'; '.join(hard)}")
 
     def _prepare_upload_metadata(self: Any, job: Job) -> tuple[str, str]:
         sel = job.selected_clips[0]
@@ -68,6 +112,11 @@ class UploadMixin:
         import autoshorts.pipeline as pipeline_mod
 
         title, desc = self._prepare_upload_metadata(job)
+        try:
+            self._delivery_gate(job)
+        except UploadError as qc_err:
+            self._mark_failed(job, "upload", qc_err)
+            raise
         if job.status not in (JobStatus.READY_FOR_REVIEW, JobStatus.SCHEDULED):
             job.status = JobStatus.READY_FOR_REVIEW
         job.transition_to(JobStatus.UPLOADING)
@@ -320,6 +369,11 @@ class UploadMixin:
 
     def _run_schedule_upload(self: Any, job: Job) -> None:
         title, desc = self._prepare_upload_metadata(job)
+        try:
+            self._delivery_gate(job)
+        except UploadError as qc_err:
+            self._mark_failed(job, "upload", qc_err)
+            raise
         if job.status not in (JobStatus.READY_FOR_REVIEW, JobStatus.SCHEDULED):
             job.status = JobStatus.READY_FOR_REVIEW
         job.transition_to(JobStatus.SCHEDULED)

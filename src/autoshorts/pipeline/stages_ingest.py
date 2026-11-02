@@ -141,6 +141,7 @@ class IngestMixin:
                         "end": float(ws["end"]),
                         "duration": float(ws["end"] - ws["start"]),
                         "text": ws["text"].strip(),
+                        "words": ws.get("words", []),
                     }
                     for ws in whisper_segs
                 ]

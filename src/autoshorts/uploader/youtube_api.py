@@ -11,6 +11,7 @@ import random
 import re
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,28 @@ if not hasattr(QuotaTracker, "record_verify"):
     QuotaTracker.record_verify = lambda self, units=1: self.record_general(units)  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)
+
+# Hard ceiling on resumable-upload chunk retries for one upload, across the whole upload.
+# The consecutive-failure counter only drives backoff; it no longer resets this budget.
+MAX_TOTAL_UPLOAD_RETRIES = 10
+
+
+@dataclass(frozen=True)
+class PostActionResult:
+    """Outcome of a post-upload action (playlist insert, pinned comment).
+
+    A failed action never fails the upload, but the caller can see why it failed.
+    """
+
+    video_id: str
+    action: str
+    ok: bool
+    value: str | None = None
+    error: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.ok
+
 
 MAX_TITLE_CHARS: int = 100
 MAX_DESCRIPTION_CHARS: int = 5000
@@ -351,13 +374,16 @@ class YouTubeApiUploader:
         except Exception as e:
             logger.warning("Could not record upload quota exhaustion in tracker: %s", e)
 
-    def add_to_playlist(self, video_id: str, playlist_id: str) -> bool:
+    def add_to_playlist(self, video_id: str, playlist_id: str) -> PostActionResult:
         """Add an uploaded video to a YouTube playlist via playlistItems.insert.
 
-        Non-fatal: logs a warning on error and returns False.
+        Non-fatal: a failure logs a warning naming the video and playlist, and is returned as
+        ``PostActionResult(ok=False, error=...)``. The result is truthy only on success.
         """
         if not video_id or not playlist_id:
-            return False
+            return PostActionResult(
+                video_id=video_id or "", action="playlist", ok=False, error="missing ids"
+            )
         try:
             service = self.get_service()
             body = {
@@ -374,18 +400,28 @@ class YouTubeApiUploader:
             if self.quota_tracker:
                 self.quota_tracker.record_general(50)
             logger.info("Video %s successfully added to playlist %s.", video_id, playlist_id)
-            return True
+            return PostActionResult(
+                video_id=video_id, action="playlist", ok=True, value=playlist_id
+            )
         except Exception as e:
-            logger.warning("Failed to add video %s to playlist %s: %s", video_id, playlist_id, e)
-            return False
+            logger.warning(
+                "Video %s was uploaded but could not be added to playlist %s: %s",
+                video_id,
+                playlist_id,
+                e,
+            )
+            return PostActionResult(video_id=video_id, action="playlist", ok=False, error=str(e))
 
-    def post_comment(self, video_id: str, comment_text: str) -> str | None:
+    def post_comment(self, video_id: str, comment_text: str) -> PostActionResult:
         """Post a top-level comment to an uploaded video via commentThreads.insert.
 
-        Non-fatal: logs a warning on error and returns None.
+        Non-fatal: a failure logs a warning naming the video, and is returned as
+        ``PostActionResult(ok=False, error=...)``. On success ``value`` is the comment id.
         """
         if not video_id or not comment_text:
-            return None
+            return PostActionResult(
+                video_id=video_id or "", action="comment", ok=False, error="missing ids or text"
+            )
         try:
             service = self.get_service()
             body = {
@@ -404,10 +440,10 @@ class YouTubeApiUploader:
             if self.quota_tracker:
                 self.quota_tracker.record_general(50)
             logger.info("Comment successfully posted to video %s (id: %s).", video_id, comment_id)
-            return comment_id
+            return PostActionResult(video_id=video_id, action="comment", ok=True, value=comment_id)
         except Exception as e:
-            logger.warning("Failed to post comment to video %s: %s", video_id, e)
-            return None
+            logger.warning("Video %s: failed to post the pinned comment: %s", video_id, e)
+            return PostActionResult(video_id=video_id, action="comment", ok=False, error=str(e))
 
     def upload_thumbnail(self, video_id: str, thumbnail_path: Path) -> bool:
         """Upload a custom JPEG thumbnail for a video via thumbnails.set.
@@ -548,7 +584,8 @@ class YouTubeApiUploader:
     def _run_resumable(self, insert_request: Any) -> dict[str, Any]:
         """Drive a resumable videos.insert to completion with retry/backoff; return the response."""
         response = None
-        retry_count = 0
+        retry_count = 0  # consecutive failures: drives the backoff exponent
+        total_retries = 0  # every retry this upload has made: never reset, hard-capped
 
         while response is None:
             try:
@@ -556,7 +593,7 @@ class YouTubeApiUploader:
                 if status_res:
                     pct = int(status_res.progress() * 100)
                     logger.debug(f"Resumable upload progress: {pct}%")
-                retry_count = 0  # Reset retry counter on successful chunk
+                retry_count = 0  # a good chunk ends the current failure streak only
             except Exception as ex:
                 typed = classify_google_error(ex)
                 if isinstance(typed, AuthError):
@@ -576,8 +613,14 @@ class YouTubeApiUploader:
 
                 # RateLimitError and TransientUploadError fall through to retry with backoff.
                 retry_count += 1
-                if retry_count > self.max_retries:
-                    logger.error(f"Upload failed after {self.max_retries} chunk retries: {ex}")
+                total_retries += 1
+                if retry_count > self.max_retries or total_retries > MAX_TOTAL_UPLOAD_RETRIES:
+                    logger.error(
+                        "Upload failed after %d chunk retries (%d consecutive): %s",
+                        total_retries,
+                        retry_count,
+                        ex,
+                    )
                     raise UploadFailedError(f"Upload failed permanently: {ex}") from ex
 
                 outage_info = classify_network_or_outage_error(ex)

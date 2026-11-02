@@ -9,6 +9,7 @@ Provides:
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 import re
@@ -95,6 +96,26 @@ def normalize_category(category: str | None) -> str:
     return cat
 
 
+# A background smaller than this is a placeholder or a truncated download, never gameplay.
+MIN_BACKGROUND_BYTES = 100 * 1024
+BACKGROUND_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
+
+
+def is_valid_background_file(path: Path | str) -> bool:
+    """Return True only for a real background clip.
+
+    Rule: the file exists, is at least MIN_BACKGROUND_BYTES, and ffprobe reports a video stream.
+    Size alone is not trusted, since placeholder files of a few bytes used to pass.
+    """
+    p = Path(path)
+    try:
+        if not p.is_file() or p.stat().st_size < MIN_BACKGROUND_BYTES:
+            return False
+    except OSError:
+        return False
+    return has_video_stream(p)
+
+
 def download_clip_with_ytdlp(
     url: str,
     output_path: Path,
@@ -119,7 +140,8 @@ def download_clip_with_ytdlp(
     output_path = Path(output_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if output_path.is_file() and output_path.stat().st_size > 0:
+    # A cached file is reused only when it passes the validity rule. Placeholders are replaced.
+    if is_valid_background_file(output_path):
         return output_path
 
     bin_name = resolve_yt_dlp_binary(yt_dlp_binary)
@@ -228,6 +250,67 @@ def download_clip_with_ytdlp(
         return None
 
 
+def _format_mmss(seconds: int) -> str:
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def repair_manifest_backgrounds(
+    category: str = "minecraft",
+    assets_dir: Path | None = None,
+    timeout_sec: float = 180.0,
+) -> list[Path]:
+    """Re-download manifest clips whose local file fails is_valid_background_file.
+
+    Each manifest entry names its source_url and segment_index. Segment N is cut from
+    ((N-1)*60s, N*60s], matching the ~60s clips the collector writes.
+
+    Returns:
+        Paths of clips that were repaired in this call.
+    """
+    clean_cat = normalize_category(category)
+    base = assets_dir or get_assets_dir()
+    bg_dir = base / "backgrounds" / clean_cat
+    manifest_file = bg_dir / "manifest.json"
+    if not manifest_file.is_file():
+        return []
+
+    try:
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.debug("Unreadable background manifest %s: %s", manifest_file, exc)
+        return []
+
+    clips = data.get("clips") if isinstance(data, dict) else data
+    repaired: list[Path] = []
+    for item in clips or []:
+        if not isinstance(item, dict):
+            continue
+        fname = item.get("filename")
+        url = item.get("source_url")
+        if not fname or not url:
+            continue
+        dest = bg_dir / fname
+        if is_valid_background_file(dest):
+            continue
+
+        try:
+            segment = max(1, int(item.get("segment_index", 1)))
+        except (TypeError, ValueError):
+            segment = 1
+        start_sec = (segment - 1) * 60
+        logger.info("Background %s is missing or invalid; re-downloading from %s", fname, url)
+        res = download_clip_with_ytdlp(
+            url=url,
+            output_path=dest,
+            section_start=_format_mmss(start_sec),
+            section_end=_format_mmss(start_sec + 60),
+            timeout_sec=timeout_sec,
+        )
+        if res is not None:
+            repaired.append(res)
+    return repaired
+
+
 def ensure_backgrounds_available(
     category: str = "minecraft",
     min_clips: int = 1,
@@ -253,11 +336,13 @@ def ensure_backgrounds_available(
     category_dir = base / "backgrounds" / clean_cat
     category_dir.mkdir(parents=True, exist_ok=True)
 
-    valid_extensions = {".mp4", ".mov", ".mkv", ".webm"}
+    # Re-fetch manifest entries whose file is a placeholder or otherwise invalid.
+    repair_manifest_backgrounds(clean_cat, assets_dir=base, timeout_sec=timeout_sec)
+
     existing = [
         p
         for p in category_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in valid_extensions and p.stat().st_size > 0
+        if p.suffix.lower() in BACKGROUND_VIDEO_EXTENSIONS and is_valid_background_file(p)
     ]
     existing.sort(key=lambda p: p.name)
 
@@ -281,7 +366,7 @@ def ensure_backgrounds_available(
             break
 
         dest_file = category_dir / f"{clean_cat}_bg_{idx:02d}.mp4"
-        if dest_file.is_file() and dest_file.stat().st_size > 0:
+        if is_valid_background_file(dest_file):
             if dest_file not in existing:
                 existing.append(dest_file)
             continue

@@ -39,6 +39,15 @@ def clean_encoder_probe_cache():
     clear_hardware_encoder_cache()
 
 
+@pytest.fixture(autouse=True)
+def no_real_background_assets(monkeypatch):
+    """Keep compose() from picking real clips in assets/, which mocked ffmpeg calls would overwrite."""
+    monkeypatch.setattr(
+        "autoshorts.media.compositor.pick_background_asset",
+        lambda *args, **kwargs: (None, 0.0),
+    )
+
+
 # -----------------------------------------------------------------------------
 # 1. Protocol Runtime Check Compliance
 # -----------------------------------------------------------------------------

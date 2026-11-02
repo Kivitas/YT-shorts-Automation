@@ -105,7 +105,19 @@ def test_inventory_reporting_populated(tmp_path: Path):
 # -----------------------------------------------------------------------------
 
 
-def test_ensure_backgrounds_available_already_present(tmp_path: Path):
+@pytest.fixture
+def presence_only_backgrounds(monkeypatch):
+    """These tests use tiny dummy clips; check presence only. The validity rule is tested elsewhere."""
+    from autoshorts.media import background_fetcher as bf
+
+    monkeypatch.setattr(
+        bf,
+        "is_valid_background_file",
+        lambda p: Path(p).is_file() and Path(p).stat().st_size > 0,
+    )
+
+
+def test_ensure_backgrounds_available_already_present(tmp_path: Path, presence_only_backgrounds):
     """Verify existing clips are returned without triggering any downloads."""
     assets_dir = tmp_path / "assets"
     mc_dir = assets_dir / "backgrounds" / "minecraft"
@@ -184,7 +196,7 @@ def test_download_preset_backgrounds(tmp_path: Path):
 # -----------------------------------------------------------------------------
 
 
-def test_pick_background_asset_triggers_auto_fetch(tmp_path: Path):
+def test_pick_background_asset_triggers_auto_fetch(tmp_path: Path, presence_only_backgrounds):
     """Verify pick_background_asset triggers ensure_backgrounds_available on empty folder."""
     assets_dir = tmp_path / "assets"
     mc_dir = assets_dir / "backgrounds" / "minecraft"
@@ -205,7 +217,7 @@ def test_pick_background_asset_triggers_auto_fetch(tmp_path: Path):
         assert mock_ensure.called
 
 
-def test_pick_background_asset_auto_category(tmp_path: Path):
+def test_pick_background_asset_auto_category(tmp_path: Path, presence_only_backgrounds):
     """Verify pick_background_asset handles 'auto' category when no files exist."""
     assets_dir = tmp_path / "assets"
     mc_dir = assets_dir / "backgrounds" / "minecraft"

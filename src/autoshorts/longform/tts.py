@@ -13,6 +13,10 @@ from autoshorts.longform.types import LongformScript, Section, SectionAudio
 logger = logging.getLogger(__name__)
 
 NARRATOR_VOICE = "en-US-ChristopherNeural"
+# Slightly brisker delivery for long-form narration; voices stay unchanged.
+LONGFORM_EDGE_RATE = "+10%"
+# Silence between sections so each narration beat breathes (added to the timeline, see below).
+SECTION_GAP_SECONDS = 0.35
 SECONDARY_VOICE = "en-US-AriaNeural"
 VOICES = (NARRATOR_VOICE, SECONDARY_VOICE)
 
@@ -38,12 +42,16 @@ def voice_for_section(section: Section, default_voice: str | None = None) -> str
 
 
 def _edge(
-    text: str, voice: str, audio: Path, words_path: Path
+    text: str,
+    voice: str,
+    audio: Path,
+    words_path: Path,
+    rate: str = "+0%",
 ) -> tuple[list[dict[str, Any]], float]:
     from autoshorts.research_agent import moneyprinter
 
     _path, words, duration = asyncio.run(
-        moneyprinter._async_synthesize_edge_tts(text, voice, audio, words_path)
+        moneyprinter._async_synthesize_edge_tts(text, voice, audio, words_path, rate=rate)
     )
     if not audio.exists() or audio.stat().st_size == 0:
         raise RuntimeError("Edge TTS produced no audio")
@@ -81,7 +89,7 @@ def synthesize_sections(
         mp3 = work_dir / f"section_{i:02d}.mp3"
         words_json = work_dir / f"section_{i:02d}_words.json"
         try:
-            words, duration = _edge(text, v, mp3, words_json)
+            words, duration = _edge(text, v, mp3, words_json, rate=LONGFORM_EDGE_RATE)
             path = mp3
         except Exception as edge_err:
             logger.warning("Edge TTS failed for section %d (%s); trying Kokoro.", i, edge_err)
@@ -96,6 +104,9 @@ def synthesize_sections(
                 ) from kokoro_err
         if duration <= 0 and words:
             duration = float(words[-1].get("end", 0.0))
+        # Every section but the last is followed by a narration gap; the timeline must include it.
+        if i < len(script.sections) - 1:
+            duration += SECTION_GAP_SECONDS
         results.append(
             SectionAudio(section=section, audio_path=path, words=words, duration=duration)
         )

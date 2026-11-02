@@ -1,4 +1,8 @@
-"""Publish rendered long-form videos to YouTube (API, Studio, or Local export), capped at 4 per Pacific-Time day."""
+"""Publish rendered long-form videos to YouTube (API, Studio, or Local export).
+
+The per-Pacific-Time-day cap comes from ``upload.longform_daily_cap`` in the config.
+``LONGFORM_DAILY_CAP`` is only the fallback used when no config value is available.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,8 @@ from autoshorts.longform.types import LongformResult
 
 logger = logging.getLogger(__name__)
 
-LONGFORM_DAILY_CAP = 4
+# Fallback only: matches the UploadConfig.longform_daily_cap default. The live cap is read from config.
+LONGFORM_DAILY_CAP = 20
 _PT = ZoneInfo("America/Los_Angeles")
 _LOCK = threading.Lock()
 
@@ -51,14 +56,12 @@ def longform_uploads_today() -> int:
     return _load_counts().get(_today_pt(), 0)
 
 
-def longform_remaining_today() -> int:
-    return max(0, LONGFORM_DAILY_CAP - longform_uploads_today())
+def longform_remaining_today(cap: int | None = None) -> int:
+    eff_cap = cap if cap is not None else LONGFORM_DAILY_CAP
+    return max(0, eff_cap - longform_uploads_today())
 
 
-def _record_upload() -> None:
-    counts = _load_counts()
-    today = _today_pt()
-    counts[today] = counts.get(today, 0) + 1
+def _write_counts(counts: dict[str, int]) -> None:
     # Keep only the last 7 days so the file stays small.
     for day in sorted(counts)[:-7]:
         counts.pop(day, None)
@@ -67,11 +70,44 @@ def _record_upload() -> None:
     atomic_write(path, json.dumps(counts, indent=2), encoding="utf-8")
 
 
+def _reserve_slot(cap: int) -> None:
+    """Check the cap and count one upload for today, atomically. Raises when the cap is reached."""
+    with _LOCK:
+        counts = _load_counts()
+        today = _today_pt()
+        used = counts.get(today, 0)
+        if max(0, cap - used) <= 0:
+            raise RuntimeError(f"Long-form daily cap reached ({cap} uploads per Pacific day).")
+        counts[today] = used + 1
+        _write_counts(counts)
+
+
+def _release_slot() -> None:
+    """Give back a reservation whose upload did not succeed."""
+    with _LOCK:
+        counts = _load_counts()
+        today = _today_pt()
+        if counts.get(today, 0) > 0:
+            counts[today] -= 1
+            _write_counts(counts)
+
+
+def _record_upload() -> None:
+    """Count a successful upload (kept for callers outside this module)."""
+    with _LOCK:
+        counts = _load_counts()
+        today = _today_pt()
+        counts[today] = counts.get(today, 0) + 1
+        _write_counts(counts)
+
+
 def publish_longform(result: LongformResult, config=None, state_manager=None) -> str:
     """Upload one rendered long-form video and return its YouTube/export URL.
 
     Respects `cfg.upload.mode` ('api', 'studio', or 'local') and raises RuntimeError
-    when today's cap of 4 is already used or the upload is not verified.
+    when today's cap (`upload.longform_daily_cap`) is already used or no URL is returned.
+    The network upload runs outside the lock; the lock covers only the cap check and the
+    count. A slot is reserved before the upload and released if the upload fails.
     """
     from autoshorts.core.config import load_config
     from autoshorts.core.state_manager import StateManager
@@ -80,15 +116,14 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
     from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
     from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
-    with _LOCK:
-        if longform_remaining_today() <= 0:
-            raise RuntimeError(
-                f"Long-form daily cap reached ({LONGFORM_DAILY_CAP} uploads per Pacific day)."
-            )
-        cfg = config or load_config(None)
-        upload_cfg = getattr(cfg, "upload", None)
-        upload_mode = str(getattr(upload_cfg, "mode", "api") or "api").strip().lower()
+    cfg = config or load_config(None)
+    upload_cfg = getattr(cfg, "upload", None)
+    cap = getattr(upload_cfg, "longform_daily_cap", None)
+    eff_cap = int(cap) if cap is not None else LONGFORM_DAILY_CAP
+    upload_mode = str(getattr(upload_cfg, "mode", "api") or "api").strip().lower()
 
+    _reserve_slot(eff_cap)
+    try:
         if upload_mode == "studio":
             uploader = PlaywrightStudioUploader(config=cfg)
         elif upload_mode == "local":
@@ -111,17 +146,20 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
         )
         if not getattr(upload_result, "url", None):
             raise RuntimeError("YouTube upload did not return a video URL.")
-        _record_upload()
-        logger.info("Published long-form video %s (mode=%s)", upload_result.url, upload_mode)
+    except BaseException:
+        _release_slot()
+        raise
 
-        # Automatic post-upload cleanup: delete video from PC once uploaded
-        keep_master = getattr(getattr(cfg, "cleanup", None), "keep_master_mp4", False)
-        if not keep_master:
-            try:
-                if result.video_path and Path(result.video_path).is_file():
-                    Path(result.video_path).unlink(missing_ok=True)
-                    logger.info("Purged uploaded longform master MP4: %s", result.video_path)
-            except Exception as del_err:
-                logger.warning("Could not delete uploaded longform video: %s", del_err)
+    logger.info("Published long-form video %s (mode=%s)", upload_result.url, upload_mode)
 
-        return str(upload_result.url)
+    # Automatic post-upload cleanup: delete video from PC once uploaded
+    keep_master = getattr(getattr(cfg, "cleanup", None), "keep_master_mp4", False)
+    if not keep_master:
+        try:
+            if result.video_path and Path(result.video_path).is_file():
+                Path(result.video_path).unlink(missing_ok=True)
+                logger.info("Purged uploaded longform master MP4: %s", result.video_path)
+        except Exception as del_err:
+            logger.warning("Could not delete uploaded longform video: %s", del_err)
+
+    return str(upload_result.url)

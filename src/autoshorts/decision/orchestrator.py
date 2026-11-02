@@ -27,11 +27,21 @@ from autoshorts.decision.semif_engine import (
     evaluate_heuristic,
 )
 from autoshorts.decision.window_slicer import (
+    HOOK_FIRST_SCORE_BONUS,
+    classify_semantic_hook,
     compute_narrative_completeness_score,
     select_non_overlapping_candidates,
 )
 
 logger = logging.getLogger("autoshorts.decision.orchestrator")
+
+
+def _heuristic_window_score(text: str, duration: float) -> float:
+    """Rule-based window score with the hook-first bonus for windows that open with a hook."""
+    score = evaluate_heuristic(text, duration)
+    if classify_semantic_hook(text)["is_hook"]:
+        score = min(1.0, score + HOOK_FIRST_SCORE_BONUS)
+    return score
 
 
 def _fuse_candidate_score(
@@ -163,13 +173,13 @@ class SemIfDecider(Decider):
                         cand.end,
                         e,
                     )
-                    score = evaluate_heuristic(cand.text, cand.duration)
+                    score = _heuristic_window_score(cand.text, cand.duration)
                     reason = f"Heuristic fallback: {score:.3f}"
             elif self.provider is None:
-                score = evaluate_heuristic(cand.text, cand.duration)
+                score = _heuristic_window_score(cand.text, cand.duration)
                 reason = f"Heuristic (no provider): {score:.3f}"
             else:
-                score = evaluate_heuristic(cand.text, cand.duration)
+                score = _heuristic_window_score(cand.text, cand.duration)
                 reason = f"Heuristic: {score:.3f}"
 
             nc = compute_narrative_completeness_score(cand.text)
@@ -403,7 +413,7 @@ class SemIfDecider(Decider):
         elif action_key == "WINDOW_SELECTION":
             text = str(context.get("text", ""))
             dur = float(context.get("duration", 45.0))
-            score = evaluate_heuristic(text, dur)
+            score = _heuristic_window_score(text, dur)
             return "A" if score >= 0.5 else "B"
 
         elif action_key == "UPLOAD_VERIFICATION_GATE":

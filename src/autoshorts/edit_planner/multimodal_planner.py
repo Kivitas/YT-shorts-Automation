@@ -186,11 +186,16 @@ class MultimodalEditPlanner(EditPlanner):
         # Provenance for the most recent generate_edl() call.
         self.last_source: str = "deterministic"
         self.last_fallback_reason: str | None = None
+        self.last_planner_fallback: bool = False
 
     def _record(self, source: str, reason: str | None = None) -> None:
         """Remember how the current plan was produced for stage artifacts."""
         self.last_source = source
         self.last_fallback_reason = reason
+        self.last_planner_fallback = source == "empty_fallback"
+        if self.last_planner_fallback:
+            # The render proceeds with no planned cuts, so this must not pass as a routine warning.
+            logger.error("EDL planner fallback: rendering with no planned cuts (%s)", reason)
 
     def generate_edl(
         self,

@@ -23,7 +23,7 @@ LayoutMode = Literal[
     "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
 ]
 SubtitlePreset = Literal[
-    "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid"
+    "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid", "kurz"
 ]
 ColorGradingPreset = Literal["none", "vibrant", "cinematic", "warm", "crisp"]
 ProgressBarPosition = Literal["top", "bottom", "seam", "none"]
@@ -100,6 +100,7 @@ class UploadConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     mode: Literal["api", "studio", "local"] = "api"
+    longform_daily_cap: int = 20
     privacy_status: Literal["private", "unlisted", "public"] = "unlisted"
     default_privacy_status: str = "unlisted"
     quota_exhausted_fallback: str = "studio"
@@ -244,8 +245,8 @@ class SubtitlesConfig(BaseModel):
     outline_color: str = "&H00000000"
     safe_zone_margin_v: int = 780
     style_preset: str = Field(
-        default="neon",
-        description="Subtitle visual preset: neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic, rapid",
+        default="kurz",
+        description="Subtitle visual preset: kurz, neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic, rapid",
     )
     text_transform: str = "uppercase"
     position: str = "center"

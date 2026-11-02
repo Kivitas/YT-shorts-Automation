@@ -767,9 +767,13 @@ class FFmpegCompositor:
         bgm_path: Path | str | None = None,
         bgm_volume: float | None = None,
         rhythm_ducking_release: int | None = None,
+        background_offset: float | None = None,
         **kwargs: Any,
     ) -> Path:
         """Render a vertical 1080x1920 Short MP4 via FFmpeg executing the EDL.
+
+        background_offset: start time in the background clip, as returned by
+        select_gameplay_background. A random offset is used when it is None.
 
         Atomic write: renders to .tmp.mp4 first then renames via os.replace.
         """
@@ -885,13 +889,23 @@ class FFmpegCompositor:
             bg_file: Path | None = None
             bg_offset = 0.0
 
+            bg_reject_reason: str | None = None
             if background_path:
                 p = Path(background_path).resolve()
-                if p.is_file() and has_video_stream(p):
+                if not p.is_file():
+                    bg_reject_reason = "file missing"
+                elif not has_video_stream(p):
+                    bg_reject_reason = "no video stream"
+                else:
                     bg_file = p
                     bg_dur = probe_media_duration(p)
                     max_offset = max(0.0, bg_dur - target_duration)
-                    bg_offset = random.uniform(0.0, min(180.0, max_offset))
+                    if background_offset is not None and background_offset >= 0:
+                        bg_offset = min(float(background_offset), max_offset)
+                    else:
+                        bg_offset = random.uniform(0.0, min(180.0, max_offset))
+            elif background_path is None:
+                bg_reject_reason = "no background selected"
 
             if bg_file is None:
                 # Try to pick from assets directory based on EDL or config
@@ -921,6 +935,12 @@ class FFmpegCompositor:
                 has_bg_file = True
             else:
                 # Procedural fallback background via lavfi color/gradients
+                logger.warning(
+                    "Gameplay background unavailable (path=%s, reason=%s); "
+                    "rendering procedural gradient instead.",
+                    background_path,
+                    bg_reject_reason or "no usable background in assets",
+                )
                 lavfi_dims = "1080x1920" if not has_src_video else "1080x960"
                 cmd.extend(
                     [

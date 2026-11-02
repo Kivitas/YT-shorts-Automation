@@ -399,9 +399,10 @@ def test_scheduler_unverified_upload_skips_cleaner(state_mgr: StateManager):
     assert res.verified is False
     mock_cleaner.cleanup_job.assert_not_called()
 
+    # Unverified uploads are FAILED (confirm manually), never COMPLETED.
     updated_job = state_mgr.get_job(job_id)
     assert updated_job is not None
-    assert updated_job.status == JobStatus.COMPLETED
+    assert updated_job.status == JobStatus.FAILED
 
 
 def test_scheduler_cleaner_failure_tolerated(state_mgr: StateManager):
