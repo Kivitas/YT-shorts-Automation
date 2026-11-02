@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any
@@ -23,6 +24,7 @@ from autoshorts.core.theme import (
     ACCENT_YELLOW,
     BG_DEEP,
     BG_SURFACE,
+    TEXT_MUTED,
     ease_in_out_cubic,
     lerp_rgb,
 )
@@ -34,6 +36,16 @@ from autoshorts.longform.engines import (
     draw_science_canvas,
     font_candidates,
 )
+from autoshorts.longform.fx import (
+    camera_shake_offset,
+    draw_dust_motes,
+    draw_radial_glow,
+    draw_vignette,
+    impact_flash_alpha,
+    shatter_text,
+)
+from autoshorts.longform.rig import draw_rig
+from autoshorts.longform.shots import Shot, plan_shots
 from autoshorts.longform.types import MAX_VIDEO_SECONDS, VISEME_SHAPES, SectionAudio
 
 logger = logging.getLogger(__name__)
@@ -69,7 +81,24 @@ TONGUE_PINK = (235, 96, 120)
 
 MAIN_SHIRTS = (SHIRT_RED, SHIRT_BLUE, SHIRT_PURPLE)
 MOODS = ("happy", "shocked", "deadpan", "smug", "hyped", "thinking", "angry", "worried")
-TRANSITIONS = ("slide", "zoom", "iris", "wipe", "crossfade", "push")
+TRANSITIONS = ("cut", "dip", "flash", "cut", "dip", "cut")
+FLASH_FRAMES = 6
+FLASH_PEAK = 0.9
+SHAKE_SECTION = 1  # the first section that has a transition into it
+SHAKE_SECONDS = 0.2
+SHAKE_AMPLITUDE = 14.0
+VOID_BG = (8, 8, 12)  # #08080C near-black void
+FLOOR_Y = 760
+FLOOR_LINE = (43, 46, 59)  # #2B2E3B
+OUTDOOR_SCENES = ("street", "beach")  # every other scene gets the indoor floor line
+DUST_BOX = (0, 64, WIDTH, FLOOR_Y)
+DUST_COUNT = 12
+SHOT_ZOOM = {"wide": 1.0, "close": 1.08, "insert": 1.15, "montage": 1.0}
+RIG_POSES = ("stand", "point", "slump_couch", "sleep_bed", "box_guard", "summit_stand")
+RIG_SCALE = 1.6
+LEG_UNITS = 108.0  # hip to foot in rig units (thigh + shin)
+HEAD_OFFSET = 146.0  # hip to head centre in rig units (torso + neck + head radius)
+HIP_Y = FLOOR_Y - LEG_UNITS * RIG_SCALE  # feet rest on the floor line
 STICKER_KINDS = ("star", "boom", "coin", "check", "arrow")
 STICKER_LABELS = ("WOW", "NO WAY", "REAL", "YES", "STOP", "KEY")
 STICKER_CYCLE = 5.0  # seconds between pops for one sticker slot
@@ -810,6 +839,14 @@ def _scene_background(name: str) -> Image.Image:
     return img
 
 
+@lru_cache(maxsize=1)
+def _void_base() -> Image.Image:
+    """Near-black void with a soft vignette; every scene is drawn on top of it."""
+    img = Image.new("RGB", (WIDTH, HEIGHT), VOID_BG)
+    draw_vignette(img, 0.6)
+    return img
+
+
 # ---------------------------------------------------------------------------
 # Fonts and captions
 # ---------------------------------------------------------------------------
@@ -871,63 +908,105 @@ def _active_word(words: list[dict[str, Any]], t: float) -> int:
     return active
 
 
-def _draw_caption(d: ImageDraw.ImageDraw, words: list[dict[str, Any]], t: float) -> None:
-    d.rectangle([0, STAGE_BOTTOM, WIDTH, 1030], fill=CAPTION_BG)
-    d.line([(0, STAGE_BOTTOM), (WIDTH, STAGE_BOTTOM)], fill=PINK, width=6)
-    if not words:
+CAPTION_Y = 270  # centre line of the narration band (y 240..300)
+HEADING_Y = 150
+OFF_WHITE = (236, 232, 224)
+LETTERBOX_TOP = 64
+LETTERBOX_BOTTOM = 1016
+EXCUSE_PATTERN = re.compile(r"\b(not|lazy)\b", re.IGNORECASE)
+EXCUSE_AT = 0.6  # fraction of the section duration when the excuse word shatters
+EXCUSE_ADVANCE = 28.0  # horizontal advance used by shatter_text
+EXCUSE_Y = 420
+
+
+def _commit_layer(img: Image.Image, layer: Image.Image) -> None:
+    base = img.convert("RGBA")
+    base.alpha_composite(layer)
+    img.paste(base.convert("RGB"))
+
+
+def _alpha_over(layer: Image.Image, sprite: Image.Image, x: int, y: int) -> None:
+    """Alpha-composite ``sprite`` onto ``layer`` at (x, y), clipped to the canvas."""
+    lw, lh = layer.size
+    sw, sh = sprite.size
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(lw, x + sw), min(lh, y + sh)
+    if x1 <= x0 or y1 <= y0:
         return
+    layer.alpha_composite(sprite.crop((x0 - x, y0 - y, x1 - x, y1 - y)), dest=(x0, y0))
+
+
+def _paint_caption(layer: Image.Image, words: list[dict[str, Any]], t: float) -> None:
+    """In-scene narration: off-white words centred on y=270, active word yellow, fades in over 0.5 s."""
+    alpha = min(1.0, max(0.0, t / 0.5))
+    if not words or alpha <= 0.0:
+        return
+    ld = ImageDraw.Draw(layer)
+    font = load_font(54, True)
     active = _active_word(words, t)
     base, chunk = _caption_chunk(words, active)
-    font = load_font(56, True)
     texts = [str(w.get("word", "")) for w in chunk]
-    space = d.textlength(" ", font=font)
-    total = sum(d.textlength(s, font=font) for s in texts) + space * max(len(texts) - 1, 0)
+    space = ld.textlength(" ", font=font)
+    total = sum(ld.textlength(s, font=font) for s in texts) + space * max(len(texts) - 1, 0)
     x = (WIDTH - total) / 2
+    a = round(255 * alpha)
     for i, s in enumerate(texts):
-        is_active = base + i == active
-        d.text(
-            (x, 912), s, font=font, fill=YELLOW if is_active else WHITE,
-        )  # fmt: skip
-        x += d.textlength(s, font=font) + space
+        colour = ACCENT_YELLOW if base + i == active else OFF_WHITE
+        ld.text((x, CAPTION_Y), s, font=font, fill=(*colour, a), anchor="lm")
+        x += ld.textlength(s, font=font) + space
 
 
-def _draw_chrome(
-    d: ImageDraw.ImageDraw,
-    title: str,
-    index: int,
-    count: int,
-    t: float,
-    words: list[dict[str, Any]],
-    frac: float,
+def _excuse_word(sa: SectionAudio) -> str:
+    """The first 'not' or 'lazy' in the heading or narration, upper-cased, or ''."""
+    text = " ".join([sa.section.heading, *(str(w.get("word", "")) for w in sa.words)])
+    match = EXCUSE_PATTERN.search(text)
+    return match.group(1).upper() if match else ""
+
+
+def _paint_excuse(
+    layer: Image.Image, word: str, t: float, start: float, duration: float = 1.2
 ) -> None:
-    d.rectangle([0, 0, WIDTH, 96], fill=PINK)
-    tfont = _fit_font(d, title, 48, WIDTH - 360)
-    d.text((48, 22), title, font=tfont, fill=WHITE)
-    cfont = load_font(34, True)
-    counter = f"{index + 1} / {count}"
-    d.text(
-        (WIDTH - 48 - d.textlength(counter, font=cfont), 28), counter, font=cfont,
-        fill=YELLOW,
-    )  # fmt: skip
-    _draw_caption(d, words, t)
-    d.rectangle([0, 1030, WIDTH, 1080], fill=CAPTION_BG)
-    d.rectangle([0, 1036, int(WIDTH * frac), 1074], fill=YELLOW)
+    """Draw the excuse word in coral; from ``start`` its letters shatter outward and fall."""
+    if not word:
+        return
+    x0 = (WIDTH - (len(word) - 1) * EXCUSE_ADVANCE) / 2 - 20
+    font = load_font(64, True)
+    for ch, px, py, angle, alpha in shatter_text(word, x0, EXCUSE_Y, t, start, duration=duration):
+        if alpha <= 0.0 or not ch.strip():
+            continue
+        glyph = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
+        ImageDraw.Draw(glyph).text(
+            (48, 48), ch, font=font, fill=(*ACCENT_CORAL, round(255 * alpha)), anchor="mm"
+        )
+        if angle:
+            glyph = glyph.rotate(angle, resample=Image.Resampling.BICUBIC)
+        _alpha_over(layer, glyph, round(px) - 48, round(py) - 48)
 
 
-def _draw_heading(img: Image.Image, heading: str, t: float) -> None:
-    """Heading sticker: a tilted yellow card that bounces in from the left."""
-    probe = ImageDraw.Draw(img)
-    font = _fit_font(probe, heading, 52, 900)
-    w = int(probe.textlength(heading, font=font)) + 72
-    h = 104
-    card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    cd = ImageDraw.Draw(card)
-    cd.rounded_rectangle([0, 0, w - 1, h - 1], radius=20, fill=YELLOW)
-    cd.text((36, 18), heading, font=font, fill=OUTLINE)
-    card = card.rotate(-2, resample=Image.BICUBIC, expand=True)
-    k = ease_out_back(min(1.0, t / 0.55))
-    x = int(-w + (44 + w) * k)
-    img.paste(card, (x, 114), card)
+def _draw_chrome(d: ImageDraw.ImageDraw, title: str, index: int) -> None:
+    """Cinematic frame: pure black letterbox bars, a small PART label and the title in the top bar."""
+    d.rectangle([0, 0, WIDTH, LETTERBOX_TOP], fill=(0, 0, 0))
+    d.rectangle([0, LETTERBOX_BOTTOM, WIDTH, HEIGHT], fill=(0, 0, 0))
+    if title:
+        tfont = _fit_font(d, title, 24, WIDTH - 400, bold=False)
+        d.text((72, 20), title, font=tfont, fill=TEXT_MUTED)
+    d.text((72, 84), f"PART {index + 1}", font=load_font(22, True), fill=TEXT_MUTED)
+
+
+def _paint_heading(layer: Image.Image, heading: str, t: float) -> None:
+    """Section heading: centred off-white line at y=150 that fades in over 0.4 s."""
+    alpha = min(1.0, max(0.0, t / 0.4))
+    if not heading or alpha <= 0.0:
+        return
+    ld = ImageDraw.Draw(layer)
+    font = _fit_font(ld, heading, 56, WIDTH - 360)
+    ld.text(
+        (WIDTH / 2, HEADING_Y),
+        heading,
+        font=font,
+        fill=(*OFF_WHITE, round(255 * alpha)),
+        anchor="mm",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -998,7 +1077,79 @@ def _apply_camera_motion(
     x0 = max(0, min(WIDTH - crop_w, int(focus_x - crop_w / 2)))
     y0 = max(0, min(HEIGHT - crop_h, int(focus_y - crop_h / 2)))
     cropped = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
-    return cropped.resize((WIDTH, HEIGHT), Image.BILINEAR)
+    return cropped.resize((WIDTH, HEIGHT), Image.BICUBIC)
+
+
+def _zoom_centre(img: Image.Image, zoom: float) -> Image.Image:
+    """Punch in on the frame centre by ``zoom``; 1.0 returns ``img`` unchanged."""
+    if zoom <= 1.0:
+        return img
+    crop_w = int(WIDTH / zoom)
+    crop_h = int(HEIGHT / zoom)
+    x0 = (WIDTH - crop_w) // 2
+    y0 = (HEIGHT - crop_h) // 2
+    cropped = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
+    return cropped.resize((WIDTH, HEIGHT), Image.BICUBIC)
+
+
+def _shift(img: Image.Image, dx: int, dy: int) -> Image.Image:
+    """Translate ``img`` by (dx, dy), filling the exposed edge with black."""
+    if dx == 0 and dy == 0:
+        return img
+    out = Image.new("RGB", img.size, (0, 0, 0))
+    out.paste(img, (dx, dy))
+    return out
+
+
+def _section_shots(sa: SectionAudio) -> list[Shot]:
+    """Sub-shots for one section; falls back to a single wide shot if timing data is unusable."""
+    duration = float(sa.duration)
+    if duration <= 0:
+        return []
+    try:
+        return plan_shots(duration, sa.words)
+    except (KeyError, TypeError, ValueError):
+        return [Shot(0.0, duration, "wide")]
+
+
+def _shot_zoom(shots: Sequence[Shot], t: float) -> float:
+    """Camera zoom for the shot that covers section time ``t``."""
+    for shot in shots:
+        if shot.start <= t < shot.end:
+            return SHOT_ZOOM.get(shot.kind, 1.0)
+    return 1.0
+
+
+GLOW_SNAP = 4  # head glow position is snapped to this many px so the lit base can be cached
+GLOW_REST_T = 2.0  # seconds after which the entrance has settled
+
+
+@lru_cache(maxsize=8)
+def _lit_base(head_x: int, head_y: int) -> Image.Image:
+    """Void base with the teal key glow behind the head and the coral fill bottom-right.
+
+    The glows are the expensive part of a frame, so the lit base is cached per head position.
+    """
+    img = _void_base().copy()
+    draw_radial_glow(img, (head_x, head_y), 260, ACCENT_TEAL, 0.25)
+    draw_radial_glow(img, (WIDTH - 160, HEIGHT - 80), 420, ACCENT_CORAL, 0.2)
+    return img
+
+
+def _stage_hip(
+    engine_kind: str, index: int, t: float
+) -> tuple[float, list[tuple[int, float, float, float]]]:
+    """Hip x position of the figure for this section, plus the classic-scene sticker plan."""
+    if engine_kind in ("history", "science", "comparison", "finance", "motivation"):
+        enter = ease_out_back(min(1.0, t / 0.55))
+        return 265 - (1.0 - enter) * 360, []
+    if engine_kind == "parody":
+        enter = ease_out_back(min(1.0, t / 0.55))
+        return 440 - (1.0 - enter) * 450, []
+    main_x, _flip, _friend = _layout(index)
+    direction = (main_x > 960) - (main_x < 960)
+    enter = ease_out_back(min(1.0, t / 0.6))
+    return main_x + (1 - enter) * 700 * direction, _sticker_plan(index, main_x)
 
 
 def _draw_scene(
@@ -1010,16 +1161,28 @@ def _draw_scene(
     elapsed_before: float,
     total: float,
     scene: str,
+    zoom: float = 1.0,
 ) -> Image.Image:
-    img = _scene_background(scene).copy()
-    d = ImageDraw.Draw(img)
     engine_kind = _resolve_engine_kind(sa, scene)
-    active_viseme = viseme_at(sa.words, t)
     speaker = (getattr(sa.section, "speaker", "narrator") or "narrator").lower()
     sub_domain = getattr(sa.section, "sub_domain", "") or ""
     callout = getattr(sa.section, "hook_callout", "") or ""
     comp_data = getattr(sa.section, "comparison_data", None)
-    bob = math.sin(t * 3.5) * 6.0
+    bob = math.sin(t * 3.5) * 2.0
+    pose = RIG_POSES[index % len(RIG_POSES)]
+    expression = "exhausted" if index % 2 == 0 else "grit"
+    headband = index == count - 1
+
+    hip_x, stickers = _stage_hip(engine_kind, index, t)
+    # The glow sits at the settled rest position so the cached lit base is reused across frames.
+    rest_x, _ = _stage_hip(engine_kind, index, GLOW_REST_T)
+    head_x = round(rest_x / GLOW_SNAP) * GLOW_SNAP
+    head_y = round((HIP_Y - HEAD_OFFSET * RIG_SCALE) / GLOW_SNAP) * GLOW_SNAP
+    img = _lit_base(int(head_x), int(head_y)).copy()
+    d = ImageDraw.Draw(img)
+    if scene not in OUTDOOR_SCENES:
+        d.line([(0, FLOOR_Y), (WIDTH, FLOOR_Y)], fill=FLOOR_LINE, width=2)
+    draw_dust_motes(d, t, DUST_BOX, count=DUST_COUNT, seed=7 + index)
 
     if engine_kind in ("history", "science", "comparison", "finance", "motivation"):
         if engine_kind == "history":
@@ -1040,125 +1203,61 @@ def _draw_scene(
             draw_motivation_canvas(
                 img, d, t, index, sa.section.heading, callout, sub_domain, load_font
             )
-
-        # Articulated presenter character on the left stage pointing at the live canvas
-        enter = ease_out_back(min(1.0, t / 0.55))
-        mx = 265 - (1.0 - enter) * 360
-        my = 655 + bob
-        cur_pose = pose_at(("present", "point", "think", "present", "stand"), t + index * 0.7)
-        draw_character(
-            d,
-            cur_pose,
-            (mx, my),
-            scale=1.85,
-            shirt=MAIN_SHIRTS[index % len(MAIN_SHIRTS)],
-            mood=MOODS[index % len(MOODS)],
-            flip=1,
-            blink=_blinking(t, index),
-            viseme=active_viseme,
-            pointer_stick=True,
-            is_speaking=active_viseme != "REST",
-        )
-    elif engine_kind == "parody":
-        _draw_sparkles(d, t)
-        enter = ease_out_back(min(1.0, t / 0.55))
-        # Two-Character Banter Stage: Character A (Narrator) on left, Character B (Skeptic) on right
-        narr_speaking = speaker not in ("skeptic", "cohost", "friend")
-        lx = 440 - (1.0 - enter) * 450
-        ly = 648 + bob
-        rx = 1480 + (1.0 - enter) * 450
-        ry = 648 + math.sin(t * 3.5 + 1.4) * 5.0
-
-        draw_character(
-            d,
-            pose_at(BANTER_CYCLE_A, t + index * 0.6),
-            (lx, ly),
-            scale=1.9,
-            shirt=SHIRT_BLUE,
-            skin=PEACH,
-            hair=HAIR_BROWN,
-            mood="smug" if narr_speaking else "shocked",
-            flip=1,
-            blink=_blinking(t, index),
-            viseme=active_viseme if narr_speaking else "REST",
-            is_speaking=narr_speaking and active_viseme != "REST",
-        )
-        draw_character(
-            d,
-            pose_at(BANTER_CYCLE_B, t + index * 0.8),
-            (rx, ry),
-            scale=1.9,
-            shirt=SHIRT_TEAL,
-            skin=BROWN_SKIN,
-            hair=HAIR_BLACK,
-            mood="deadpan" if not narr_speaking else "thinking",
-            flip=-1,
-            blink=_blinking(t, index + 3),
-            viseme=active_viseme if not narr_speaking else "REST",
-            is_speaking=(not narr_speaking) and active_viseme != "REST",
-        )
     else:
         _draw_sparkles(d, t)
-        main_x, flip, friend = _layout(index)
-        direction = (main_x > 960) - (main_x < 960)
-        enter = ease_out_back(min(1.0, t / 0.6))
-        mx = main_x + (1 - enter) * 700 * direction
-        my = 640 + bob
-        if direction == 0:
-            my -= (1 - enter) * 260
 
-        if friend:
-            fenter = ease_out_back(min(1.0, (t - 0.25) / 0.6))
-            fx = 520 - (1 - fenter) * 600
-            fy = 600 + math.sin(t * 3.2 + 1.0) * 4
-            friend_speaking = speaker in ("skeptic", "cohost", "friend")
-            draw_character(
-                d,
-                pose_at(FRIEND_CYCLE, t + index * 0.5),
-                (fx, fy),
-                shirt=SHIRT_TEAL,
-                skin=BROWN_SKIN,
-                hair=HAIR_BLACK,
-                mood="shocked" if index % 2 else "deadpan",
-                flip=1,
-                blink=_blinking(t, index + 3),
-                viseme=active_viseme if friend_speaking else "REST",
-                is_speaking=friend_speaking and active_viseme != "REST",
-            )
-        main_speaking = speaker not in ("skeptic", "cohost", "friend")
-        draw_character(
-            d,
-            pose_at(POSE_CYCLE, t + index * 0.9),
-            (mx, my),
-            shirt=MAIN_SHIRTS[index % len(MAIN_SHIRTS)],
-            mood=MOODS[index % len(MOODS)],
-            flip=flip,
-            blink=_blinking(t, index),
-            viseme=active_viseme if main_speaking else "REST",
-            is_speaking=main_speaking and active_viseme != "REST",
-        )
+    draw_rig(
+        img,
+        pose,
+        (hip_x, HIP_Y + bob),
+        RIG_SCALE,
+        expression=expression,
+        headband=headband,
+        t=t,
+    )
+    d = ImageDraw.Draw(img)
 
-        for slot, sx, sy, start in _sticker_plan(index, main_x):
-            if t < start:
-                continue
-            age = (t - start) % STICKER_CYCLE
-            cycle_no = int((t - start) // STICKER_CYCLE)
-            j = index * 2 + slot + cycle_no
-            size = STICKER_SIZE * _pop(age)
-            if size >= 2:
-                kind = STICKER_KINDS[j % len(STICKER_KINDS)]
-                draw_sticker(d, kind, sx, sy, size, STICKER_LABELS[j % len(STICKER_LABELS)])
+    for slot, sx, sy, start in stickers:
+        if t < start:
+            continue
+        age = (t - start) % STICKER_CYCLE
+        cycle_no = int((t - start) // STICKER_CYCLE)
+        j = index * 2 + slot + cycle_no
+        size = STICKER_SIZE * _pop(age)
+        if size >= 2:
+            kind = STICKER_KINDS[j % len(STICKER_KINDS)]
+            draw_sticker(d, kind, sx, sy, size, STICKER_LABELS[j % len(STICKER_LABELS)])
 
     img = _apply_camera_motion(img, t, sa.duration, engine_kind, speaker)
-    _draw_heading(img, sa.section.heading, t)
-    d = ImageDraw.Draw(img)
-    frac = min(1.0, (elapsed_before + t) / total) if total > 0 else 0.0
-    _draw_chrome(d, title, index, count, t, sa.words, frac)
+    img = _zoom_centre(img, zoom)
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    _paint_heading(layer, sa.section.heading, t)
+    _paint_excuse(layer, _excuse_word(sa), t, start=EXCUSE_AT * sa.duration)
+    _paint_caption(layer, sa.words, t)
+    _commit_layer(img, layer)
+    _draw_chrome(ImageDraw.Draw(img), title, index)
     return img
 
 
 def _transition(kind: str, prev: Image.Image, cur: Image.Image, k: float) -> Image.Image:
-    """Blend the previous section's last frame into the next one. ``k`` runs 0 to 1 (eased)."""
+    """Blend the previous section's last frame into the next one. ``k`` runs 0 to 1 (eased).
+
+    Live kinds are ``cut`` (hard cut), ``dip`` (fade through black) and ``flash`` (a white
+    impact). The legacy slide, zoom, iris, wipe, crossfade and push kinds are kept but unused.
+    """
+    if kind == "cut":
+        return cur
+    if kind == "dip":
+        black = Image.new("RGB", cur.size, (0, 0, 0))
+        if k < 0.5:
+            return Image.blend(prev, black, min(1.0, 2.0 * k))
+        return Image.blend(black, cur, min(1.0, 2.0 * k - 1.0))
+    if kind == "flash":
+        flash = impact_flash_alpha(k * TRANSITION_SECONDS, 0.0, frames=FLASH_FRAMES, fps=FPS)
+        if flash <= 0.0:
+            return cur
+        white = Image.new("RGB", cur.size, (255, 255, 255))
+        return Image.blend(prev, white, FLASH_PEAK * flash)
     if kind == "slide":
         x = int(k * WIDTH)
         out = Image.new("RGB", (WIDTH, HEIGHT))
@@ -1232,11 +1331,20 @@ def _frames(
         n = max(1, round(dur * FPS))
         scene = scenes[idx % len(scenes)]
         kind = TRANSITIONS[idx % len(TRANSITIONS)]
+        shots = _section_shots(sa)
         img: Image.Image | None = None
         for f in range(n):
-            img = _draw_scene(sa, title, f / FPS, idx, len(sections), elapsed, total, scene)
+            t = f / FPS
+            img = _draw_scene(
+                sa, title, t, idx, len(sections), elapsed, total, scene, zoom=_shot_zoom(shots, t)
+            )
             if prev_last is not None and f < trans_frames:
                 img = _transition(kind, prev_last, img, ease_in_out_cubic((f + 1) / trans_frames))
+                if idx == SHAKE_SECTION:
+                    dx, dy = camera_shake_offset(
+                        t, 0.0, duration=SHAKE_SECONDS, amplitude=SHAKE_AMPLITUDE
+                    )
+                    img = _shift(img, dx, dy)
             yield img.tobytes()
         if img is not None:
             prev_last = img

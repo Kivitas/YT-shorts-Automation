@@ -239,6 +239,10 @@ def _build_prompt(spec: TopicSpec, minutes: float) -> str:
         f'- "sections": a list of {MIN_SECTIONS} to {max(6, target_sections)} objects with '
         '"heading" (2 to 5 words), "narration" (spoken text ending with an open loop), and '
         'optional "speaker" ("narrator" or "skeptic"), "visual_mode", "sub_domain", "hook_callout"\n'
+        "Visual style: Kurzgesagt-style flat vector explainer. Scenes use bright, warm and cool "
+        "flat accent colours on light or mid-tone backgrounds with soft gradients. Never use dark "
+        "navy, black or near-black backgrounds. Make every visual_mode and hook_callout concrete "
+        "and easy to draw with simple flat shapes.\n"
         "Style: plain, direct, vivid language. No filler, no emojis, no hashtags, no stage "
         "directions. No promises of results.\n"
         f"Safety rules you must follow: {spec.safety_note}\n"

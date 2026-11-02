@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import struct
 import subprocess
 import wave
@@ -13,6 +14,13 @@ from uuid import uuid4
 from autoshorts.core.paths import get_output_dir, get_work_dir
 from autoshorts.longform.drawer import FPS, HEIGHT, WIDTH, render_scene_frames, scenes_for_topic
 from autoshorts.longform.script import build_script, description_for
+from autoshorts.longform.sfx import (
+    mix_events,
+    synth_alarm,
+    synth_clock_ticks,
+    synth_punch,
+    synth_whisper,
+)
 from autoshorts.longform.thumbnail import make_thumbnail
 from autoshorts.longform.tts import SECTION_GAP_SECONDS, synthesize_sections
 from autoshorts.longform.types import (
@@ -22,6 +30,11 @@ from autoshorts.longform.types import (
     SectionAudio,
 )
 from autoshorts.media.encoder_probe import get_ffmpeg_path
+
+# Level of the diegetic SFX stem under the narration (narration stays at unity).
+SFX_GAIN = 0.35
+_SFX_SAMPLE_RATE = 48000
+_SKEPTIC_PATTERN = re.compile(r"\b(not|lazy)\b", re.IGNORECASE)
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +106,67 @@ def _narration_filter_graph(count: int) -> str:
     return graph + f";[cat]{NARRATION_COMPRESSOR}[outc]"
 
 
+def _section_starts(sections: list[SectionAudio]) -> list[float]:
+    """Start time of each section on the narration timeline, including the inter-section gaps."""
+    starts: list[float] = []
+    cursor = 0.0
+    for i, sa in enumerate(sections):
+        starts.append(cursor)
+        cursor += float(sa.duration)
+        if i < len(sections) - 1:
+            cursor += SECTION_GAP_SECONDS
+    return starts
+
+
+def build_sfx_track(sections: list[SectionAudio], work_dir: Path) -> Path | None:
+    """Synthesize diegetic effects aligned to the narration and mix them into one WAV.
+
+    Returns ``None`` when there is nothing to play. Otherwise writes ``work_dir/sfx_track.wav``
+    spanning the full narration timeline (sections plus gaps).
+    """
+    if not sections:
+        return None
+    work_dir = Path(work_dir)
+    sfx_dir = work_dir / "sfx"
+    sfx_dir.mkdir(parents=True, exist_ok=True)
+
+    starts = _section_starts(sections)
+    events: list[tuple[Path, float]] = []
+
+    def add(kind: str, idx: int, synth, offset: float, **kwargs) -> None:
+        path = synth(sfx_dir / f"{kind}_{idx:03d}_{len(events):03d}.wav", **kwargs)
+        events.append((path, offset))
+
+    for i, sa in enumerate(sections):
+        start = starts[i]
+        add("punch", i, synth_punch, start + 0.0)
+
+        section = sa.section
+        text = f"{section.heading} {section.narration}"
+        if section.speaker == "skeptic" or _SKEPTIC_PATTERN.search(text):
+            add("whisper", i, synth_whisper, start + 0.2)
+
+        for word in sa.words:
+            token = str(word.get("word", "")).strip().lower()
+            if token.startswith("clock") or token.startswith("alarm"):
+                at = start + float(word.get("start", 0.0))
+                add("ticks", i, synth_clock_ticks, at, duration=2.0)
+                add("alarm", i, synth_alarm, at)
+
+    if not events:
+        return None
+
+    total_seconds = starts[-1] + float(sections[-1].duration)
+    return mix_events(events, work_dir / "sfx_track.wav", total_seconds)
+
+
 def _concat_audio(
     sections: list[SectionAudio],
     work_dir: Path,
     music_bed: Path | None = None,
+    sfx_track: Path | None = None,
 ) -> Path:
-    """Join section audio with the concat *filter* and optional sidechain-ducked music bed.
+    """Join section audio with the concat *filter*, optional SFX stem and optional ducked music bed.
 
     The concat demuxer needs identical codec parameters, which breaks when one section fell back
     from Edge (mp3) to Kokoro (wav). Each input is normalised to 48 kHz stereo first.
@@ -119,6 +187,29 @@ def _concat_audio(
     )  # fmt: skip
     if proc.returncode != 0:
         raise RuntimeError(f"audio concat failed: {(proc.stderr or '').strip()[-800:]}")
+
+    if sfx_track is not None and Path(sfx_track).is_file():
+        sfx_out = work_dir / "narration_sfx.m4a"
+        sfx_cmd = [
+            get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", str(out),
+            "-i", str(Path(sfx_track).resolve()),
+            "-filter_complex",
+            (
+                f"[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                f"volume={SFX_GAIN}[fx];"
+                f"[0:a][fx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[sfxmix]"
+            ),
+            "-map", "[sfxmix]", "-c:a", "aac", "-b:a", "192k", str(sfx_out),
+        ]  # fmt: skip
+        sfx_proc = subprocess.run(
+            sfx_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=600, check=False,
+        )  # fmt: skip
+        if sfx_proc.returncode == 0 and sfx_out.is_file() and sfx_out.stat().st_size > 0:
+            out = sfx_out
+        else:
+            logger.warning("SFX mix failed; using narration without effects.")
 
     if music_bed is not None and Path(music_bed).is_file():
         mixed_out = work_dir / "narration_master.m4a"
@@ -177,7 +268,7 @@ def _encode(
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{WIDTH}x{HEIGHT}",
         "-r", str(FPS), "-i", "pipe:0", "-i", str(audio),
         "-map", "0:v", "-map", "1:a",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
         str(out_path),
     ]  # fmt: skip
@@ -240,7 +331,12 @@ def render_script(
     )
 
     music_bed = _find_music_bed()
-    audio = _concat_audio(sections, work_dir, music_bed=music_bed)
+    try:
+        sfx_track = build_sfx_track(sections, work_dir)
+    except Exception:  # SFX are optional polish; never fail the render over them.
+        logger.warning("SFX track build failed; rendering without effects.", exc_info=True)
+        sfx_track = None
+    audio = _concat_audio(sections, work_dir, music_bed=music_bed, sfx_track=sfx_track)
     scene_key = script.genre or topic
     _encode(sections, script.title, audio, video_path, scenes_for_topic(scene_key))
     logger.info("Rendered long-form video %s (%.1fs)", video_path, duration)

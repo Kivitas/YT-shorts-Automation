@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] - 2026-11-02
+
+### Changed
+
+- **Longform look is cinematic** (`longform/drawer.py`): black letterbox bars, a near-black void with a vignette and one floor line, in-scene narration text instead of a bottom caption bar, and no slide-deck chrome.
+- **Characters** (`longform/rig.py`): outlined cream figures with poses and expressions (exhausted, grit, shadow smirk) and a headband on the final section.
+- **Lighting and effects** (`longform/fx.py`): radial glows, vignette, dust motes, letter shatter on excuse words, impact flash and camera shake.
+- **Transitions** are hard cuts, dips to black and flashes instead of slide and wipe.
+- **Sub-shots** (`longform/shots.py`): each section is split into 2–4 s shots, with a zoom per shot.
+- **Sound design** (`longform/sfx.py`, `render.py`): synthesised punch, whisper, alarm and clock-tick effects mixed under the narration.
+- **Generation prompt** (`longform/script.py`): the script prompt asks for a Kurzgesagt-style flat vector look and forbids dark navy or black backgrounds.
+- **Captions** (Shorts): the default preset is `kurz`, a rounded translucent pill.
+- **Voice**: Shorts +12%, longform +10%, a 0.35 s gap between longform sections.
+- **Renderer**: CRF 18 encode, BICUBIC resampling for camera moves and transitions.
+
+### Fixed
+
+- Gameplay backgrounds: real Minecraft clips replace placeholder files, and a Subway selection is no longer skipped.
+- Shorts clipping: word-aligned padding, onset snapping, and a hook-first start bonus.
+- Uploads: a delivery QC gate runs before upload. Unverified uploads are marked FAILED, not COMPLETED. Retries are refused for videos already live on YouTube.
+- Re-render and auto-trim keep planner cuts and are idempotent.
+- Longform daily cap is read from config (20).
+
+### Launchers
+
+- `start.bat --check` prints the same diagnostics as `start.sh` (platform, port status, background clip count).
+
+---
+
 ## [1.4.0] - 2026-10-29
 
 ### Added

@@ -18,7 +18,9 @@ from autoshorts.longform.drawer import (
     _transition,
     draw_character,
     font_candidates,
+    render_scene_frames,
 )
+from autoshorts.longform.types import Section, SectionAudio
 
 SIZE = (1920, 1080)
 
@@ -27,11 +29,26 @@ def _frame(scene: str) -> Image.Image:
     return _scene_background(scene).copy()
 
 
-def test_transition_list_includes_new_kinds() -> None:
-    assert {"slide", "zoom", "iris", "wipe", "crossfade", "push"} <= set(TRANSITIONS)
+LEGACY_TRANSITIONS = ("slide", "zoom", "iris", "wipe", "crossfade", "push")
 
 
-@pytest.mark.parametrize("kind", TRANSITIONS)
+def test_transition_list_is_hard_cuts_dips_and_flashes() -> None:
+    assert TRANSITIONS == ("cut", "dip", "flash", "cut", "dip", "cut")
+
+
+def test_cut_returns_next_frame_unchanged() -> None:
+    prev = _frame("bedroom")
+    cur = _frame("street")
+    assert _transition("cut", prev, cur, 0.5) is cur
+
+
+def test_dip_passes_through_black_midway() -> None:
+    prev = Image.new("RGB", SIZE, (200, 200, 200))
+    cur = Image.new("RGB", SIZE, (200, 200, 200))
+    assert _transition("dip", prev, cur, 0.5).getpixel((10, 10)) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("kind", tuple(dict.fromkeys(TRANSITIONS + LEGACY_TRANSITIONS)))
 @pytest.mark.parametrize("k", [0.0, 0.5, 1.0])
 def test_transition_renders_full_hd_frame(kind: str, k: float, tmp_path: Path) -> None:
     prev = _frame("bedroom")
@@ -42,6 +59,32 @@ def test_transition_renders_full_hd_frame(kind: str, k: float, tmp_path: Path) -
     if k == 0.5:
         out.save(tmp_path / f"transition_{kind}.png")
         assert (tmp_path / f"transition_{kind}.png").exists()
+
+
+def test_render_scene_frames_yields_full_hd_frames_with_expected_count() -> None:
+    words = [
+        {"word": "Not", "start": 0.1, "end": 0.4},
+        {"word": "lazy", "start": 0.5, "end": 0.9},
+        {"word": "today.", "start": 1.0, "end": 1.4},
+    ]
+    sections = [
+        SectionAudio(
+            section=Section(heading="Why not", narration="Not lazy today."),
+            audio_path=Path("unused.wav"),
+            words=words,
+            duration=2.0,
+        ),
+        SectionAudio(
+            section=Section(heading="Next", narration="Keep going."),
+            audio_path=Path("unused.wav"),
+            words=[],
+            duration=1.0,
+        ),
+    ]
+    frames = list(render_scene_frames(sections, "Demo", scenes=("bedroom", "street")))
+    expected = round(2.0 * drawer.FPS) + round(1.0 * drawer.FPS)
+    assert len(frames) == expected
+    assert len(frames[0]) == WIDTH * HEIGHT * 3
 
 
 def test_character_frame_renders_at_full_hd(tmp_path: Path) -> None:
