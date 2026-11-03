@@ -543,6 +543,376 @@ const bgCafeWarm = () => ({
   ]),
 });
 
+// ---- Icon and object sprites (400x400 at 2x, centred on 200,200) ----------
+const S = 400;
+const sprite = (defs, nodes) => ({ width: S, height: S, element: svgRoot(S, S, defs, nodes) });
+const GOLD = "#FFD84D";
+const BLUE = "#5B8CFF";
+const BLUE_DARK = "#1E3FA8";
+const WHITE = "#FFFFFF";
+const GREY = "#8A8BA0";
+const DARK = "#3A3A4C";
+const LIGHT_BLUE = "#A9D8FF";
+const PINK = "#FF9A8C";
+const rad2 = (deg) => (deg * Math.PI) / 180;
+const P2 = (p) => p.join(" ");
+// Point on a rotated ellipse; t is the parametric angle in radians.
+const pt = (cx, cy, rx, ry, deg, t) => {
+  const x = rx * Math.cos(t), y = ry * Math.sin(t), a = rad2(deg);
+  return [r2(cx + x * Math.cos(a) - y * Math.sin(a)), r2(cy + x * Math.sin(a) + y * Math.cos(a))];
+};
+// Rotated full ellipse as two arcs (no transform attribute needed).
+const ellPath = (cx, cy, rx, ry, deg) => {
+  const p0 = pt(cx, cy, rx, ry, deg, 0), p1 = pt(cx, cy, rx, ry, deg, Math.PI);
+  return `M${P2(p0)} A${rx} ${ry} ${deg} 1 0 ${P2(p1)} A${rx} ${ry} ${deg} 1 0 ${P2(p0)} Z`;
+};
+// Ink-outlined stroke with a coloured core, round caps.
+const line = (d, color, w) => [
+  P(d, { fill: "none", stroke: INK, strokeWidth: w + 10, strokeLinecap: "round", strokeLinejoin: "round" }),
+  P(d, { fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeLinejoin: "round" }),
+];
+const disc = (cx, cy, r, fill, extra = {}) => E("circle", { cx, cy, r, fill, ...OUTLINE, ...extra });
+const box = (x, y, width, height, rx, fill, extra = {}) => E("rect", { x, y, width, height, rx, fill, ...OUTLINE, ...extra });
+
+const spriteAtom = () => {
+  const orbits = [0, 60, 120];
+  return sprite([], [
+    orbits.map((deg) => P(ellPath(200, 200, 165, 62, deg), { fill: "none", stroke: INK, strokeWidth: 14 })),
+    orbits.map((deg) => P(ellPath(200, 200, 165, 62, deg), { fill: "none", stroke: "#5CC8FF", strokeWidth: 6 })),
+    disc(184, 190, 26, CORAL), disc(216, 190, 26, TEAL), disc(200, 220, 26, AMBER),
+    orbits.map((deg, i) => {
+      const [x, y] = pt(200, 200, 165, 62, deg, rad2(i * 110 + 40));
+      return disc(x, y, 14, GOLD);
+    }),
+  ]);
+};
+
+const spriteWater = () => sprite([], [
+  line("M200 225 L90 110", SHADE, 14),
+  line("M200 225 L310 110", SHADE, 14),
+  disc(90, 110, 42, WHITE), disc(310, 110, 42, WHITE),
+  disc(200, 225, 90, CORAL),
+  E("ellipse", { cx: 166, cy: 190, rx: 18, ry: 12, fill: WHITE, opacity: 0.6 }),
+]);
+
+const spriteCO2 = () => sprite([], [
+  line("M75 186 L325 186", SHADE, 10),
+  line("M75 214 L325 214", SHADE, 10),
+  disc(75, 200, 58, CORAL), disc(325, 200, 58, CORAL),
+  disc(200, 200, 42, GREY),
+]);
+
+const spriteDNA = () => {
+  const wave = (phase) => {
+    const pts = [];
+    for (let i = 0; i <= 80; i++) {
+      const f = i / 80;
+      pts.push(`${r2(200 + 90 * Math.sin(phase + f * Math.PI * 4))} ${r2(30 + f * 340)}`);
+    }
+    return `M${pts.join(" L")}`;
+  };
+  const rungs = [];
+  for (let k = 0; k < 9; k++) {
+    const f = (k + 0.5) / 9;
+    const s = Math.sin(f * Math.PI * 4);
+    const y = r2(30 + f * 340);
+    rungs.push(line(`M${r2(200 + 90 * s)} ${y} L${r2(200 - 90 * s)} ${y}`, CREAM, 8));
+  }
+  return sprite([], [rungs, line(wave(0), TEAL, 12), line(wave(Math.PI), CORAL, 12)]);
+};
+
+const spriteSun = () => {
+  const rays = [];
+  for (let a = 0; a < 360; a += 45) rays.push(line(`M${P2(polar(200, 200, 118, a))} L${P2(polar(200, 200, 160, a))}`, GOLD, 12));
+  return sprite([rad("sunHalo", [[0, "#FFF0A0", 0.95], [0.45, GOLD, 0.45], [1, GOLD, 0]])], [
+    E("circle", { cx: 200, cy: 200, r: 195, fill: "url(#sunHalo)" }),
+    rays,
+    disc(200, 200, 92, GOLD),
+    E("circle", { cx: 230, cy: 170, r: 14, fill: WHITE, opacity: 0.7 }),
+  ]);
+};
+
+const spriteMoon = () => sprite([], [
+  P("M273 92.4 A130 130 0 1 0 273 307.6 A110 110 0 1 1 273 92.4 Z", { fill: "#F6F3EE", ...OUTLINE }),
+  E("circle", { cx: 110, cy: 175, r: 16, fill: SHADE }),
+  E("circle", { cx: 105, cy: 250, r: 10, fill: SHADE }),
+]);
+
+const spriteMoonFull = () => sprite([rad("moonGrad", [[0, "#FFFFFF"], [0.6, "#F6F3EE"], [1, SHADE]], 0.4, 0.35, 0.7)], [
+  disc(200, 200, 135, "url(#moonGrad)"),
+  disc(150, 160, 28, SHADE, { strokeWidth: 4 }),
+  disc(248, 236, 22, SHADE, { strokeWidth: 4 }),
+  disc(170, 270, 14, SHADE, { strokeWidth: 4 }),
+]);
+
+const spriteEarth = () => sprite([rad("earthGrad", [[0, "#7FB5FF"], [0.6, BLUE], [1, BLUE_DARK]], 0.36, 0.32, 0.75)], [
+  disc(200, 200, 145, "url(#earthGrad)"),
+  E("ellipse", { cx: 160, cy: 170, rx: 44, ry: 30, fill: GREEN }),
+  E("ellipse", { cx: 245, cy: 245, rx: 36, ry: 50, fill: GREEN }),
+  E("ellipse", { cx: 120, cy: 255, rx: 24, ry: 18, fill: GREEN_DARK }),
+  E("ellipse", { cx: 200, cy: 110, rx: 95, ry: 13, fill: WHITE, opacity: 0.9 }),
+  E("ellipse", { cx: 262, cy: 88, rx: 40, ry: 9, fill: WHITE, opacity: 0.9 }),
+]);
+
+const spriteRingedPlanet = () => {
+  const cx = 200, cy = 200, rx = 175, ry = 50, deg = -20;
+  const p0 = pt(cx, cy, rx, ry, deg, 0), p1 = pt(cx, cy, rx, ry, deg, Math.PI);
+  const back = `M${P2(p1)} A${rx} ${ry} ${deg} 0 1 ${P2(p0)}`;
+  const front = `M${P2(p0)} A${rx} ${ry} ${deg} 0 1 ${P2(p1)}`;
+  return sprite([rad("planetGrad", [[0, "#FFA08F"], [0.7, CORAL], [1, "#E8564A"]], 0.36, 0.32, 0.75)], [
+    line(back, AMBER, 18),
+    disc(200, 200, 95, "url(#planetGrad)"),
+    line(front, AMBER, 18),
+  ]);
+};
+
+const spriteStar = () => sprite([], [
+  P(starPath(200, 212, 170, 72), { fill: GOLD, ...OUTLINE }),
+  E("ellipse", { cx: 170, cy: 180, rx: 18, ry: 12, fill: WHITE, opacity: 0.6 }),
+]);
+
+const spriteBulb = () => {
+  const rays = [-70, -35, 0, 35, 70].map((a) => line(`M${P2(polar(200, 165, 128, a))} L${P2(polar(200, 165, 156, a))}`, AMBER, 12));
+  return sprite([], [
+    rays,
+    box(150, 258, 100, 32, 8, GREY),
+    box(162, 284, 76, 30, 8, GREY),
+    disc(200, 165, 100, GOLD),
+    E("ellipse", { cx: 160, cy: 130, rx: 14, ry: 26, fill: WHITE, opacity: 0.6 }),
+  ]);
+};
+
+const spriteGear = () => {
+  const rO = 160, rB = 122;
+  let d = "";
+  for (let k = 0; k < 8; k++) {
+    const a = k * 45;
+    const b0 = polar(200, 200, rB, a - 13), o0 = polar(200, 200, rO, a - 8);
+    const o1 = polar(200, 200, rO, a + 8), b1 = polar(200, 200, rB, a + 13);
+    d += (k === 0 ? `M${P2(b0)}` : ` A${rB} ${rB} 0 0 1 ${P2(b0)}`) + ` L${P2(o0)} L${P2(o1)} L${P2(b1)}`;
+  }
+  d += ` A${rB} ${rB} 0 0 1 ${P2(polar(200, 200, rB, -13))} Z`;
+  const hole = "M160 200 A40 40 0 1 0 240 200 A40 40 0 1 0 160 200 Z";
+  return sprite([], [P(`${d} ${hole}`, { fill: TEAL, fillRule: "evenodd", ...OUTLINE })]);
+};
+
+const spriteMagnifier = () => sprite([], [
+  line("M250 250 L345 345", GREY, 36),
+  disc(170, 170, 115, GREY),
+  disc(170, 170, 92, "#CFF3FF"),
+  E("ellipse", { cx: 130, cy: 130, rx: 22, ry: 13, fill: WHITE, opacity: 0.9 }),
+]);
+
+const spriteFlask = () => {
+  const body = "M165 40 L235 40 L235 170 L334 330 Q344 352 318 352 L82 352 Q56 352 66 330 L165 170 Z";
+  return sprite([], [
+    P(body, { fill: "#F6F3EE", ...OUTLINE }),
+    P("M109 260 L291 260 L320 340 L80 340 Z", { fill: TEAL }),
+    E("circle", { cx: 150, cy: 300, r: 8, fill: WHITE, opacity: 0.8 }),
+    E("circle", { cx: 250, cy: 292, r: 6, fill: WHITE, opacity: 0.8 }),
+    P(body, { fill: "none", ...OUTLINE }),
+  ]);
+};
+
+const spriteTestTube = () => sprite([], [
+  P("M160 58 L240 58 L240 290 A40 40 0 0 1 160 290 Z", { fill: "#E8F7FF", ...OUTLINE }),
+  P("M160 190 L240 190 L240 290 A40 40 0 0 1 160 290 Z", { fill: CORAL }),
+  P("M176 80 L176 150", { fill: "none", stroke: WHITE, strokeWidth: 8, strokeLinecap: "round", opacity: 0.8 }),
+  box(146, 36, 108, 24, 10, GREY),
+]);
+
+const spriteMicroscope = () => sprite([], [
+  line("M300 320 L300 170 Q300 130 262 130 L224 130", GREY, 26),
+  box(186, 264, 24, 42, 6, "#C9CAD6"),
+  box(110, 250, 180, 14, 4, GREY),
+  box(170, 40, 60, 170, 16, TEAL),
+  box(164, 24, 72, 24, 8, DARK),
+  box(78, 326, 244, 32, 12, DARK),
+]);
+
+const spriteHeart = () => sprite([], [
+  P("M200 340 C120 280 50 220 50 150 C50 95 90 60 135 60 C165 60 188 78 200 100 C212 78 235 60 265 60 C310 60 350 95 350 150 C350 220 280 280 200 340 Z", { fill: CORAL, ...OUTLINE }),
+  E("circle", { cx: 120, cy: 120, r: 12, fill: WHITE, opacity: 0.7 }),
+]);
+
+const spriteCheck = () => sprite([], [
+  disc(200, 200, 160, GREEN),
+  line("M115 205 L178 268 L290 140", WHITE, 30),
+]);
+
+const spriteCross = () => sprite([], [
+  disc(200, 200, 160, WHITE),
+  line("M130 130 L270 270", CORAL, 30),
+  line("M270 130 L130 270", CORAL, 30),
+]);
+
+const spriteWarning = () => sprite([], [
+  P("M200 48 L362 336 L38 336 Z", { fill: AMBER, ...OUTLINE }),
+  E("rect", { x: 186, y: 150, width: 28, height: 110, rx: 12, fill: INK }),
+  E("circle", { cx: 200, cy: 294, r: 17, fill: INK }),
+]);
+
+const spriteCoin = () => sprite([rad("coinGrad", [[0, "#FFF0A0"], [0.7, GOLD], [1, AMBER]], 0.38, 0.35, 0.75)], [
+  disc(200, 200, 150, "url(#coinGrad)"),
+  E("circle", { cx: 200, cy: 200, r: 116, fill: "none", stroke: "#E09A2E", strokeWidth: 12 }),
+  E("circle", { cx: 200, cy: 200, r: 116, fill: "none", stroke: INK, strokeWidth: 3 }),
+  E("ellipse", { cx: 150, cy: 150, rx: 26, ry: 14, fill: WHITE, opacity: 0.5 }),
+]);
+
+const spriteChartUp = () => {
+  const s = [80, 200], e = [330, 50];
+  const ang = Math.atan2(e[1] - s[1], e[0] - s[0]);
+  const back = [e[0] - Math.cos(ang) * 34, e[1] - Math.sin(ang) * 34];
+  const w = 20;
+  const head = `M${r2(e[0])} ${r2(e[1])} L${r2(back[0] - Math.sin(ang) * w)} ${r2(back[1] + Math.cos(ang) * w)} L${r2(back[0] + Math.sin(ang) * w)} ${r2(back[1] - Math.cos(ang) * w)} Z`;
+  return sprite([], [
+    box(60, 230, 70, 120, 6, CORAL),
+    box(160, 180, 70, 170, 6, AMBER),
+    box(260, 120, 70, 230, 6, TEAL),
+    line(`M${P2(s)} L${P2(back)}`, CORAL, 12),
+    P(head, { fill: CORAL, ...OUTLINE }),
+  ]);
+};
+
+const spriteGlobe = () => {
+  const chords = [-75, 0, 75].map((dy) => {
+    const hw = Math.sqrt(150 * 150 - dy * dy) - 4;
+    return P(`M${r2(200 - hw)} ${200 + dy} L${r2(200 + hw)} ${200 + dy}`, { fill: "none", stroke: WHITE, strokeWidth: 6, opacity: 0.7 });
+  });
+  return sprite([rad("globeGrad", [[0, "#7FB5FF"], [0.6, BLUE], [1, BLUE_DARK]], 0.36, 0.32, 0.75)], [
+    disc(200, 200, 150, "url(#globeGrad)"),
+    E("ellipse", { cx: 200, cy: 200, rx: 62, ry: 150, fill: "none", stroke: WHITE, strokeWidth: 6, opacity: 0.7 }),
+    chords,
+  ]);
+};
+
+const spriteMapPin = () => sprite([], [
+  P("M200 368 C200 368 90 262 90 160 A110 110 0 0 1 310 160 C310 262 200 368 200 368 Z", { fill: CORAL, ...OUTLINE }),
+  disc(200, 160, 42, WHITE),
+]);
+
+const spriteSpeechBubble = () => sprite([], [
+  P("M120 255 L108 340 L200 268 Z", { fill: WHITE, ...OUTLINE }),
+  box(50, 70, 300, 200, 50, WHITE),
+  E("rect", { x: 126, y: 266, width: 70, height: 10, fill: WHITE }),
+  box(100, 120, 200, 18, 9, SHADE, { stroke: "none" }),
+  box(100, 160, 150, 18, 9, SHADE, { stroke: "none" }),
+]);
+
+const spriteMegaphone = () => sprite([], [
+  box(54, 158, 84, 84, 12, CORAL),
+  box(90, 236, 40, 66, 8, GREY),
+  P("M130 150 L300 70 L300 330 L130 250 Z", { fill: CORAL, ...OUTLINE }),
+  E("ellipse", { cx: 300, cy: 200, rx: 12, ry: 130, fill: PINK, ...OUTLINE }),
+  line("M345 130 Q372 200 345 270", AMBER, 12),
+  line("M368 170 Q384 200 368 230", AMBER, 12),
+]);
+
+const spriteTrophy = () => sprite([lin("cupGold", [[0, "#FFF0A0"], [0.5, GOLD], [1, AMBER]], 0, 0, 1, 0)], [
+  line("M125 100 Q70 100 80 150 Q92 190 135 180", AMBER, 16),
+  line("M275 100 Q330 100 320 150 Q308 190 265 180", AMBER, 16),
+  P("M120 70 L280 70 L270 180 Q262 250 200 255 Q138 250 130 180 Z", { fill: "url(#cupGold)", ...OUTLINE }),
+  box(185, 248, 30, 52, 4, AMBER),
+  box(130, 298, 140, 38, 8, "#E09A2E"),
+  P("M150 96 Q148 140 160 178", { fill: "none", stroke: WHITE, strokeWidth: 8, strokeLinecap: "round", opacity: 0.6 }),
+]);
+
+const spriteMedal = () => sprite([rad("medalGold", [[0, "#FFF6C2"], [0.5, GOLD], [1, AMBER]], 0.38, 0.34, 0.72)], [
+  P("M135 30 L192 30 L206 186 L166 178 Z", { fill: CORAL, ...OUTLINE }),
+  P("M208 30 L265 30 L234 178 L194 186 Z", { fill: TEAL, ...OUTLINE }),
+  disc(200, 262, 118, "url(#medalGold)"),
+  E("circle", { cx: 200, cy: 262, r: 88, fill: "none", stroke: "#E09A2E", strokeWidth: 10 }),
+  P(starPath(200, 262, 56, 24), { fill: "#FFF6C2", stroke: INK, strokeWidth: 4, strokeLinejoin: "round" }),
+]);
+
+const spriteShield = () => sprite([], [
+  P("M200 40 L345 90 L345 200 Q345 320 200 370 Q55 320 55 200 L55 90 Z", { fill: TEAL, ...OUTLINE }),
+  P("M200 78 L318 118 L318 200 Q318 298 200 336 Q82 298 82 200 L82 118 Z", { fill: "#5FE3DC" }),
+]);
+
+const spriteLock = () => sprite([], [
+  line("M135 200 L135 130 Q135 62 200 62 Q265 62 265 130 L265 200", SHADE, 26),
+  box(95, 178, 210, 172, 26, GREY),
+  E("circle", { cx: 200, cy: 248, r: 20, fill: INK }),
+  E("rect", { x: 189, y: 258, width: 22, height: 52, rx: 6, fill: INK }),
+]);
+
+const spriteKey = () => sprite([lin("keyGold", [[0, "#FFF0A0"], [1, AMBER]], 0, 0, 1, 1)], [
+  box(190, 182, 170, 36, 10, "url(#keyGold)"),
+  box(300, 218, 22, 40, 4, "url(#keyGold)"),
+  box(336, 218, 22, 30, 4, "url(#keyGold)"),
+  disc(130, 200, 74, "url(#keyGold)"),
+  E("circle", { cx: 130, cy: 200, r: 28, fill: INK }),
+]);
+
+const spriteBattery = () => sprite([], [
+  box(50, 120, 270, 160, 24, GREEN),
+  box(318, 172, 36, 56, 8, DARK),
+  box(72, 142, 70, 116, 8, "#8BE0A8", { strokeWidth: 4 }),
+  box(152, 142, 70, 116, 8, "#8BE0A8", { strokeWidth: 4 }),
+  box(232, 142, 70, 116, 8, "#8BE0A8", { strokeWidth: 4 }),
+]);
+
+const spriteFire = () => sprite([], [
+  P("M200 40 C262 118 330 170 320 262 C312 330 262 360 200 360 C138 360 88 330 80 262 C74 204 118 172 140 124 C160 152 170 172 182 184 C190 112 182 84 200 40 Z", { fill: AMBER, ...OUTLINE }),
+  P("M200 176 C232 224 270 244 262 302 C256 340 232 350 200 350 C168 350 144 330 140 302 C136 262 170 244 200 176 Z", { fill: GOLD }),
+]);
+
+const spriteWaterDrop = () => sprite([], [
+  P("M200 40 C200 40 90 180 90 262 A110 110 0 0 0 310 262 C310 180 200 40 200 40 Z", { fill: "#5CC8FF", ...OUTLINE }),
+  P("M142 242 Q142 206 172 178", { fill: "none", stroke: WHITE, strokeWidth: 14, strokeLinecap: "round", opacity: 0.85 }),
+]);
+
+const spriteLeaf = () => sprite([], [
+  P("M80 330 C50 170 160 56 340 56 C340 236 250 340 80 330 Z", { fill: GREEN, ...OUTLINE }),
+  P("M80 330 Q210 230 326 96", { fill: "none", stroke: "#8BE0A8", strokeWidth: 8, strokeLinecap: "round" }),
+  P("M150 250 L190 236 M190 190 L230 170 M240 140 L270 118", { fill: "none", stroke: "#8BE0A8", strokeWidth: 6, strokeLinecap: "round" }),
+]);
+
+const spriteLightning = () => sprite([], [
+  P("M235 30 L105 215 L190 215 L160 370 L300 165 L212 165 L252 30 Z", { fill: GOLD, ...OUTLINE }),
+]);
+
+const spriteSnowflake = () => {
+  let d = "";
+  for (let a = 0; a < 360; a += 60) {
+    d += ` M200 200 L${P2(polar(200, 200, 150, a))}`;
+    const q = polar(200, 200, 92, a);
+    for (const s of [-1, 1]) {
+      const e = [r2(q[0] + 40 * Math.sin(rad2(a + s * 40))), r2(q[1] - 40 * Math.cos(rad2(a + s * 40)))];
+      d += ` M${P2(q)} L${P2(e)}`;
+    }
+  }
+  d = d.trim();
+  return sprite([], [
+    P(d, { fill: "none", stroke: INK, strokeWidth: 26, strokeLinecap: "round" }),
+    P(d, { fill: "none", stroke: LIGHT_BLUE, strokeWidth: 14, strokeLinecap: "round" }),
+    disc(200, 200, 22, WHITE),
+  ]);
+};
+
+const spriteBrain = () => sprite([], [
+  box(180, 300, 40, 50, 12, PINK),
+  E("ellipse", { cx: 150, cy: 200, rx: 102, ry: 112, fill: PINK, ...OUTLINE }),
+  E("ellipse", { cx: 250, cy: 200, rx: 102, ry: 112, fill: PINK, ...OUTLINE }),
+  P("M200 110 Q190 200 200 300", { fill: "none", stroke: INK, strokeWidth: 8, strokeLinecap: "round" }),
+  P("M86 176 Q122 150 130 196 Q138 240 104 254", { fill: "none", stroke: INK, strokeWidth: 6, strokeLinecap: "round", strokeLinejoin: "round" }),
+  P("M314 176 Q278 150 270 196 Q262 240 296 254", { fill: "none", stroke: INK, strokeWidth: 6, strokeLinecap: "round", strokeLinejoin: "round" }),
+]);
+
+const spriteTimer = () => sprite([], [
+  E("rect", { x: 330, y: 206, width: 34, height: 22, rx: 6, fill: DARK }),
+  box(186, 46, 28, 56, 4, DARK),
+  box(170, 22, 60, 30, 8, DARK),
+  disc(200, 232, 140, CORAL),
+  disc(200, 232, 108, CREAM),
+  Array.from({ length: 12 }, (_, i) =>
+    P(`M${P2(polar(200, 232, 92, i * 30))} L${P2(polar(200, 232, 104, i * 30))}`, { fill: "none", stroke: INK, strokeWidth: 8, strokeLinecap: "round" })),
+  P(`M200 232 L${P2(polar(200, 232, 74, 35))}`, { fill: "none", stroke: INK, strokeWidth: 12, strokeLinecap: "round" }),
+  P(`M200 232 L${P2(polar(200, 232, 92, -80))}`, { fill: "none", stroke: DARK, strokeWidth: 6, strokeLinecap: "round" }),
+  disc(200, 232, 12, INK),
+]);
+
 // ---- Asset registry -------------------------------------------------------
 // Characters are 400x800 at 2x; each body part is its own transparent PNG on the same canvas,
 // so rig pivots line up with the full figure. Both sides (left/right) are included in each part.
@@ -585,6 +955,45 @@ const ASSETS = {
   space_night: bgSpaceNight(),
   snow_day: bgSnowDay(),
   cafe_warm: bgCafeWarm(),
+  atom: spriteAtom(),
+  molecule_water: spriteWater(),
+  molecule_co2: spriteCO2(),
+  dna_helix: spriteDNA(),
+  sun: spriteSun(),
+  moon: spriteMoon(),
+  moon_full: spriteMoonFull(),
+  earth: spriteEarth(),
+  planet_ringed: spriteRingedPlanet(),
+  star: spriteStar(),
+  lightbulb: spriteBulb(),
+  gear: spriteGear(),
+  magnifier: spriteMagnifier(),
+  flask: spriteFlask(),
+  test_tube: spriteTestTube(),
+  microscope: spriteMicroscope(),
+  heart: spriteHeart(),
+  check_mark: spriteCheck(),
+  cross_mark: spriteCross(),
+  warning_triangle: spriteWarning(),
+  coin: spriteCoin(),
+  chart_up: spriteChartUp(),
+  globe: spriteGlobe(),
+  map_pin: spriteMapPin(),
+  speech_bubble: spriteSpeechBubble(),
+  megaphone: spriteMegaphone(),
+  trophy: spriteTrophy(),
+  medal: spriteMedal(),
+  shield: spriteShield(),
+  lock: spriteLock(),
+  key: spriteKey(),
+  battery: spriteBattery(),
+  fire: spriteFire(),
+  water_drop: spriteWaterDrop(),
+  leaf: spriteLeaf(),
+  lightning: spriteLightning(),
+  snowflake: spriteSnowflake(),
+  brain: spriteBrain(),
+  timer: spriteTimer(),
 };
 
 // ---- Pipeline -------------------------------------------------------------

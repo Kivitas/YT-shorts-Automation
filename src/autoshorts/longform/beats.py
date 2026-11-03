@@ -146,6 +146,154 @@ PROP_XY: dict[str, tuple[int, int]] = {
     "computer": (1440, 509),
 }
 MAX_PROPS = 4  # keeps each frame readable; earlier rules win when the cap cuts props
+# Narration keyword (whole word or phrase) -> satori sprite name. A missing sprite file is
+# skipped at draw time, so these names can be added before their PNGs exist.
+SPRITE_KEYWORDS: dict[str, str] = {
+    # Science and nature
+    "atom": "atom",
+    "atoms": "atom",
+    "electron": "atom",
+    "electrons": "atom",
+    "nucleus": "atom",
+    "water": "molecule_water",
+    "h2o": "molecule_water",
+    "carbon": "molecule_co2",
+    "co2": "molecule_co2",
+    "dna": "dna_helix",
+    "gene": "dna_helix",
+    "genes": "dna_helix",
+    "sun": "sun",
+    "sunrise": "sun",
+    "solar": "sun",
+    "moon": "moon",
+    "crescent": "moon",
+    "lunar": "moon_full",
+    "night sky": "moon_full",
+    "earth": "earth",
+    "planet": "planet_ringed",
+    "planets": "planet_ringed",
+    "star": "star",
+    "stars": "star",
+    "leaf": "leaf",
+    "green": "leaf",
+    "eco": "leaf",
+    "nature": "leaf",
+    "drop": "water_drop",
+    "droplet": "water_drop",
+    "rain": "water_drop",
+    "cold": "snowflake",
+    "snow": "snowflake",
+    "winter": "snowflake",
+    "fire": "fire",
+    "burn": "fire",
+    "hot": "fire",
+    "heat": "fire",
+    "lightning": "lightning",
+    "fast": "lightning",
+    "shock": "lightning",
+    "electric": "lightning",
+    # Ideas, tools and science
+    "idea": "lightbulb",
+    "light": "lightbulb",
+    "bulb": "lightbulb",
+    "gear": "gear",
+    "system": "gear",
+    "process": "gear",
+    "search": "magnifier",
+    "research": "magnifier",
+    "investigate": "magnifier",
+    "look closer": "magnifier",
+    "flask": "flask",
+    "chemistry": "flask",
+    "experiment": "flask",
+    "lab": "flask",
+    "microscope": "microscope",
+    "cell": "microscope",
+    "cells": "microscope",
+    "biology": "microscope",
+    "brain": "brain",
+    "mind": "brain",
+    "think": "brain",
+    "thinking": "brain",
+    "battery": "battery",
+    "energy": "battery",
+    "charge": "battery",
+    "power": "battery",
+    # Feelings and answers
+    "heart": "heart",
+    "love": "heart",
+    "care": "heart",
+    "yes": "check_mark",
+    "correct": "check_mark",
+    "right": "check_mark",
+    "true": "check_mark",
+    "wrong": "cross_mark",
+    "false": "cross_mark",
+    "mistake": "cross_mark",
+    "no": "cross_mark",
+    "warning": "warning_triangle",
+    "danger": "warning_triangle",
+    "risk": "warning_triangle",
+    # Money, growth and places
+    "money": "coin",
+    "coin": "coin",
+    "cash": "coin",
+    "pay": "coin",
+    "dollar": "coin",
+    "growth": "chart_up",
+    "grow": "chart_up",
+    "increase": "chart_up",
+    "rise": "chart_up",
+    "profit": "chart_up",
+    "world": "globe",
+    "global": "globe",
+    "globe": "globe",
+    "country": "globe",
+    "location": "map_pin",
+    "place": "map_pin",
+    "map": "map_pin",
+    "say": "speech_bubble",
+    "tell": "speech_bubble",
+    "talk": "speech_bubble",
+    "message": "speech_bubble",
+    "announce": "megaphone",
+    "shout": "megaphone",
+    # Wins and safety
+    "win": "trophy",
+    "trophy": "trophy",
+    "champion": "trophy",
+    "medal": "medal",
+    "award": "medal",
+    "goal": "medal",
+    "safe": "shield",
+    "protect": "shield",
+    "secure": "shield",
+    "lock": "lock",
+    "password": "lock",
+    "private": "lock",
+    "key": "key",
+    "unlock": "key",
+    "solution": "key",
+    # Time
+    "time": "timer",
+    "timer": "timer",
+    "minutes": "timer",
+    "seconds": "timer",
+}
+SPRITE_CAP = 3  # sprite props per section, taken in narration order
+SPRITE_HEIGHT_PX = 220
+# Free-area centres, on the floor line: two in the left third, one in the right third.
+SPRITE_SLOTS: tuple[tuple[int, int], ...] = (
+    (200, FLOOR_Y - SPRITE_HEIGHT_PX // 2),
+    (1720, FLOOR_Y - SPRITE_HEIGHT_PX // 2),
+    (420, FLOOR_Y - SPRITE_HEIGHT_PX // 2),
+)
+# One alternation, longest keys first, so "night sky" wins over any shorter key it contains.
+_SPRITE_KEYWORD_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(key) for key in sorted(SPRITE_KEYWORDS, key=len, reverse=True))
+    + r")\b"
+)
 # Seated figure's near hand, relative to RIG_ORIGIN, from the DESK_POSE pose.
 _HAND_OFFSET = wrist_offset(POSES[DESK_POSE], FIGURE_SPRITE_SCALE, "l")
 
@@ -283,6 +431,14 @@ class PropSpec(NamedTuple):
     params: dict[str, Any]
 
 
+class SpriteSpec(NamedTuple):
+    """One sprite prop: sprite name and the pixel centre it is pasted at."""
+
+    name: str
+    x: int
+    y: int
+
+
 @dataclass(frozen=True)
 class LightSource:
     """A lamp or screen glow painted with ``source_glow``."""
@@ -309,6 +465,7 @@ class BeatPlan:
     light_sources: list[LightSource] = field(default_factory=list)
     gesture: str | None = None  # when set, this rig pose replaces ``pose`` on screen
     theme: str = NIGHT_THEME  # backdrop theme name for draw_themed_background
+    sprites: list[SpriteSpec] = field(default_factory=list)  # keyword sprites, at most SPRITE_CAP
 
 
 def _choose_gesture(words: set[str], lowered: str) -> str | None:
@@ -337,6 +494,18 @@ def _choose_theme(words: set[str], section_index: int) -> str:
     if words & CANDY_THEME_WORDS:
         return "candy"
     return THEME_CYCLE[section_index % len(THEME_CYCLE)]
+
+
+def _choose_sprites(lowered: str) -> list[SpriteSpec]:
+    """Sprite props for the first distinct keyword matches, in narration order, capped at SPRITE_CAP."""
+    names: list[str] = []
+    for match in _SPRITE_KEYWORD_RE.finditer(lowered):
+        name = SPRITE_KEYWORDS[match.group(0)]
+        if name not in names:
+            names.append(name)
+        if len(names) == SPRITE_CAP:
+            break
+    return [SpriteSpec(name, *SPRITE_SLOTS[index]) for index, name in enumerate(names)]
 
 
 def _has_prop(props: Sequence[PropSpec], name: str) -> bool:
@@ -494,6 +663,7 @@ def plan_beat(
         light_sources=light_sources,
         gesture=_choose_gesture(words, lowered) if pose in GESTURE_POSES else None,
         theme=_choose_theme(words, section_index),
+        sprites=_choose_sprites(lowered),
     )
 
 
@@ -621,6 +791,14 @@ def _draw_prop(
     )
 
 
+def _draw_sprite(img: Image.Image, spec: SpriteSpec) -> None:
+    """Paste a keyword sprite scaled to SPRITE_HEIGHT_PX tall; a missing sprite draws nothing."""
+    native = sprite_size(spec.name)
+    if native is None:
+        return
+    paste_sprite(img, spec.name, (spec.x, spec.y), scale=SPRITE_HEIGHT_PX / native[1])
+
+
 def _figure_joints(
     plan: BeatPlan, shot_start: float, section_text: str, t: float
 ) -> dict[str, float]:
@@ -721,6 +899,8 @@ def draw_beat(
 
     for prop in plan.props:
         _draw_prop(img, prop, t, start, words)
+    for sprite in plan.sprites:
+        _draw_sprite(img, sprite)
 
     if _is_space_topic(section_text):
         _draw_space(img, t, pal.blue, pal.highlight)

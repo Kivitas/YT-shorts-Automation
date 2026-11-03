@@ -499,3 +499,81 @@ def test_sprites_change_frame_compared_with_fallback(tmp_path: Path, use_sprite_
     assert with_sprites.tobytes() != fallback.tobytes()
     # Backdrop sprite is pasted over the whole frame; the corner is its navy colour.
     assert with_sprites.getpixel((5, 5)) == (30, 60, 120)
+
+
+def test_atom_narration_plans_atom_sprite() -> None:
+    plan = plan_beat(0, "H", "Every atom holds a nucleus.", "host", False)
+
+    assert "atom" in [sprite.name for sprite in plan.sprites]
+
+
+def test_sprite_keywords_match_whole_words_only() -> None:
+    plan = plan_beat(0, "H", "Atomic habits are a treasure.", "host", False)
+    assert plan.sprites == []
+    assert [s.name for s in plan_beat(0, "H", "Night sky tonight.", "host", False).sprites] == [
+        "moon_full"
+    ]
+
+
+def test_at_most_three_sprites_in_narration_order() -> None:
+    narration = "Stars, then the atom, then water, then a rocket, then money."
+    plan = plan_beat(0, "H", narration, "host", False)
+
+    names = [sprite.name for sprite in plan.sprites]
+    assert names == ["star", "atom", "molecule_water"]
+    assert len(plan.sprites) <= beats.SPRITE_CAP
+
+
+def test_repeated_sprite_keyword_is_used_once() -> None:
+    plan = plan_beat(0, "H", "Atom, atom, atoms everywhere.", "host", False)
+
+    assert [sprite.name for sprite in plan.sprites] == ["atom"]
+
+
+def test_sprites_sit_in_free_side_thirds_below_narration() -> None:
+    narration = "Sun, moon, earth, star, heart, and gear."
+    plan = plan_beat(0, "H", narration, "host", False)
+
+    assert plan.sprites
+    for sprite in plan.sprites:
+        assert sprite.x <= FRAME[0] // 3 or sprite.x >= 2 * FRAME[0] // 3
+        assert sprite.y - beats.SPRITE_HEIGHT_PX // 2 > NARRATION_BAND[1]
+
+
+def test_sprite_props_do_not_use_the_prop_cap() -> None:
+    narration = "Atom, water, sun, star, heart, gear and coin."
+    plan = plan_beat(0, "H", narration, "host", False)
+
+    assert len(plan.sprites) == beats.SPRITE_CAP
+    assert len(plan.props) <= beats.MAX_PROPS
+
+
+def test_missing_sprite_does_not_raise_and_draws_rgb(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(tmp_path)  # empty folder: every keyword sprite is missing
+    narration = "The atom meets the water and the sun."
+    plan = plan_beat(0, "H", narration, "host", False)
+    assert plan.sprites
+
+    img = _render(plan, narration)
+    assert img.mode == "RGB"
+    assert img.size == FRAME
+
+
+def test_present_sprite_is_pasted_at_its_slot(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "Every atom counts."
+    plan = replace(plan_beat(0, "H", narration, "host", False), expression="neutral")
+    spec = plan.sprites[0]
+    assert spec.name == "atom"
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    use_sprite_dir(empty)
+    fallback = _render(plan, narration)
+
+    full = _write_sprites(tmp_path / "full")
+    _write_solid(full, "atom", (100, 400), (10, 200, 10))
+    use_sprite_dir(full)
+    with_sprite = _render(plan, narration)
+
+    assert with_sprite.tobytes() != fallback.tobytes()
+    assert with_sprite.getpixel((spec.x, spec.y)) == (10, 200, 10)
