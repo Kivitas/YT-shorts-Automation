@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PIL import Image
 
 from autoshorts.longform.beats import (
     PALETTE,
     POSE_CYCLE,
+    SPHERE_CENTRE,
     BeatPlan,
+    _draw_parallax,
+    _entrance_start,
     draw_beat,
     plan_beat,
 )
@@ -123,3 +128,54 @@ def test_draw_beat_rejects_wrong_frame() -> None:
     except ValueError:
         return
     raise AssertionError("expected ValueError for a non-1920x1080 frame")
+
+
+def test_space_topic_draws_planet_pixels() -> None:
+    narration = "The planet earth turns in orbit."
+    plan = plan_beat(0, "Space", narration, "host", False)
+    img = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img, plan, 1.0, 0.0, 3.0, narration)
+
+    plain = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(plain, plan, 1.0, 0.0, 3.0, "Nothing about that here.")
+
+    assert img.getpixel(SPHERE_CENTRE) != plain.getpixel(SPHERE_CENTRE)
+    assert img.getpixel(SPHERE_CENTRE) != PALETTE.void
+
+
+def test_entrance_after_shot_end_leaves_no_prop_pixels() -> None:
+    narration = "Lie in bed."
+    plan = plan_beat(0, "H", narration, "host", False)
+    assert "bed" in _names(plan)
+    words = [{"word": "bed", "start": 3.0, "end": 3.4}]
+    without_bed = replace(plan, props=[p for p in plan.props if p.name != "bed"])
+
+    late = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(late, plan, 1.5, 0.0, 2.0, "", words)
+    absent = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(absent, without_bed, 1.5, 0.0, 2.0, "", words)
+    assert late.tobytes() == absent.tobytes()
+
+    early_words = [{"word": "bed", "start": 0.5, "end": 0.9}]
+    shown = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(shown, plan, 1.5, 0.0, 2.0, "", early_words)
+    assert shown.tobytes() != absent.tobytes()
+
+
+def test_entrance_start_follows_naming_word_or_shot_start() -> None:
+    words = [
+        {"word": "Sleep.", "start": 4.0, "end": 4.3},
+        {"word": "bed", "start": 2.5, "end": 2.8},
+    ]
+    assert _entrance_start("bed", words, 0.0) == 2.5
+    assert _entrance_start("phone", words, 0.0) == 0.0
+    assert _entrance_start("bed", None, 1.25) == 1.25
+
+
+def test_parallax_moves_background_shapes() -> None:
+    first = Image.new("RGB", FRAME, PALETTE.void)
+    _draw_parallax(first, 0.0)
+    second = Image.new("RGB", FRAME, PALETTE.void)
+    _draw_parallax(second, 2.0)
+
+    assert first.tobytes() != second.tobytes()

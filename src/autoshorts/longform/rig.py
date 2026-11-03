@@ -26,6 +26,8 @@ from collections.abc import Callable
 
 from PIL import Image, ImageDraw
 
+from autoshorts.longform.motion import blink, breathe, ease_in_out_sine
+
 CREAM = (234, 230, 223)
 CREAM_SHADE = (184, 180, 172)
 EYE_WHITE = (251, 250, 247)
@@ -300,11 +302,28 @@ EXPRESSIONS: dict[str, dict[str, float]] = {
 _HALO_ALPHA = (HEADBAND[0], HEADBAND[1], HEADBAND[2], 80)
 
 
-def _resolve_pose(name: str) -> dict[str, float]:
-    """Merge a named pose over the stand defaults so every joint has a value."""
+def _resolve_pose(name: str | dict[str, float]) -> dict[str, float]:
+    """Merge a named pose (or a joint dict) over the stand defaults so every joint has a value."""
     joints = {k: 0.0 for k in _STAND_KEYS}
     joints.update({k: float(v) for k, v in POSES["stand"].items()})
-    joints.update({k: float(v) for k, v in POSES[name].items()})
+    source = POSES[name] if isinstance(name, str) else name
+    joints.update({k: float(v) for k, v in source.items()})
+    return joints
+
+
+def animate_pose(pose_name_a: str, pose_name_b: str, p: float, t: float = 0.0) -> dict[str, float]:
+    """Joint angles interpolated from pose A to pose B.
+
+    ``p`` is the progress from 0 (pose A) to 1 (pose B), eased with ease_in_out_sine.
+    Unknown names fall back to ``stand``. ``t`` adds a slow idle sway to the head, so
+    a held pose still looks alive. At ``t=0.0`` the sway is zero. The result can be
+    passed straight to :func:`draw_rig` as its ``pose`` argument.
+    """
+    a = _resolve_pose(pose_name_a if pose_name_a in POSES else "stand")
+    b = _resolve_pose(pose_name_b if pose_name_b in POSES else "stand")
+    e = ease_in_out_sine(p)
+    joints = {k: a[k] + (b[k] - a[k]) * e for k in _STAND_KEYS}
+    joints["head"] += 1.5 * math.sin(2.0 * math.pi * t / 3.1)
     return joints
 
 
@@ -463,13 +482,14 @@ def _render(
     expr: dict[str, float],
     headband: bool,
     t: float,
+    torso_scale: float = 1.0,
 ) -> None:
     draw = ImageDraw.Draw(layer)
     s = scale
     ow = max(1.0, 2.0 * s)
     ox, oy = origin
     hip = (ox, oy + joints["drop"] * s)
-    top = _up(hip, joints["torso"], TORSO_LEN, s)
+    top = _up(hip, joints["torso"], TORSO_LEN * torso_scale, s)
     head_c = _up(top, joints["head"], NECK_LEN + HEAD_R, s)
     R = HEAD_R * s
 
@@ -497,7 +517,7 @@ def _render(
     _hand(draw, arm_r[1], arm_r[2], s, CREAM_SHADE, ow)
 
     # Shirt torso with a shaded strip along its back edge.
-    tw = TORSO_W * s
+    tw = TORSO_W * s * torso_scale
     _capsule(draw, hip, top, tw + 2 * ow, INK)
     _capsule(draw, hip, top, tw, SHIRT)
     perp = (math.cos(math.radians(joints["torso"])), math.sin(math.radians(joints["torso"])))
@@ -674,7 +694,7 @@ def _composite(img: Image.Image, layer: Image.Image) -> None:
 
 def draw_rig(
     img: Image.Image,
-    pose: str,
+    pose: str | dict[str, float],
     origin: tuple[float, float],
     scale: float,
     expression: str = "neutral",
@@ -684,22 +704,32 @@ def draw_rig(
 ) -> None:
     """Draw the figure onto ``img`` in place.
 
-    ``origin`` is the hip in pixels and ``scale`` multiplies body units. Unknown pose
+    ``origin`` is the hip in pixels and ``scale`` multiplies body units. ``pose`` is a
+    pose name or a joint dict such as the one from :func:`animate_pose`. Unknown pose
     or expression names fall back to ``stand`` and ``neutral``. ``t`` drives the
-    headband ribbon flutter. ``mirror=True`` flips the figure horizontally about the
-    hip so it faces the other way.
+    headband ribbon flutter. When ``t`` is non-zero the eyes blink (see
+    ``motion.blink``) and the torso breathes (see ``motion.breathe``). At ``t=0.0``
+    neither applies. ``mirror=True`` flips the figure horizontally about the hip so
+    it faces the other way.
     """
-    pose_name = pose if pose in POSES else "stand"
+    if isinstance(pose, str):
+        pose = pose if pose in POSES else "stand"
     expr_name = expression if expression in EXPRESSIONS else "neutral"
+    expr = dict(EXPRESSIONS[expr_name])
+    torso_scale = 1.0
+    if t != 0.0:
+        expr["lid"] = max(float(expr["lid"]), 1.0 - blink(t))
+        torso_scale = breathe(t)
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     _render(
         layer,
-        _resolve_pose(pose_name),
+        _resolve_pose(pose),
         origin,
         scale,
-        EXPRESSIONS[expr_name],
+        expr,
         headband,
         t,
+        torso_scale,
     )
     if mirror:
         layer = layer.transform(

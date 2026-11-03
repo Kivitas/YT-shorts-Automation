@@ -19,12 +19,21 @@ from typing import Any, NamedTuple
 
 from PIL import Image, ImageDraw
 
-from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, ACCENT_YELLOW, TEXT_MUTED, TEXT_PRIMARY
+from autoshorts.core.theme import (
+    ACCENT_CORAL,
+    ACCENT_TEAL,
+    ACCENT_YELLOW,
+    BG_SURFACE,
+    TEXT_MUTED,
+    TEXT_PRIMARY,
+)
 from autoshorts.longform.fx import draw_dust_motes, draw_vignette
 from autoshorts.longform.kinetic_text import draw_inner_voice, draw_narration, draw_number_pop
 from autoshorts.longform.lighting import colour_wash, rim_light, source_glow
+from autoshorts.longform.motion import parallax_offset
 from autoshorts.longform.props import draw_prop
-from autoshorts.longform.rig import draw_rig
+from autoshorts.longform.rig import animate_pose, draw_rig
+from autoshorts.longform.sphere import draw_sphere, orbit_point
 
 RGB = tuple[int, int, int]
 
@@ -41,6 +50,41 @@ MOOD_WASH_INTENSITY = 0.08
 NARRATION_Y = 240
 INNER_VOICE_ANCHOR = (140, 420)
 NUMBER_ANCHOR = (1500, 520)
+
+REST_POSE = "stand"
+POSE_TRANSITION_S = 0.4  # the figure eases from REST_POSE into the planned pose after a shot start
+
+SPACE_WORDS = frozenset({"planet", "earth", "space", "moon", "orbit", "universe"})
+SPHERE_CENTRE = (1500, 380)
+SPHERE_RADIUS = 150.0
+SPHERE_SPIN_DEG_S = 10.0
+SPHERE_LAND = (120, 190, 110)
+ORBIT_RADIUS = 210.0
+ORBIT_TILT = 0.35
+SATELLITE_SPEED_DEG_S = 45.0
+SATELLITE_RADIUS = 9
+
+PARALLAX_CAMERA_SPEED = 40.0  # px per second of camera pan
+
+
+class ParallaxShape(NamedTuple):
+    """A faint background shape. ``size`` is the radius for dots, the height for rounded bars."""
+
+    kind: str  # "dot" or "bar"
+    x: float
+    y: float
+    size: float
+    width: float
+    depth: float
+
+
+PARALLAX_SHAPES: tuple[ParallaxShape, ...] = (
+    ParallaxShape("dot", 220.0, 150.0, 6.0, 0.0, 0.2),
+    ParallaxShape("bar", 640.0, 120.0, 14.0, 180.0, 0.4),
+    ParallaxShape("dot", 1180.0, 220.0, 9.0, 0.0, 0.4),
+    ParallaxShape("bar", 1600.0, 90.0, 16.0, 220.0, 0.7),
+    ParallaxShape("dot", 420.0, 330.0, 5.0, 0.0, 0.7),
+)
 
 
 @dataclass(frozen=True)
@@ -86,6 +130,22 @@ MOUNTAIN_WORDS = frozenset({"mountain", "climb", "summit", "top"})
 SHADOW_WORDS = frozenset({"shadow", "excuse", "demon", "tomorrow", "later"})
 CALENDAR_WORDS = frozenset({"every", "day", "daily"})
 DAY_WORDS = frozenset({"day", "daily"})
+
+# Props enter when the word that names them is first spoken in the section; the others
+# enter at the shot start. Bags and mountains drop in, the rest pop. Alarm and phone wiggle.
+PROP_ENTRANCE_WORDS: dict[str, frozenset[str]] = {
+    "bed": frozenset({"bed", "sleep"}),
+    "alarm_clock_7seg": frozenset({"alarm", "wake"}),
+    "phone": PHONE_WORDS,
+    "couch": COUCH_WORDS,
+    "desk_monitor": DESK_WORDS,
+    "heavy_bag": BAG_WORDS,
+    "mountain": MOUNTAIN_WORDS,
+    "shadow_demon": SHADOW_WORDS,
+    "calendar": CALENDAR_WORDS,
+}
+PROP_ENTRANCE_KIND: dict[str, str] = {"heavy_bag": "drop", "mountain": "drop"}
+PROP_WIGGLE: dict[str, float] = {"alarm_clock_7seg": 1.2, "phone": 1.2}
 
 # Inner-voice line shown for each excuse trigger word (first one in the narration wins).
 EXCUSE_LINES: dict[str, str] = {
@@ -229,6 +289,70 @@ def _draw_number_pops(
     draw_number_pop(img, values[index], NUMBER_ANCHOR, t, slot_start, PALETTE.highlight)
 
 
+def _entrance_start(
+    name: str, words: Sequence[Mapping[str, Any]] | None, shot_start: float
+) -> float:
+    """Start time of the earliest word that names prop ``name``, else ``shot_start``."""
+    triggers = PROP_ENTRANCE_WORDS.get(name, frozenset())
+    times = [
+        float(entry["start"])
+        for entry in words or ()
+        if triggers.intersection(_WORD_RE.findall(str(entry["word"]).lower()))
+    ]
+    return min(times) if times else shot_start
+
+
+def _rig_pose(plan: BeatPlan, shot_start: float, t: float) -> dict[str, float]:
+    """Joint angles easing from the rest pose into the planned pose after a shot start."""
+    p = (t - shot_start) / POSE_TRANSITION_S
+    return animate_pose(REST_POSE, plan.pose, p, t)
+
+
+def _is_space_topic(section_text: str) -> bool:
+    return bool(SPACE_WORDS.intersection(_WORD_RE.findall(section_text.lower())))
+
+
+def _draw_parallax(img: Image.Image, t: float) -> None:
+    """Faint background shapes that slide at a depth-dependent speed under a camera pan."""
+    draw = ImageDraw.Draw(img)
+    camera_x = PARALLAX_CAMERA_SPEED * t
+    for shape in PARALLAX_SHAPES:
+        x = (shape.x - parallax_offset(camera_x, shape.depth)) % FRAME_W
+        for dx in (0.0, -float(FRAME_W)):  # draw a second copy so the wrap is seamless
+            cx = x + dx
+            if shape.kind == "dot":
+                r = shape.size
+                draw.ellipse((cx - r, shape.y - r, cx + r, shape.y + r), fill=BG_SURFACE)
+            else:
+                h = shape.size
+                draw.rounded_rectangle(
+                    (cx, shape.y, cx + shape.width, shape.y + h), radius=h / 2, fill=BG_SURFACE
+                )
+
+
+def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
+    """A spinning planet with two satellites on a tilted orbit."""
+    draw_sphere(
+        img,
+        SPHERE_CENTRE,
+        SPHERE_RADIUS,
+        t,
+        base=blue,
+        land=SPHERE_LAND,
+        spin_deg_per_s=SPHERE_SPIN_DEG_S,
+    )
+    draw = ImageDraw.Draw(img)
+    ring = [
+        orbit_point(SPHERE_CENTRE, ORBIT_RADIUS, angle, ORBIT_TILT) for angle in range(0, 361, 6)
+    ]
+    draw.line(ring, fill=BG_SURFACE, width=2, joint="curve")
+    for offset, colour in ((0.0, highlight), (180.0, blue)):
+        angle = SATELLITE_SPEED_DEG_S * t + offset
+        x, y = orbit_point(SPHERE_CENTRE, ORBIT_RADIUS, angle, ORBIT_TILT)
+        r = SATELLITE_RADIUS
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=colour)
+
+
 def draw_beat(
     img: Image.Image,
     plan: BeatPlan,
@@ -252,13 +376,27 @@ def draw_beat(
     pal = PALETTE
     ImageDraw.Draw(img).rectangle((0, 0, FRAME_W - 1, FRAME_H - 1), fill=pal.void)
     ImageDraw.Draw(img).line([(0, FLOOR_Y), (FRAME_W, FLOOR_Y)], fill=pal.floor, width=2)
+    _draw_parallax(img, t)
 
     for prop in plan.props:
-        draw_prop(img, prop.name, (prop.x, prop.y), scale=prop.scale, t=t, **prop.params)
+        draw_prop(
+            img,
+            prop.name,
+            (prop.x, prop.y),
+            scale=prop.scale,
+            t=t,
+            entrance_start=_entrance_start(prop.name, words, start),
+            entrance=PROP_ENTRANCE_KIND.get(prop.name, "pop"),
+            wiggle=PROP_WIGGLE.get(prop.name, 0.0),
+            **prop.params,
+        )
+
+    if _is_space_topic(section_text):
+        _draw_space(img, t, pal.blue, pal.highlight)
 
     draw_rig(
         img,
-        plan.pose,
+        _rig_pose(plan, start, t),
         RIG_ORIGIN,
         RIG_SCALE,
         expression=plan.expression,

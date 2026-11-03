@@ -90,3 +90,61 @@ def test_animation_time_changes_glowing_props() -> None:
     draw_prop(a, "shadow_demon", (100, 100), t=0.0)
     draw_prop(b, "shadow_demon", (100, 100), t=0.25)
     assert a.tobytes() != b.tobytes()
+
+
+def test_entrance_in_future_draws_nothing() -> None:
+    img = _canvas()
+    before = img.tobytes()
+    draw_prop(img, "bed", (200, 150), entrance_start=5.0, t=1.0)
+    assert img.tobytes() == before
+
+
+def test_entrance_settled_matches_plain_draw() -> None:
+    plain = _canvas()
+    entered = _canvas()
+    draw_prop(plain, "bed", (200, 150), t=0.5)
+    draw_prop(entered, "bed", (200, 150), entrance_start=0.0, t=0.5)
+    assert plain.tobytes() == entered.tobytes()
+
+
+def test_entrance_mid_pop_is_partial() -> None:
+    full = _canvas()
+    mid = _canvas()
+    draw_prop(full, "bed", (200, 150), t=0.5)
+    draw_prop(mid, "bed", (200, 150), entrance_start=0.0, t=0.1)
+    assert mid.tobytes() != full.tobytes()
+    assert ImageChops.difference(mid.convert("RGB"), _canvas()).getbbox() is not None
+
+
+def test_drop_differs_from_pop_mid_way() -> None:
+    pop = _canvas()
+    drop = _canvas()
+    draw_prop(pop, "bed", (200, 150), entrance_start=0.0, t=0.1)
+    draw_prop(drop, "bed", (200, 150), entrance_start=0.0, t=0.1, entrance="drop")
+    assert pop.tobytes() != drop.tobytes()
+
+
+def test_drop_settles_to_plain_draw() -> None:
+    plain = _canvas()
+    dropped = _canvas()
+    draw_prop(plain, "bed", (200, 150))
+    draw_prop(dropped, "bed", (200, 150), entrance_start=0.0, t=0.5, entrance="drop")
+    assert plain.tobytes() == dropped.tobytes()
+
+
+def test_unknown_entrance_raises_value_error() -> None:
+    with pytest.raises(ValueError):
+        draw_prop(_canvas(), "bed", (0, 0), entrance_start=0.0, entrance="fly")
+
+
+def test_negative_wiggle_raises_value_error() -> None:
+    with pytest.raises(ValueError):
+        draw_prop(_canvas(), "bed", (0, 0), wiggle=-1.0)
+
+
+def test_wiggle_changes_pixels_between_times() -> None:
+    a = _canvas()
+    b = _canvas()
+    draw_prop(a, "bed", (200, 150), wiggle=5.0, t=0.0)
+    draw_prop(b, "bed", (200, 150), wiggle=5.0, t=0.25)
+    assert a.tobytes() != b.tobytes()

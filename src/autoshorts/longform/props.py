@@ -179,6 +179,54 @@ def _pulse(t: float) -> float:
     return 0.8 + 0.2 * math.sin(2 * math.pi * t)
 
 
+_ENTRANCE_S = 0.35
+_ENTRANCES = ("pop", "drop")
+_DROP_HEIGHT = 120.0
+_WIGGLE_PERIOD_S = 2.2
+_MIN_ENTRANCE_SCALE = 0.01
+
+
+def _ease_out_back(x: float) -> float:
+    """Ease-out with a small overshoot (peaks near 1.10) for x in [0, 1]."""
+    c1 = 1.70158
+    c3 = c1 + 1.0
+    return 1.0 + c3 * (x - 1.0) ** 3 + c1 * (x - 1.0) ** 2
+
+
+def _drop_offset(p: float) -> float:
+    """Vertical offset in px for a drop entrance at progress ``p`` in [0, 1].
+
+    Falls from ``-_DROP_HEIGHT`` to 0, bounces once (20 px) and settles at 0.
+    """
+    if p < 0.6:
+        return -_DROP_HEIGHT * (1.0 - (p / 0.6) ** 2)
+    if p < 0.8:
+        return -20.0 * math.sin(math.pi * (p - 0.6) / 0.2)
+    return 0.0
+
+
+def _scale_about(layer: Image.Image, origin: tuple[float, float], k: float) -> Image.Image:
+    """Scale the drawn content of ``layer`` by ``k`` about ``origin``."""
+    bbox = layer.getbbox()
+    if bbox is None:
+        return layer
+    x0, y0, x1, y1 = bbox
+    width = max(1, round((x1 - x0) * k))
+    height = max(1, round((y1 - y0) * k))
+    piece = layer.crop(bbox).resize((width, height), Image.Resampling.BICUBIC)
+    px = round(origin[0] + (x0 - origin[0]) * k)
+    py = round(origin[1] + (y0 - origin[1]) * k)
+    out = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    out.paste(piece, (px, py))
+    return out
+
+
+def _shift(layer: Image.Image, dy: float) -> Image.Image:
+    out = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    out.paste(layer, (0, round(dy)))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Props. Each drawer receives the canvas, animation time and extra params.
 # ---------------------------------------------------------------------------
@@ -521,21 +569,63 @@ def draw_prop(
     origin: tuple[float, float],
     scale: float = 1.0,
     t: float = 0.0,
+    *,
+    entrance_start: float | None = None,
+    entrance: str = "pop",
+    wiggle: float = 0.0,
     **params: Any,
 ) -> None:
     """Composite the named prop onto ``img`` in place.
 
-    Raises ValueError for an unknown ``name`` or a non-positive ``scale``.
+    ``entrance_start`` (same timeline as ``t``) makes the prop appear at that time:
+    nothing is drawn before it; over 0.35 s it either pops in (``entrance="pop"``,
+    scale 0 to 1 with ease-out-back overshoot) or drops 120 px with one bounce
+    (``entrance="drop"``). ``wiggle`` (degrees) adds a sin rotation wobble with a
+    2.2 s period about ``origin``, starting once the entrance has finished.
+
+    Raises ValueError for an unknown ``name``, a non-positive ``scale``, an unknown
+    ``entrance`` or a negative ``wiggle``.
     """
     drawer = _DRAWERS.get(name)
     if drawer is None:
         raise ValueError(f"unknown prop {name!r}; expected one of {PROP_NAMES}")
     if not scale > 0:
         raise ValueError(f"scale must be positive, got {scale!r}")
+    if entrance not in _ENTRANCES:
+        raise ValueError(f"entrance must be one of {_ENTRANCES}, got {entrance!r}")
+    if wiggle < 0:
+        raise ValueError(f"wiggle must be non-negative, got {wiggle!r}")
+
+    anim_t = float(t)
+    ox, oy = float(origin[0]), float(origin[1])
+    k = 1.0
+    dy = 0.0
+    elapsed: float | None = None
+    if entrance_start is not None:
+        elapsed = anim_t - float(entrance_start)
+        if elapsed < 0:
+            return
+        progress = min(1.0, elapsed / _ENTRANCE_S)
+        if entrance == "pop":
+            k = max(_MIN_ENTRANCE_SCALE, _ease_out_back(progress))
+        else:
+            dy = _drop_offset(progress)
+
+    angle = 0.0
+    settled = elapsed is None or elapsed >= _ENTRANCE_S
+    if wiggle > 0 and settled:
+        angle = wiggle * math.sin(2 * math.pi * anim_t / _WIGGLE_PERIOD_S)
 
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    cv = _Canvas(layer, (float(origin[0]), float(origin[1])), float(scale))
-    drawer(cv, float(t), params)
+    cv = _Canvas(layer, (ox, oy), float(scale))
+    drawer(cv, anim_t, params)
+
+    if k != 1.0:
+        layer = _scale_about(layer, (ox, oy), k)
+    if dy != 0.0:
+        layer = _shift(layer, dy)
+    if angle != 0.0:
+        layer = layer.rotate(angle, resample=Image.Resampling.BICUBIC, center=(ox, oy))
 
     if img.mode == "RGBA":
         img.alpha_composite(layer)
