@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Idle life on the satori figure** (`longform/sprite_rig.py`): the eyes blink and the figure breathes, using the same `blink` and `breathe` motion as the procedural rig. The still pose at `t=0` is unchanged.
+- **Figure colours** (`remotion/scripts/build-assets.mjs`, `longform/beats.py`): peach skin, red shirt and sleeves, navy trousers and shoes, matching the reference image. Standing figures stand on a yellow base; seated and lying figures get none. Run `npm run build:assets` to regenerate the part PNGs.
 
 ## [1.5.0] - 2026-11-02
 

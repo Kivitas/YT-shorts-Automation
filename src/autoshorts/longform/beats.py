@@ -82,6 +82,28 @@ NARRATION_LINE_SPACING = 1.25  # draw_kinetic_line uses int(font_size * 1.25) pe
 INNER_VOICE_ANCHOR = (140, 420)
 NUMBER_ANCHOR = (1500, 520)
 
+# Yellow base under the standing figure, as in the reference image. Sizes are output pixels.
+# Poses whose feet are not on the floor line (seated, kneeling, crouching, lying) get no base.
+NO_BASE_POSES = frozenset(
+    {
+        "sleep_bed",
+        "lie_bed_prone",
+        "sit_chair",
+        "sit_desk_focus",
+        "sit_floor_cross",
+        "typing",
+        "reading",
+        "kneel",
+        "squat",
+        "lean_forward_table",
+    }
+)
+FIGURE_BASE_YELLOW = (245, 197, 24)
+FIGURE_BASE_EDGE = (120, 90, 10)
+FIGURE_BASE_RX_PX = 120.0
+FIGURE_BASE_RY_PX = 26.0
+FIGURE_BASE_DROP_PX = 10.0
+
 REST_POSE = "stand"
 POSE_TRANSITION_S = 0.4  # the figure eases from REST_POSE into the planned pose after a shot start
 HEAD_TURN_MAGNITUDE = 0.5
@@ -893,6 +915,27 @@ def _draw_prop(
     )
 
 
+def _draw_figure_base(
+    img: Image.Image,
+    plan: BeatPlan,
+    joints: dict[str, float],
+    origin: tuple[float, float],
+    scale: float,
+) -> None:
+    """Yellow disc the standing figure stands on, as in the reference. Seated and lying figures get none."""
+    if plan.pose in NO_BASE_POSES:
+        return
+    cx = origin[0]
+    cy = _feet_y(joints, origin[1], scale) + FIGURE_BASE_DROP_PX
+    rx, ry = FIGURE_BASE_RX_PX, FIGURE_BASE_RY_PX
+    ImageDraw.Draw(img).ellipse(
+        (cx - rx, cy - ry, cx + rx, cy + ry),
+        fill=FIGURE_BASE_YELLOW,
+        outline=FIGURE_BASE_EDGE,
+        width=4,
+    )
+
+
 def _draw_sprite(img: Image.Image, spec: SpriteSpec) -> None:
     """Paste a keyword sprite scaled to SPRITE_HEIGHT_PX tall; a missing sprite draws nothing."""
     native = sprite_size(spec.name)
@@ -1171,6 +1214,7 @@ def draw_beat(
         _draw_space(img, t, pal.blue, pal.highlight)
 
     joints, origin, sprite_scale, rig_scale = _figure_placement(plan, start, section_text, t)
+    _draw_figure_base(img, plan, joints, origin, sprite_scale)
     if not draw_sprite_rig(
         img,
         joints,
