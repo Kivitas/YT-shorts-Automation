@@ -10,8 +10,9 @@ Conventions:
 - Prop-specific options are keyword arguments: ``calendar(marks=int)``,
   ``speech_bubble(text=str)``, ``bar_chart(highlight=int | None)``.
 
-Only ``sun_glow``, ``shadow_demon``, ``alarm_clock_7seg`` and the mountain sky use
-gradients or blurred glows; everything else is flat fills with ink outlines.
+Only ``sun_glow``, ``shadow_demon``, ``alarm_clock_7seg``, the mountain sky, ``lamp``,
+``tv`` and ``sunrise`` use gradients or blurred glows; everything else is flat fills
+with ink outlines.
 """
 
 from __future__ import annotations
@@ -41,6 +42,12 @@ AMBER = _hex("D4A359")
 RED_GLOW = _hex("E62E2E")
 WHITE = (255, 255, 255, 255)
 INK = VOID
+GREEN = _hex("3FA772")
+DEEP_GREEN = _hex("24744F")
+PURPLE = _hex("8A5CC7")
+BLUE = _hex("3B6FD8")
+WOOD = _hex("9A6B3F")
+NIGHT = _hex("1B2445")
 
 _INK_UNITS = 2.0
 
@@ -518,6 +525,205 @@ def _draw_trophy(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
     cv.line([(54, 36), (64, 90)], CREAM, 6)
 
 
+def _leaf(
+    cv: _Canvas, base: tuple[float, float], tip: tuple[float, float], width: float, fill: Color
+) -> None:
+    """Lens-shaped leaf from ``base`` to ``tip``, ``width`` px across at its midpoint."""
+    bx, by = base
+    tx, ty = tip
+    mx, my = (bx + tx) / 2, (by + ty) / 2
+    length = math.hypot(tx - bx, ty - by) or 1.0
+    nx = -(ty - by) / length * width
+    ny = (tx - bx) / length * width
+    cv.poly([(bx, by), (mx + nx, my + ny), (tx, ty), (mx - nx, my - ny)], fill)
+
+
+def _semicircle(cx: float, cy: float, r: float, steps: int = 24) -> list[tuple[float, float]]:
+    """Upper half of a circle (y <= cy), from the right end round to the left end."""
+    return [
+        (cx + r * math.cos(math.pi * i / steps), cy - r * math.sin(math.pi * i / steps))
+        for i in range(steps + 1)
+    ]
+
+
+def _hand(cx: float, cy: float, length: float, degrees: float) -> tuple[float, float]:
+    """Clock-hand tip: 0 degrees is 12 o'clock, angles grow clockwise."""
+    rad = math.radians(degrees)
+    return (cx + length * math.sin(rad), cy - length * math.cos(rad))
+
+
+def _draw_plant(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    base = (70.0, 138.0)
+    tips = ((30.0, 62.0), (110.0, 62.0), (70.0, 30.0))
+    for tip in tips:
+        cv.line([base, tip], DEEP_GREEN, 3)
+    cv.poly([(28, 150), (112, 150), (98, 230), (42, 230)], CORAL)
+    cv.rect(20, 138, 120, 160, CORAL, radius=5)
+    widths = (18.0, 18.0, 20.0)
+    for index, tip in enumerate(tips):
+        _leaf(cv, base, tip, widths[index], GREEN)
+
+
+def _draw_lamp(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cone = [(14.0, 90.0), (106.0, 90.0), (170.0, 300.0), (-50.0, 300.0)]
+    cv.glow(
+        lambda d: d.polygon(cv.pts(cone), fill=255),
+        radius=10,
+        rgb=AMBER[:3],
+        strength=0.45 * _pulse(t),
+    )
+    cv.ellipse(20, 288, 100, 312, SLATE)
+    cv.rect(56, 88, 64, 290, MUTED_SLATE, outline=False)
+    cv.poly([(24, 40), (96, 40), (116, 90), (4, 90)], AMBER)
+
+
+def _draw_bookshelf(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.rect(0, 0, 220, 300, WOOD, radius=6)
+    cv.rect(12, 12, 208, 288, SLATE, radius=4, outline=False)
+    colours = (CORAL, TEAL, AMBER, GREEN, PURPLE, CREAM)
+    widths = (18, 14, 22, 16, 20, 12, 18, 24, 14, 16)
+    heights = (0.86, 0.7, 0.95, 0.78, 0.9)
+    rows = ((12.0, 98.0), (110.0, 196.0), (208.0, 288.0))
+    for row, (top, bottom) in enumerate(rows):
+        x = 20.0
+        i = 0
+        while True:
+            w = widths[(i + row) % len(widths)]
+            if x + w > 200:
+                break
+            h = (bottom - top) * heights[(i + row) % len(heights)]
+            colour = colours[(i + 2 * row) % len(colours)]
+            cv.rect(x, bottom - h, x + w, bottom, colour, radius=2)
+            x += w + 2
+            i += 1
+    for top in (98.0, 196.0):
+        cv.rect(0, top, 220, top + 12, WOOD)
+
+
+def _draw_poster(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.line([(85, -12), (85, 0)], MUTED_SLATE, 3)
+    cv.rect(0, 0, 170, 220, SLATE, radius=6)
+    cv.rect(14, 14, 156, 206, CREAM, outline=False)
+    cv.ellipse(42, 40, 118, 116, CORAL, outline=False)
+    cv.poly([(14, 206), (14, 160), (60, 128), (108, 166), (156, 128), (156, 206)], TEAL)
+
+
+def _draw_cup(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    steam = [(30 + 6 * math.sin(k * 0.9), 24 - k * 9) for k in range(7)]
+    cv.line(steam, CREAM, 3)
+    cv.arc(72, 60, 112, 120, -90, 90, INK, 14)
+    cv.arc(72, 60, 112, 120, -90, 90, CORAL, 6)
+    cv.rect(0, 40, 90, 160, CORAL, radius=10)
+    cv.ellipse(0, 30, 90, 50, SLATE)
+    cv.rect(-12, 156, 102, 168, SLATE, radius=6)
+
+
+def _draw_rug(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.ellipse(0, 40, 360, 160, TEAL)
+    cv.rect(40, 90, 320, 110, CREAM, outline=False)
+
+
+def _draw_computer(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.rect(0, 0, 220, 150, SLATE, radius=10)
+    cv.rect(14, 14, 206, 126, TEAL, radius=4)
+    for i, width in enumerate((110, 70, 90)):
+        y = 36 + i * 22
+        cv.rect(30, y, 30 + width, y + 8, CREAM, outline=False)
+    cv.rect(92, 150, 128, 180, MUTED_SLATE)
+    cv.rect(60, 176, 160, 190, SLATE, radius=6)
+    cv.rect(10, 210, 230, 250, MUTED_SLATE, radius=6)
+    for row in range(3):
+        for col in range(8):
+            x = 22 + col * 26
+            y = 216 + row * 11
+            cv.rect(x, y, x + 14, y + 6, CREAM, outline=False)
+
+
+def _draw_sofa(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.rect(30, 190, 44, 200, VOID, outline=False)
+    cv.rect(316, 190, 330, 200, VOID, outline=False)
+    cv.rect(20, 40, 340, 130, PURPLE, radius=18)
+    cv.rect(40, 120, 320, 170, PURPLE, radius=10)
+    cv.rect(0, 80, 50, 180, PURPLE, radius=14)
+    cv.rect(310, 80, 360, 180, PURPLE, radius=14)
+    cv.line([(120, 124), (120, 166)], INK, 2)
+    cv.line([(240, 124), (240, 166)], INK, 2)
+
+
+def _draw_tv(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.glow(
+        lambda d: d.rectangle(cv.box(10, 10, 290, 168), fill=255),
+        radius=14,
+        rgb=BLUE[:3],
+        strength=0.5 * _pulse(t),
+    )
+    cv.rect(0, 0, 300, 180, SLATE, radius=12)
+    cv.rect(16, 16, 284, 164, BLUE, radius=6)
+    cv.ellipse(190, 52, 240, 102, AMBER, outline=False)
+    cv.rect(36, 120, 140, 144, CREAM, radius=4, outline=False)
+    cv.rect(120, 180, 180, 196, MUTED_SLATE)
+    cv.rect(78, 196, 222, 210, SLATE, radius=6)
+
+
+def _draw_coffee_table(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.rect(14, 100, 30, 200, WOOD)
+    cv.rect(170, 100, 186, 200, WOOD)
+    cv.rect(24, 130, 176, 142, AMBER, radius=3)
+    cv.rect(0, 80, 200, 100, WOOD, radius=6)
+
+
+def _draw_trash_bin(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.poly([(60, 24), (76, 4), (92, 18), (108, 2), (120, 26)], CREAM)
+    cv.poly([(22, 44), (138, 44), (122, 200), (38, 200)], MUTED_SLATE)
+    for x in (62, 80, 98):
+        cv.line([(x, 66), (x + 4, 184)], SLATE, 4)
+    cv.rect(10, 30, 150, 50, SLATE, radius=6)
+
+
+def _draw_clock_wall(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cx = cy = 100.0
+    cv.ellipse(0, 0, 200, 200, SLATE)
+    cv.ellipse(14, 14, 186, 186, CREAM)
+    for i in range(12):
+        x0, y0 = _hand(cx, cy, 72, i * 30)
+        x1, y1 = _hand(cx, cy, 84, i * 30)
+        cv.line([(x0, y0), (x1, y1)], SLATE, 4)
+    cv.line([(cx, cy), _hand(cx, cy, 46, 300)], SLATE, 8)
+    cv.line([(cx, cy), _hand(cx, cy, 70, 60)], CORAL, 5)
+    cv.ellipse(cx - 7, cy - 7, cx + 7, cy + 7, CORAL, outline=False)
+
+
+def _draw_window_night(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.rect(0, 0, 220, 292, CREAM, radius=4)
+    cv.rect(14, 14, 206, 278, NIGHT)
+    cv.ellipse(60, 50, 120, 110, CREAM, outline=False)
+    cv.ellipse(82, 38, 134, 90, NIGHT, outline=False)
+    for x, y, r in ((164, 62, 8), (178, 116, 5), (40, 170, 6), (168, 186, 4), (134, 214, 5)):
+        cv.poly(_star(x, y, r, r * 0.42), CREAM, outline=False)
+    cv.rect(106, 14, 114, 278, CREAM, outline=False)
+    cv.rect(14, 140, 206, 148, CREAM, outline=False)
+    cv.rect(-12, 278, 232, 300, SLATE, radius=4)
+
+
+def _draw_sunrise(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    cv.rect(0, 0, 320, 170, SLATE, radius=14)
+    cv.glow(
+        lambda d: d.polygon(cv.pts(_semicircle(160, 170, 96)), fill=255),
+        radius=18,
+        rgb=AMBER[:3],
+        strength=0.5 * _pulse(t),
+    )
+    for deg in (20, 55, 90, 125, 160):
+        rad = math.radians(deg)
+        p0 = (160 + 84 * math.cos(rad), 170 - 84 * math.sin(rad))
+        p1 = (160 + 104 * math.cos(rad), 170 - 104 * math.sin(rad))
+        cv.line([p0, p1], AMBER, 5)
+    cv.poly(_semicircle(160, 170, 70), AMBER)
+    cv.rect(-10, 170, 330, 200, MUTED_SLATE)
+    cv.line([(130, 182), (190, 182)], AMBER, 3)
+    cv.line([(146, 194), (176, 194)], AMBER, 3)
+
+
 _DRAWERS: dict[str, Callable[[_Canvas, float, dict[str, Any]], None]] = {
     "bed": _draw_bed,
     "desk_monitor": _draw_desk_monitor,
@@ -538,6 +744,20 @@ _DRAWERS: dict[str, Callable[[_Canvas, float, dict[str, Any]], None]] = {
     "bar_chart": _draw_bar_chart,
     "shield": _draw_shield,
     "trophy": _draw_trophy,
+    "plant": _draw_plant,
+    "lamp": _draw_lamp,
+    "bookshelf": _draw_bookshelf,
+    "poster": _draw_poster,
+    "cup": _draw_cup,
+    "rug": _draw_rug,
+    "computer": _draw_computer,
+    "sofa": _draw_sofa,
+    "tv": _draw_tv,
+    "coffee_table": _draw_coffee_table,
+    "trash_bin": _draw_trash_bin,
+    "clock_wall": _draw_clock_wall,
+    "window_night": _draw_window_night,
+    "sunrise": _draw_sunrise,
 }
 
 PROP_NAMES: tuple[str, ...] = (
@@ -560,6 +780,20 @@ PROP_NAMES: tuple[str, ...] = (
     "bar_chart",
     "shield",
     "trophy",
+    "plant",
+    "lamp",
+    "bookshelf",
+    "poster",
+    "cup",
+    "rug",
+    "computer",
+    "sofa",
+    "tv",
+    "coffee_table",
+    "trash_bin",
+    "clock_wall",
+    "window_night",
+    "sunrise",
 )
 
 

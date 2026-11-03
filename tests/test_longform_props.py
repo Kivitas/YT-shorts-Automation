@@ -33,9 +33,26 @@ def test_every_prop_draws(name: str, scale: float, mode: str) -> None:
 
 def test_prop_names_are_unique_and_complete() -> None:
     assert isinstance(PROP_NAMES, tuple)
-    assert len(PROP_NAMES) == len(set(PROP_NAMES)) == 19
+    assert len(PROP_NAMES) == len(set(PROP_NAMES)) == 33
     assert "alarm_clock_7seg" in PROP_NAMES
     assert "shadow_demon" in PROP_NAMES
+    for name in (
+        "plant",
+        "lamp",
+        "bookshelf",
+        "poster",
+        "cup",
+        "rug",
+        "computer",
+        "sofa",
+        "tv",
+        "coffee_table",
+        "trash_bin",
+        "clock_wall",
+        "window_night",
+        "sunrise",
+    ):
+        assert name in PROP_NAMES
 
 
 def test_unknown_name_raises_value_error() -> None:

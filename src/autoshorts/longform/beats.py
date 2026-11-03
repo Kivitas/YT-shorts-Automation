@@ -1,11 +1,11 @@
 """Per-section visual beats for long-form explainer videos.
 
 ``plan_beat`` turns one narration section into a :class:`BeatPlan` (figure pose,
-gesture, expression, props, light sources, inner voice and number pops). The rules are
-plain keyword matches on the lower-cased narration, so the same inputs always give
-the same plan. ``draw_beat`` renders that plan for one shot time ``t`` onto a
-1920x1080 RGB frame. The backdrop (sky, silhouettes, dust and vignette) comes from
-:func:`autoshorts.longform.background.draw_background`.
+gesture, expression, props, backdrop theme, light sources, inner voice and number
+pops). The rules are plain keyword matches on the lower-cased narration, so the same
+inputs always give the same plan. ``draw_beat`` renders that plan for one shot time
+``t`` onto a 1920x1080 RGB frame. The backdrop comes from
+:func:`autoshorts.longform.background.draw_themed_background` with the plan's theme.
 
 The ``heading`` and ``speaker`` arguments are accepted so callers can pass the full
 section context, but the current rules only read the narration.
@@ -32,7 +32,7 @@ from autoshorts.core.theme import (
     TEXT_MUTED,
     YELLOW_SOFT,
 )
-from autoshorts.longform.background import draw_background
+from autoshorts.longform.background import draw_themed_background
 from autoshorts.longform.kinetic_text import draw_inner_voice, draw_kinetic_line, draw_number_pop
 from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
@@ -66,10 +66,11 @@ BED_SCALE = 1.4
 LYING_HIP = (374, 570)
 LYING_POSES = frozenset({"sleep_bed", "lie_bed_prone"})
 # Poses that keep the figure's own side: a mirrored figure would leave the pillow or the desk.
-NO_MIRROR_POSES = LYING_POSES | {"sit_desk_focus"}
+NO_MIRROR_POSES = LYING_POSES | {"sit_desk_focus", "typing", "reading"}
 # Poses whose body stands, so a narration gesture may replace the hand pose.
 GESTURE_POSES = frozenset({"stand", "lean_wall", "look_left", "look_right"})
 # Desk monitor, placed relative to the seated figure's near hand (figure origin + hand offset).
+DESK_POSE = "typing"
 DESK_MONITOR_SCALE = 0.6
 DESK_MONITOR_OFFSET = (10, -100)  # top-left corner, measured from the hand
 
@@ -84,6 +85,17 @@ SATELLITE_SPEED_DEG_S = 45.0
 SATELLITE_RADIUS = 9
 
 PARALLAX_CAMERA_SPEED = 40.0  # px per second of camera pan, passed to the backdrop
+NIGHT_THEME = "navy_night"  # the default backdrop, which keeps the navy gradient sprite
+# Backdrops used when no keyword picks one; consecutive sections never share a theme.
+THEME_CYCLE: tuple[str, ...] = (
+    "forest_dawn",
+    "office_warm",
+    "lab_teal",
+    "city_neon",
+    "candy",
+    "sunset",
+    NIGHT_THEME,
+)
 
 BACKDROP_SPRITE = "navy_gradient"
 # Props with a PNG sprite; the sprite is used once the prop has entered, else draw_prop runs.
@@ -94,11 +106,28 @@ PROP_SPRITES: dict[str, str] = {
     "mountain": "mountain",
     "heavy_bag": "heavy_bag",
 }
+# Fixed top-left positions (scale 1.0) for the props added by keyword. Each one sits on
+# FLOOR_Y, on the coffee table top, or on a wall, and stays inside the frame.
+PROP_XY: dict[str, tuple[int, int]] = {
+    "lamp": (1600, 436),
+    "bookshelf": (80, 459),
+    "plant": (1780, 529),
+    "tv": (1400, 549),
+    "sofa": (1380, 559),
+    "trash_bin": (300, 559),
+    "clock_wall": (1560, 140),
+    "sunrise": (1480, 340),
+    "window_night": (1500, 160),
+    "coffee_table": (1420, 559),
+    "cup": (1500, 470),  # bottom edge rests on the coffee table top at y 639
+    "computer": (1440, 509),
+}
+MAX_PROPS = 4  # keeps each frame readable; earlier rules win when the cap cuts props
 FIGURE_SPRITE_SCALE = (
     0.65  # satori canvas px -> output px: hip to ankle matches rig leg length (162 px)
 )
-# Seated figure's near hand, relative to RIG_ORIGIN, from the sit_desk_focus pose.
-_HAND_OFFSET = wrist_offset(POSES["sit_desk_focus"], FIGURE_SPRITE_SCALE, "l")
+# Seated figure's near hand, relative to RIG_ORIGIN, from the DESK_POSE pose.
+_HAND_OFFSET = wrist_offset(POSES[DESK_POSE], FIGURE_SPRITE_SCALE, "l")
 
 GESTURE_POINT_WORDS = frozenset({"look", "see", "watch", "first", "start"})
 GESTURE_OPEN_WORDS = frozenset({"you", "your"})
@@ -162,10 +191,35 @@ SHADOW_WORDS = frozenset({"shadow", "excuse", "demon", "tomorrow", "later"})
 SLEEP_WORDS = frozenset({"bed", "sleep", "night", "tired"})
 PRONE_WORDS = frozenset({"stomach", "prone", "face"})
 CHAIR_WORDS = frozenset({"chair", "sit"})
-WIN_WORDS = frozenset({"better", "new", "win", "won", "success"})
+WIN_WORDS = frozenset({"better", "new", "win", "won", "success", "celebrate"})
 START_WORDS = frozenset({"start", "begin"})
 CALENDAR_WORDS = frozenset({"every", "day", "daily"})
 DAY_WORDS = frozenset({"day", "daily"})
+# Extra props and poses, each from the narration keywords named in the section rules.
+LAMP_WORDS = frozenset({"bed", "sleep"})
+STUDY_WORDS = frozenset({"study", "book", "read", "reading"})
+PLANT_WORDS = frozenset({"plant", "nature", "grow", "garden"})
+TV_WORDS = frozenset({"tv", "watch", "show"})
+SOFA_WORDS = frozenset({"sofa", "couch", "relax"})
+TRASH_WORDS = frozenset({"trash", "delete", "throw"})
+CLOCK_WORDS = frozenset({"clock", "time", "late"})
+MORNING_SUN_WORDS = frozenset({"sun", "morning", "dawn", "rise"})
+NIGHT_WORDS = frozenset({"night", "midnight", "dark"})
+COMPUTER_WORDS = frozenset({"email", "typing", "office", "meeting"})
+TABLE_WORDS = frozenset({"desk", "work"})
+TYPING_WORDS = frozenset({"typing", "desk", "work", "focus", "office", "email", "meeting"})
+READING_WORDS = frozenset({"reading", "read", "study", "book", "research"})
+ANGER_WORDS = frozenset({"anger", "angry", "unfair", "mad", "furious"})
+FAIL_WORDS = frozenset({"fail", "failed", "failing", "never"})
+SURPRISE_WORDS = frozenset({"surprise", "surprised", "wait", "what", "suddenly"})
+
+# Backdrop keyword sets, checked in this order; the first set that matches wins.
+NIGHT_THEME_WORDS = frozenset({"night", "sleep", "bed", "dark", "shadow", "midnight"})
+MORNING_THEME_WORDS = frozenset({"morning", "sun", "wake", "dawn", "rise"})
+OFFICE_THEME_WORDS = frozenset({"work", "desk", "office", "email", "meeting", "typing"})
+LAB_THEME_WORDS = frozenset({"study", "lab", "science", "data", "research"})
+CITY_THEME_WORDS = frozenset({"city", "phone", "scroll", "neon", "online"})
+CANDY_THEME_WORDS = frozenset({"fun", "happy", "win", "celebrate"})
 
 # Props enter when the word that names them is first spoken in the section; the others
 # enter at the shot start. Bags and mountains drop in, the rest pop. Alarm and phone wiggle.
@@ -232,6 +286,7 @@ class BeatPlan:
     mood: RGB | None = None
     light_sources: list[LightSource] = field(default_factory=list)
     gesture: str | None = None  # when set, this rig pose replaces ``pose`` on screen
+    theme: str = NIGHT_THEME  # backdrop theme name for draw_themed_background
 
 
 def _choose_gesture(words: set[str], lowered: str) -> str | None:
@@ -243,6 +298,61 @@ def _choose_gesture(words: set[str], lowered: str) -> str | None:
     if words & GESTURE_SHRUG_WORDS or any(phrase in lowered for phrase in GESTURE_SHRUG_PHRASES):
         return "gesture_shrug"
     return None
+
+
+def _choose_theme(words: set[str], section_index: int) -> str:
+    """Pick the backdrop from keywords; unmatched sections cycle through THEME_CYCLE."""
+    if words & NIGHT_THEME_WORDS:
+        return NIGHT_THEME
+    if words & MORNING_THEME_WORDS:
+        return "forest_dawn" if section_index % 2 == 0 else "sunset"
+    if words & OFFICE_THEME_WORDS:
+        return "office_warm"
+    if words & LAB_THEME_WORDS:
+        return "lab_teal"
+    if words & CITY_THEME_WORDS:
+        return "city_neon"
+    if words & CANDY_THEME_WORDS:
+        return "candy"
+    return THEME_CYCLE[section_index % len(THEME_CYCLE)]
+
+
+def _has_prop(props: Sequence[PropSpec], name: str) -> bool:
+    return any(prop.name == name for prop in props)
+
+
+def _add_prop(props: list[PropSpec], name: str) -> None:
+    """Add the prop at its fixed position unless the section already has it."""
+    if not _has_prop(props, name):
+        x, y = PROP_XY[name]
+        props.append(PropSpec(name, x, y, 1.0, {}))
+
+
+def _choose_mood(words: set[str]) -> tuple[str | None, str | None]:
+    """Body pose and expression from the narration, first matching rule wins."""
+    if words & SLEEP_WORDS:
+        return ("lie_bed_prone" if words & PRONE_WORDS else "sleep_bed"), "tired"
+    if words & PHONE_WORDS:
+        return "phone_hold", "tired"
+    if words & TYPING_WORDS:
+        return "typing", "focus"
+    if words & READING_WORDS:
+        return "reading", "focus"
+    if words & ANGER_WORDS:
+        return "hug_self", "angry"
+    if words & FAIL_WORDS:
+        return "facepalm", "worried"
+    if words & NEGATIVE_WORDS:
+        return "slump", "sad"
+    if words & SURPRISE_WORDS:
+        return "point_side", "surprised"
+    if words & WIN_WORDS:
+        return "thumbs_up", "excited"
+    if words & START_WORDS:
+        return "fist_up", "excited"
+    if words & CHAIR_WORDS:
+        return "sit_chair", None
+    return None, None
 
 
 def plan_beat(
@@ -294,28 +404,38 @@ def plan_beat(
         marks = sum(1 for token in tokens if token in DAY_WORDS)
         props.append(PropSpec("calendar", 1380, 300, 1.0, {"marks": marks}))
 
+    # Scene props added by keyword. Each name is added at most once.
+    if words & LAMP_WORDS:
+        _add_prop(props, "lamp")
+    if words & STUDY_WORDS:
+        _add_prop(props, "bookshelf")
+        _add_prop(props, "lamp")
+    if words & PLANT_WORDS:
+        _add_prop(props, "plant")
+    if words & TV_WORDS:
+        _add_prop(props, "tv")
+    if words & SOFA_WORDS and not _has_prop(props, "couch"):
+        _add_prop(props, "sofa")
+    if words & TRASH_WORDS:
+        _add_prop(props, "trash_bin")
+    if words & CLOCK_WORDS and not _has_prop(props, "alarm_clock_7seg"):
+        _add_prop(props, "clock_wall")
+    if words & MORNING_SUN_WORDS:
+        _add_prop(props, "sunrise")
+    elif words & NIGHT_WORDS:
+        _add_prop(props, "window_night")
+    if words & COMPUTER_WORDS:
+        _add_prop(props, "computer")
+    elif words & TABLE_WORDS:
+        _add_prop(props, "coffee_table")
+        _add_prop(props, "cup")
+
     if not props:
         props.append(PropSpec("window", 80, 340, 1.0, {}))
 
     # Body position and expression from the narration, first match wins. The props above
     # (couch, bag, mountain) keep their own pose.
-    mood_pose: str | None = None
-    mood_expression: str | None = None
-    if words & SLEEP_WORDS:
-        mood_pose = "lie_bed_prone" if words & PRONE_WORDS else "sleep_bed"
-        mood_expression = "tired"
-    elif words & PHONE_WORDS:
-        mood_pose, mood_expression = "phone_hold", "tired"
-    elif words & DESK_WORDS:
-        mood_pose, mood_expression = "sit_desk_focus", "focus"
-    elif words & NEGATIVE_WORDS:
-        mood_pose, mood_expression = "slump", "worried"
-    elif words & WIN_WORDS:
-        mood_pose, mood_expression = "fist_up", "happy"
-    elif words & START_WORDS:
-        mood_pose, mood_expression = "stand", "determined"
-    elif words & CHAIR_WORDS:
-        mood_pose = "sit_chair"
+    mood_pose, mood_expression = _choose_mood(words)
 
     if pose is None:
         pose = mood_pose
@@ -327,8 +447,10 @@ def plan_beat(
         pose = POSE_CYCLE[section_index % len(POSE_CYCLE)]
 
     # A lying figure always has a bed under it, even when the narration never names one.
-    if pose in LYING_POSES and not any(prop.name == "bed" for prop in props):
+    if pose in LYING_POSES and not _has_prop(props, "bed"):
         props.insert(0, PropSpec("bed", *BED_XY, BED_SCALE, {}))
+
+    del props[MAX_PROPS:]
 
     if mood_expression is not None:
         expression = mood_expression
@@ -349,6 +471,7 @@ def plan_beat(
         mood=mood,
         light_sources=light_sources,
         gesture=_choose_gesture(words, lowered) if pose in GESTURE_POSES else None,
+        theme=_choose_theme(words, section_index),
     )
 
 
@@ -521,9 +644,12 @@ def draw_beat(
         )
 
     pal = PALETTE
-    # The backdrop sprite replaces the procedural backdrop, parallax and dust included.
-    if not paste_sprite(img, BACKDROP_SPRITE, (FRAME_W / 2, FRAME_H / 2)):
-        draw_background(img, t, camera_x=PARALLAX_CAMERA_SPEED * t)
+    # The navy default keeps its backdrop sprite, parallax and dust included. Other themes
+    # are painted procedurally.
+    if plan.theme != NIGHT_THEME or not paste_sprite(
+        img, BACKDROP_SPRITE, (FRAME_W / 2, FRAME_H / 2)
+    ):
+        draw_themed_background(img, plan.theme, t, camera_x=PARALLAX_CAMERA_SPEED * t)
     ImageDraw.Draw(img).line([(0, FLOOR_Y), (FRAME_W, FLOOR_Y)], fill=pal.floor, width=2)
 
     for prop in plan.props:
@@ -573,6 +699,7 @@ __all__ = [
     "BeatPalette",
     "BeatPlan",
     "LightSource",
+    "MAX_PROPS",
     "PALETTE",
     "PropSpec",
     "beat_palette",

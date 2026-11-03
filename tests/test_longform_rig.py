@@ -135,6 +135,47 @@ def test_gesture_and_look_poses_are_registered_and_draw() -> None:
         assert img.tobytes() != _canvas().tobytes(), f"pose {name!r} drew nothing"
 
 
+NEW_BODY_POSES = {
+    "stretch_wake", "typing", "reading", "thumbs_up", "facepalm", "dance_side",
+    "run", "hug_self", "point_side", "hands_head", "cook_stir",
+}  # fmt: skip
+NEW_FACE_EXPRESSIONS = {
+    "sad", "surprised", "angry", "sleepy", "excited", "smug", "confused", "nervous",
+}  # fmt: skip
+
+
+def _drawn(pose: str, expression: str = "neutral") -> bytes:
+    img = _canvas()
+    draw_rig(img, pose, ORIGIN, SCALE, expression=expression, headband=True)
+    return img.tobytes()
+
+
+def test_new_body_poses_are_registered_and_differ_from_stand() -> None:
+    assert NEW_BODY_POSES <= set(POSES)
+    stand = _drawn("stand")
+    for name in NEW_BODY_POSES:
+        assert _drawn(name) != stand, f"pose {name!r} matches stand"
+
+
+def test_new_body_poses_sample_are_distinct() -> None:
+    sample = ["typing", "run", "hands_head"]
+    images = {name: _drawn(name) for name in sample}
+    assert len(set(images.values())) == len(sample)
+
+
+def test_new_face_expressions_are_registered_and_differ_from_neutral() -> None:
+    assert NEW_FACE_EXPRESSIONS <= set(EXPRESSIONS)
+    neutral = _drawn("stand", "neutral")
+    for name in NEW_FACE_EXPRESSIONS:
+        assert _drawn("stand", name) != neutral, f"expression {name!r} matches neutral"
+
+
+def test_new_face_expressions_sample_are_distinct() -> None:
+    sample = ["surprised", "angry", "nervous"]
+    images = {name: _drawn("stand", name) for name in sample}
+    assert len(set(images.values())) == len(sample)
+
+
 def test_look_poses_shift_the_head_not_the_body() -> None:
     stand = _canvas()
     draw_rig(stand, "stand", ORIGIN, SCALE)

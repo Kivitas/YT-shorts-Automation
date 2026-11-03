@@ -40,6 +40,7 @@ SHOE_SHADE = (34, 26, 38)
 SHADOW = (0, 0, 0, 70)
 INK = (16, 16, 22)
 HEADBAND = (230, 57, 70)
+SWEAT = (138, 200, 240)
 
 # Segment lengths and widths in body units; the renderer multiplies them by scale.
 TORSO_LEN = 90.0
@@ -358,6 +359,121 @@ POSES: dict[str, dict[str, float]] = {
         "r_upper": 55,
         "r_lower": 115,
     },
+    # Arms up with the torso arched back and the head tipped back.
+    "stretch_wake": {
+        "torso": -6,
+        "head": -14,
+        "l_upper": -165,
+        "l_lower": -178,
+        "r_upper": 165,
+        "r_lower": 178,
+    },
+    # Seated at a keyboard: forearms reach forward and level, hands on the keys.
+    "typing": {
+        "torso": 12,
+        "head": 10,
+        "l_upper": 40,
+        "l_lower": 90,
+        "r_upper": 35,
+        "r_lower": 90,
+        "l_thigh": 90,
+        "l_shin": 0,
+        "r_thigh": 90,
+        "r_shin": 0,
+        "drop": 50,
+    },
+    # Seated, head tilted down over a page; the near hand holds the page up at chest height.
+    "reading": {
+        "torso": 6,
+        "head": 22,
+        "l_upper": -15,
+        "l_lower": -20,
+        "r_upper": 35,
+        "r_lower": 160,
+        "l_thigh": 90,
+        "l_shin": 0,
+        "r_thigh": 90,
+        "r_shin": 0,
+        "drop": 50,
+    },
+    # Standing, near fist raised at a diagonal, the other arm hanging.
+    "thumbs_up": {
+        "torso": 2,
+        "head": 6,
+        "r_upper": 135,
+        "r_lower": 172,
+        "l_upper": -10,
+        "l_lower": -14,
+    },
+    # Standing, the near hand palm-first against the forehead, elbow out.
+    "facepalm": {
+        "torso": -2,
+        "head": -6,
+        "r_upper": 115,
+        "r_lower": -130,
+        "l_upper": -12,
+        "l_lower": -16,
+    },
+    # Legs apart with the far leg kicked out to screen right, arms flung wide.
+    "dance_side": {
+        "torso": 6,
+        "head": -6,
+        "l_upper": -100,
+        "l_lower": -120,
+        "r_upper": 100,
+        "r_lower": 120,
+        "l_thigh": -8,
+        "l_shin": -6,
+        "r_thigh": 40,
+        "r_shin": 40,
+    },
+    # Mid-stride: the front knee lifts forward, the back leg kicks behind, arms swing opposite.
+    "run": {
+        "torso": 8,
+        "head": 4,
+        "l_upper": 50,
+        "l_lower": 90,
+        "r_upper": -50,
+        "r_lower": -80,
+        "l_thigh": 60,
+        "l_shin": 20,
+        "r_thigh": -30,
+        "r_shin": -100,
+    },
+    # Arms crossed over the chest, each forearm tucked to the opposite side.
+    "hug_self": {
+        "torso": 4,
+        "head": 4,
+        "l_upper": 30,
+        "l_lower": 100,
+        "r_upper": -30,
+        "r_lower": -100,
+    },
+    # Standing, the near arm straight out to screen right at shoulder height.
+    "point_side": {
+        "torso": 0,
+        "head": -4,
+        "r_upper": 90,
+        "r_lower": 90,
+    },
+    # Both hands clasped loosely behind the head, elbows out.
+    "hands_head": {
+        "torso": -2,
+        "head": -2,
+        "l_upper": -150,
+        "l_lower": 117,
+        "r_upper": 150,
+        "r_lower": -117,
+    },
+    # Standing, the near arm bent with the forearm forward at chest height, as if stirring.
+    "cook_stir": {
+        "torso": 3,
+        "head": 6,
+        "r_upper": 35,
+        "r_lower": 100,
+        "l_upper": -14,
+        "l_lower": -18,
+    },
 }
 
 # Look poses keep the stand body. ``head_turn`` is a pose-level key: it shifts the head
@@ -369,9 +485,12 @@ POSES["look_right"] = {**POSES["stand"], "head_turn": 1.0}
 # (angry), negative = inner end up (worried). curve: mouth, -1 frown to +1 smile.
 # open: mouth oval height, 0 closed. squint: 1 turns the eyes into happy arcs.
 # look: pupil shift, -1 left to +1 right. blush, bags, teeth, vein, glow, smirk: 0/1.
+# brow_skew: degrees added to the left brow and taken from the right (uneven brows).
+# wide: 0 to 1 enlarges the eyes. wave: 0 to 1 wavy mouth. sweat: 0/1 sweat drop.
 _EXPR_DEFAULTS: dict[str, float] = {
     "lid": 0.0, "brow": 0.0, "curve": 0.0, "bags": 0, "teeth": 0, "vein": 0,
     "glow": 0, "smirk": 0, "open": 0, "blush": 0, "squint": 0, "look": 0.0,
+    "brow_skew": 0.0, "wide": 0, "wave": 0, "sweat": 0,
 }  # fmt: skip
 
 
@@ -392,6 +511,14 @@ EXPRESSIONS: dict[str, dict[str, float]] = {
     "worried": _expr(brow=-22.0, curve=-0.5, open=0.5, look=-0.4),
     "determined": _expr(lid=0.12, brow=22.0, curve=0.0, look=0.25),
     "tired_smile": _expr(lid=0.5, brow=-4.0, curve=0.5, bags=1, blush=1),
+    "sad": _expr(lid=0.3, brow=-18.0, curve=-0.9, look=-0.3),
+    "surprised": _expr(brow=-20.0, open=1.0, wide=1),
+    "angry": _expr(lid=0.05, brow=32.0, curve=-0.7, vein=1),
+    "sleepy": _expr(lid=0.7, brow=-2.0, open=0.7, look=-0.1),
+    "excited": _expr(brow=-10.0, curve=1.0, open=1.0, blush=1, wide=1),
+    "smug": _expr(lid=0.2, brow=-8.0, brow_skew=-8.0, smirk=1, look=0.4),
+    "confused": _expr(brow_skew=10.0, wave=1, look=0.2),
+    "nervous": _expr(lid=0.1, brow=-10.0, curve=-0.2, open=0.3, look=-0.3, sweat=1),
 }
 
 _HALO_ALPHA = (HEADBAND[0], HEADBAND[1], HEADBAND[2], 80)
@@ -719,12 +846,13 @@ def _draw_face(
             soft.append((c, 0.34 * R, 0.34 * R, _HALO_ALPHA))
     _overlay_discs(layer, soft)
 
+    grow = 1.0 + 0.2 * float(expr["wide"])
     for ue in (-0.36, 0.36):
         if squint:
             arc = [hp(ue - 0.17, -0.02), hp(ue, -0.2), hp(ue + 0.17, -0.02)]
             draw.line(arc, fill=INK, width=lw, joint="curve")
         else:
-            ring = _ell_pts(hp, ue, -0.08, 0.2, 0.24)
+            ring = _ell_pts(hp, ue, -0.08, 0.2 * grow, 0.24 * grow)
             draw.polygon(ring, fill=EYE_WHITE)
             pupil = hp(ue + look, -0.06)
             if glow:
@@ -734,7 +862,7 @@ def _draw_face(
                 _disc(draw, hp(ue + look - 0.05, -0.13), 0.035 * R, EYE_WHITE)
             draw.line(ring + [ring[0]], fill=INK, width=lw, joint="curve")
             if lid > 0.02:
-                tops, bots = _lid_cover(hp, ue, -0.08, 0.2, 0.24, lid)
+                tops, bots = _lid_cover(hp, ue, -0.08, 0.2 * grow, 0.24 * grow, lid)
                 draw.polygon(tops + bots[::-1], fill=CREAM)
                 draw.line(tops, fill=INK, width=lw, joint="curve")
                 draw.line(bots, fill=INK, width=lw, joint="curve")
@@ -749,7 +877,8 @@ def _draw_face(
         side = -1.0 if ue < 0 else 1.0
         inner_u = ue - side * 0.2
         outer_u = ue + side * 0.2
-        sin_b = math.sin(math.radians(expr["brow"]))
+        brow_deg = float(expr["brow"]) - side * float(expr["brow_skew"])
+        sin_b = math.sin(math.radians(brow_deg))
         inner = hp(inner_u, -0.28 + 0.3 * sin_b)
         outer = hp(outer_u, -0.28 - 0.3 * sin_b)
         draw.line([inner, outer], fill=INK, width=brow_w)
@@ -779,6 +908,7 @@ def _draw_face(
         for i in range(9):
             u = -0.2 + 0.4 * i / 8
             v = 0.44 + curve * 0.1 * (1 - (u / 0.2) ** 2)
+            v += float(expr["wave"]) * 0.05 * math.sin(2 * math.pi * (u + 0.2) / 0.2)
             mouth.append(hp(u, v))
         draw.line(mouth, fill=INK, width=lw, joint="curve")
 
@@ -787,6 +917,17 @@ def _draw_face(
             [hp(0.2, -0.52), hp(0.28, -0.44), hp(0.36, -0.5)], fill=INK, width=line_w, joint="curve"
         )
         draw.line([hp(0.28, -0.44), hp(0.3, -0.36)], fill=INK, width=line_w)
+
+    if expr["sweat"] > 0.5:
+        c = hp(0.92, -0.3)
+        rr = 0.13 * R
+        drop_pts = [
+            (c[0], c[1] - 0.45 * R),
+            (c[0] + rr, c[1]),
+            (c[0], c[1] + rr),
+            (c[0] - rr, c[1]),
+        ]
+        _outlined_poly(draw, drop_pts, SWEAT, max(1.0, 0.04 * R))
 
 
 def _composite(img: Image.Image, layer: Image.Image) -> None:

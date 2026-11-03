@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import autoshorts.longform.background as background
 import autoshorts.longform.beats as beats
 import autoshorts.longform.sprites as sprites
 from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
@@ -101,19 +102,28 @@ def test_mood_rules_pick_body_position_and_expression() -> None:
     assert phone.pose == "phone_hold" and phone.expression == "tired"
 
     desk = plan_beat(0, "H", "Deep work at the desk.", "host", False)
-    assert desk.pose == "sit_desk_focus" and desk.expression == "focus"
+    assert desk.pose == "typing" and desk.expression == "focus"
 
     chair = plan_beat(0, "H", "Sit down in the chair.", "host", False)
     assert chair.pose == "sit_chair"
 
     fail = plan_beat(0, "H", "You will fail again.", "host", False)
-    assert fail.pose == "slump" and fail.expression == "worried"
+    assert fail.pose == "facepalm" and fail.expression == "worried"
+
+    sad = plan_beat(0, "H", "It is not fair to you.", "host", False)
+    assert sad.pose == "slump" and sad.expression == "sad"
 
     win = plan_beat(0, "H", "A better new habit wins.", "host", False)
-    assert win.pose == "fist_up" and win.expression == "happy"
+    assert win.pose == "thumbs_up" and win.expression == "excited"
 
     start = plan_beat(0, "H", "Start today.", "host", False)
-    assert start.expression == "determined"
+    assert start.pose == "fist_up" and start.expression == "excited"
+
+    anger = plan_beat(0, "H", "This is unfair and I am angry.", "host", False)
+    assert anger.pose == "hug_self" and anger.expression == "angry"
+
+    surprise = plan_beat(0, "H", "Wait, what just happened?", "host", False)
+    assert surprise.pose == "point_side" and surprise.expression == "surprised"
 
 
 def test_keyword_rules_pick_expected_props_and_poses() -> None:
@@ -174,9 +184,57 @@ def test_gesture_does_not_replace_seated_lying_or_desk_poses() -> None:
     chair = plan_beat(0, "H", "Look, you can sit in the chair.", "host", False)
     assert chair.pose == "sit_chair" and chair.gesture is None
     desk = plan_beat(0, "H", "You should focus at the desk.", "host", False)
-    assert desk.pose == "sit_desk_focus" and desk.gesture is None
+    assert desk.pose == "typing" and desk.gesture is None
     phone = plan_beat(0, "H", "You scroll the phone.", "host", False)
     assert phone.pose == "phone_hold" and phone.gesture is None
+
+
+def test_consecutive_sections_without_keywords_get_different_themes() -> None:
+    themes = [plan_beat(i, "H", "Nothing special here.", "host", False).theme for i in range(10)]
+    assert all(a != b for a, b in zip(themes, themes[1:], strict=False))
+    assert set(themes) <= set(background.theme_names())
+
+
+def test_sleep_narration_is_navy_night_with_sleep_bed() -> None:
+    plan = plan_beat(3, "H", "It is time to sleep.", "host", False)
+
+    assert plan.theme == "navy_night"
+    assert plan.pose == "sleep_bed" and plan.expression in ("sleepy", "tired")
+    assert "bed" in _names(plan) and "lamp" in _names(plan)
+
+
+def test_typing_desk_narration_is_office_warm_and_typing() -> None:
+    plan = plan_beat(2, "H", "Typing at my desk all day.", "host", False)
+
+    assert plan.theme == "office_warm"
+    assert plan.pose == "typing" and plan.expression == "focus"
+
+
+def test_reading_and_study_use_reading_pose_with_bookshelf() -> None:
+    plan = plan_beat(1, "H", "Read a book to study.", "host", False)
+
+    assert plan.pose == "reading" and plan.expression == "focus"
+    assert "bookshelf" in _names(plan) and "lamp" in _names(plan)
+
+
+def test_scene_props_are_capped_at_four() -> None:
+    narration = (
+        "Sleep in bed with the phone, the couch, the desk, a plant, the tv, "
+        "the trash and the clock, at night, every day."
+    )
+    plan = plan_beat(0, "H", narration, "host", False)
+
+    assert len(plan.props) <= beats.MAX_PROPS
+    assert all(prop.name in PROP_NAMES for prop in plan.props)
+
+
+def test_every_theme_draws_rgb_frame() -> None:
+    narration = "Every day you choose."
+    plan = plan_beat(0, "H", narration, "host", False)
+    for name in background.theme_names():
+        img = Image.new("RGB", FRAME, PALETTE.void)
+        draw_beat(img, replace(plan, theme=name), 1.0, 0.0, 4.0, narration)
+        assert img.mode == "RGB" and img.size == FRAME
 
 
 def test_head_turn_helper() -> None:
@@ -212,7 +270,7 @@ def test_bed_lying_figure_is_over_the_bed_and_desk_monitor_is_at_the_hand() -> N
 
     desk = plan_beat(0, "H", "Deep work at the desk.", "host", False)
     monitor = next(prop for prop in desk.props if prop.name == "desk_monitor")
-    hand_dx, hand_dy = wrist_offset(POSES["sit_desk_focus"], FIGURE_SPRITE_SCALE, "l")
+    hand_dx, hand_dy = wrist_offset(POSES["typing"], FIGURE_SPRITE_SCALE, "l")
     hand = (RIG_ORIGIN[0] + hand_dx, RIG_ORIGIN[1] + hand_dy)
     assert monitor.scale == DESK_MONITOR_SCALE
     assert ((monitor.x - hand[0]) ** 2 + (monitor.y - hand[1]) ** 2) ** 0.5 <= 120.0
@@ -378,7 +436,10 @@ def test_draw_beat_renders_without_sprites(tmp_path: Path, use_sprite_dir) -> No
 
 def test_sprites_change_frame_compared_with_fallback(tmp_path: Path, use_sprite_dir) -> None:
     narration = "Stop the phone scroll."
-    plan = replace(plan_beat(0, "H", narration, "host", False), expression="neutral")
+    # The navy default is the only theme that uses the backdrop sprite.
+    plan = replace(
+        plan_beat(0, "H", narration, "host", False), expression="neutral", theme="navy_night"
+    )
     assert "phone" in _names(plan)
 
     empty = tmp_path / "empty"
