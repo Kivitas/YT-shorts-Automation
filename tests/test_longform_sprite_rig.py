@@ -1,0 +1,119 @@
+"""Tests for the satori part rig in autoshorts.longform.sprite_rig."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
+import autoshorts.longform.sprites as sprites
+from autoshorts.longform.sprite_rig import CANVAS_SIZE, PART_NAMES, draw_sprite_rig
+
+# Solid boxes (x0, y0, x1, y1) per part, on the left side of the figure so that the
+# midline split keeps them whole.
+BOXES: dict[str, tuple[int, int, int, int]] = {
+    "upper_leg": (160, 470, 196, 600),
+    "lower_leg": (160, 600, 196, 720),
+    "shoe": (150, 720, 196, 760),
+    "torso": (160, 240, 240, 470),
+    "upper_arm": (100, 250, 140, 350),
+    "forearm": (100, 350, 140, 448),
+    "hand": (100, 440, 140, 480),
+    "head": (160, 80, 240, 220),
+    "eyes": (180, 120, 196, 140),
+    "eyebrows": (180, 100, 196, 110),
+    "mouth": (180, 190, 196, 200),
+}
+
+CANVAS_OUT = (300, 400)
+ORIGIN = (150.0, 300.0)
+SCALE = 0.5
+
+
+@pytest.fixture
+def use_sprite_dir(monkeypatch: pytest.MonkeyPatch):
+    """Point the sprite loader at a chosen folder and reset its cache around the test."""
+
+    def use(folder: Path) -> None:
+        monkeypatch.setattr(sprites, "SPRITE_DIR", folder)
+        sprites.load_sprite.cache_clear()
+
+    yield use
+    sprites.load_sprite.cache_clear()
+
+
+def _write_parts(folder: Path, skip: str | None = None) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    for index, name in enumerate(PART_NAMES):
+        if name == skip:
+            continue
+        part = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+        part.paste((40 + 20 * index, 200, 120, 255), BOXES[name])
+        part.save(folder / f"{name}.png")
+    return folder
+
+
+def _blank() -> Image.Image:
+    return Image.new("RGB", CANVAS_OUT, (0, 0, 0))
+
+
+def _draw(joints: dict[str, float], **kwargs) -> Image.Image:
+    img = _blank()
+    assert draw_sprite_rig(img, joints, ORIGIN, SCALE, **kwargs) is True
+    return img
+
+
+def test_returns_false_when_a_part_is_missing(tmp_path: Path, use_sprite_dir) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    use_sprite_dir(empty)
+    img = _blank()
+    assert draw_sprite_rig(img, {}, ORIGIN, SCALE) is False
+    assert img.getbbox() is None
+
+
+def test_returns_false_when_one_required_part_is_missing(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "partial", skip="forearm"))
+    img = _blank()
+    assert draw_sprite_rig(img, {}, ORIGIN, SCALE) is False
+    assert img.getbbox() is None
+
+
+def test_returns_true_and_changes_pixels_with_parts(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    img = _blank()
+    assert draw_sprite_rig(img, {}, ORIGIN, SCALE) is True
+    assert img.getbbox() is not None
+
+
+def test_rotated_arm_changes_pixels(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    rest = _draw({"l_upper": -14.6, "l_lower": 3.5})
+    raised = _draw({"l_upper": -90.0, "l_lower": -90.0})
+    assert raised.tobytes() != rest.tobytes()
+
+
+def test_missing_expression_variant_falls_back_to_neutral(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    neutral = _draw({}, expression="neutral")
+    grit = _draw({}, expression="grit")
+    assert grit.tobytes() == neutral.tobytes()
+
+
+def test_expression_variant_replaces_neutral_face_part(tmp_path: Path, use_sprite_dir) -> None:
+    folder = _write_parts(tmp_path / "full")
+    use_sprite_dir(folder)
+    neutral = _draw({}, expression="happy")
+    variant = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+    variant.paste((255, 255, 255, 255), (300, 300, 330, 330))
+    variant.save(folder / "mouth_happy.png")
+    use_sprite_dir(folder)  # reset the loader cache so the new variant is read
+    assert _draw({}, expression="happy").tobytes() != neutral.tobytes()
+
+
+def test_mirror_flips_the_figure(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    plain = _draw({"l_upper": -60.0})
+    mirrored = _draw({"l_upper": -60.0}, mirror=True)
+    assert mirrored.tobytes() != plain.tobytes()

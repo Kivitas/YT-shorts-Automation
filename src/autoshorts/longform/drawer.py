@@ -31,6 +31,7 @@ from autoshorts.longform import motion
 from autoshorts.longform.beats import BeatPlan, draw_beat, plan_beat
 from autoshorts.longform.engines import font_candidates
 from autoshorts.longform.fx import camera_shake_offset, impact_flash_alpha
+from autoshorts.longform.gsap_bridge import sample_timeline, sample_value
 from autoshorts.longform.shots import Shot, plan_shots
 from autoshorts.longform.types import MAX_VIDEO_SECONDS, VISEME_SHAPES, SectionAudio
 
@@ -935,8 +936,40 @@ def _locate_frame(shots: Sequence[Shot], frame: int) -> tuple[Shot, int]:
     return last, round(last.start * FPS)
 
 
+_gsap_fallback_warned = False
+
+
+def _push_in_spec(frame_count: int) -> dict[str, Any]:
+    """GSAP timeline for the push-in: 1.0 to ``PUSH_IN_END`` with sine.inOut over the section."""
+    return {
+        "duration": 1.0,
+        "frames": frame_count,
+        "state": {"zoom": 1.0},
+        "tweens": [
+            {"at": 0.0, "duration": 1.0, "vars": {"zoom": PUSH_IN_END}, "ease": "sine.inOut"}
+        ],
+    }
+
+
+@lru_cache(maxsize=256)
+def _push_in_table(frame_count: int) -> tuple[float, ...] | None:
+    """Per-frame push-in values sampled from GSAP, or ``None`` when node is unavailable."""
+    global _gsap_fallback_warned
+    try:
+        return tuple(sample_timeline(_push_in_spec(frame_count))["zoom"])
+    except RuntimeError as exc:
+        if not _gsap_fallback_warned:
+            _gsap_fallback_warned = True
+            logger.warning("GSAP push-in unavailable (%s); using Python easing fallback", exc)
+        return None
+
+
 def _push_in_zoom(frame: int, frame_count: int) -> float:
     """Section push-in: eases from 1.0 at the first frame to ``PUSH_IN_END`` at the last."""
+    frame_count = max(1, frame_count)
+    table = _push_in_table(frame_count)
+    if table is not None:
+        return sample_value(table, frame)
     p = frame / max(1, frame_count - 1)
     return 1.0 + (PUSH_IN_END - 1.0) * motion.ease_in_out_sine(p)
 

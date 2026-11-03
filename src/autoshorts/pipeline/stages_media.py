@@ -11,6 +11,7 @@ from typing import Any
 from autoshorts.core.exceptions import AutoShortsError, DownloadError
 from autoshorts.core.models import Job, JobStatus
 from autoshorts.decider.format_classifier import classify_format
+from autoshorts.decider.style import choose_style
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.media.ass_styler import write_ass_file
 from autoshorts.media.audio_master import normalize_two_pass
@@ -510,8 +511,27 @@ class MediaMixin:
                 max(1.0, sel.candidate.duration - hook_in) if sel.candidate.duration else None
             )
             jump_cuts = job.edl.jump_cuts if (job.edl and job.edl.jump_cuts) else None
-            style_preset = getattr(job, "style_preset", None) or getattr(
-                self.config.subtitles, "style_preset", "neon"
+            style_choice = choose_style(
+                {
+                    "job_id": job.id,
+                    "duration_sec": sel.candidate.duration,
+                    "format_kind": getattr(job.edl, "edit_format", None),
+                    "source_kind": getattr(job, "source_kind", None),
+                    "job_layout_mode": getattr(job, "layout_mode", None),
+                    "job_style_preset": getattr(job, "style_preset", None),
+                    "config_layout_mode": getattr(
+                        getattr(self.config, "branding", None), "layout_mode", None
+                    )
+                    or getattr(getattr(self.config, "media", None), "layout_mode", None),
+                    "config_style_preset": getattr(self.config.subtitles, "style_preset", "neon"),
+                }
+            )
+            style_preset = style_choice.style_preset
+            job.record_diagnostic(
+                "style",
+                layout_mode=style_choice.layout_mode,
+                style_preset=style_preset,
+                reasons=style_choice.reasons,
             )
 
             text_transform = getattr(job, "text_transform", None) or getattr(
@@ -808,8 +828,11 @@ class MediaMixin:
 
             branding_cfg = getattr(self.config, "branding", None)
             audio_cfg = getattr(self.config, "audio_mastering", None)
+            style_diag = job.diagnostics.get("style") if isinstance(job.diagnostics, dict) else None
+            diag_layout = style_diag.get("layout_mode") if isinstance(style_diag, dict) else None
             layout_mode = (
-                getattr(job, "layout_mode", None)
+                diag_layout
+                or getattr(job, "layout_mode", None)
                 or getattr(branding_cfg, "layout_mode", None)
                 or getattr(self.config.media, "layout_mode", "split_50_50")
             )

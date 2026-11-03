@@ -1,5 +1,6 @@
-import { interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
-import { BG_SURFACE, FONT_DISPLAY, TEXT_MUTED, TEXT_PRIMARY, ACCENT_TEAL, easeInOutCubic } from "../theme";
+import { useCurrentFrame, useVideoConfig } from "remotion";
+import { BG_SURFACE, FONT_DISPLAY, TEXT_MUTED, TEXT_PRIMARY, ACCENT_TEAL } from "../theme";
+import { useGsapTimeline } from "../motion/gsapFrame";
 
 export type LowerThirdProps = {
   name: string;
@@ -7,18 +8,25 @@ export type LowerThirdProps = {
   accent?: string;
 };
 
-// Flat lower third: semi-transparent surface pill that slides in from the left and eases out.
+type LowerThirdState = { x: number; opacity: number };
+
+// Flat lower third: semi-transparent surface pill that slides in from the left and fades out at the end.
 export const LowerThird: React.FC<LowerThirdProps> = ({ name, role, accent = ACCENT_TEAL }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
-  const enter = spring({ frame, fps, config: { damping: 200 } });
-  const exitStart = durationInFrames - Math.round(0.4 * fps);
-  const exit = interpolate(frame, [exitStart, durationInFrames], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: easeInOutCubic,
-  });
-  const x = interpolate(enter, [0, 1], [-80, 0]);
+  const durationSec = durationInFrames / fps;
+  const exitSec = 0.4;
+
+  const { state, frameState } = useGsapTimeline<LowerThirdState>(
+    () => ({ x: -80, opacity: 0 }),
+    (tl, s) => {
+      tl.to(s, { x: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 0);
+      tl.to(s, { opacity: 0, duration: exitSec, ease: "power2.inOut" }, durationSec - exitSec);
+    },
+    durationSec,
+    [durationSec],
+  );
+  frameState(frame, fps);
 
   return (
     <div
@@ -32,8 +40,8 @@ export const LowerThird: React.FC<LowerThirdProps> = ({ name, role, accent = ACC
         padding: "22px 32px",
         borderRadius: 999,
         backgroundColor: BG_SURFACE,
-        opacity: enter * exit,
-        transform: `translateX(${x}px)`,
+        opacity: state.opacity,
+        transform: `translateX(${state.x}px)`,
         fontFamily: FONT_DISPLAY,
       }}
     >

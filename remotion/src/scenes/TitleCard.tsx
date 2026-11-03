@@ -1,5 +1,6 @@
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
-import { BG_DEEP, FONT_DISPLAY, TEXT_PRIMARY, ACCENT_YELLOW, MOTION_BASE, easeOutCubic } from "../theme";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
+import { BG_DEEP, FONT_DISPLAY, TEXT_PRIMARY, ACCENT_YELLOW, MOTION_BASE, MOTION_FAST } from "../theme";
+import { useGsapTimeline } from "../motion/gsapFrame";
 
 export type TitleCardProps = {
   title: string;
@@ -7,21 +8,43 @@ export type TitleCardProps = {
   accent?: string;
 };
 
-// Flat title card: solid background, one accent bar, eased fade and rise.
+type TitleState = { barOpacity: number; titleOpacity: number; titleY: number; subOpacity: number };
+
+// Flat title card: solid background, one accent bar, GSAP-driven entrance and exit.
 export const TitleCard: React.FC<TitleCardProps> = ({ title, subtitle, accent = ACCENT_YELLOW }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const enter = spring({ frame, fps, config: { damping: 200 }, durationInFrames: Math.round(MOTION_BASE * fps * 2) });
-  const sub = interpolate(frame, [Math.round(0.2 * fps), Math.round(0.2 * fps + MOTION_BASE * fps)], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: easeOutCubic,
-  });
-  const rise = interpolate(enter, [0, 1], [40, 0]);
+  const { fps, durationInFrames } = useVideoConfig();
+  const durationSec = durationInFrames / fps;
+
+  const { state, frameState } = useGsapTimeline<TitleState>(
+    () => ({ barOpacity: 0, titleOpacity: 0, titleY: 40, subOpacity: 0 }),
+    (tl, s) => {
+      tl.to(s, { barOpacity: 1, duration: MOTION_BASE * 2, ease: "power3.out" }, 0);
+      tl.to(s, { titleOpacity: 1, titleY: 0, duration: MOTION_BASE * 2, ease: "power3.out" }, 0);
+      tl.to(s, { subOpacity: 1, duration: MOTION_BASE, ease: "power3.out" }, 0.2);
+      // Exit: everything fades out over the last fraction of a second.
+      tl.to(
+        s,
+        { barOpacity: 0, titleOpacity: 0, subOpacity: 0, duration: MOTION_FAST * 2, ease: "power2.in" },
+        durationSec - MOTION_FAST * 2,
+      );
+    },
+    durationSec,
+    [durationSec],
+  );
+  frameState(frame, fps);
 
   return (
     <AbsoluteFill style={{ backgroundColor: BG_DEEP, justifyContent: "center", padding: "0 80px" }}>
-      <div style={{ width: 120, height: 8, backgroundColor: accent, borderRadius: 4, opacity: enter }} />
+      <div
+        style={{
+          width: 120,
+          height: 8,
+          backgroundColor: accent,
+          borderRadius: 4,
+          opacity: state.barOpacity,
+        }}
+      />
       <div
         style={{
           marginTop: 36,
@@ -30,8 +53,8 @@ export const TitleCard: React.FC<TitleCardProps> = ({ title, subtitle, accent = 
           fontSize: 96,
           lineHeight: 1.15,
           color: TEXT_PRIMARY,
-          opacity: enter,
-          transform: `translateY(${rise}px)`,
+          opacity: state.titleOpacity,
+          transform: `translateY(${state.titleY}px)`,
         }}
       >
         {title}
@@ -44,7 +67,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({ title, subtitle, accent = 
             fontWeight: 500,
             fontSize: 44,
             color: TEXT_PRIMARY,
-            opacity: sub,
+            opacity: state.subOpacity,
           }}
         >
           {subtitle}

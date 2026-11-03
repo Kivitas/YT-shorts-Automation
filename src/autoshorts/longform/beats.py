@@ -36,8 +36,9 @@ from autoshorts.longform.background import draw_background
 from autoshorts.longform.kinetic_text import draw_inner_voice, draw_kinetic_line, draw_number_pop
 from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
-from autoshorts.longform.rig import animate_pose, draw_rig
+from autoshorts.longform.rig import HAND_LIFT_DEG, animate_pose, draw_rig
 from autoshorts.longform.sphere import draw_sphere, orbit_point
+from autoshorts.longform.sprite_rig import draw_sprite_rig
 from autoshorts.longform.sprites import paste_sprite, sprite_size
 
 RGB = tuple[int, int, int]
@@ -80,8 +81,9 @@ PROP_SPRITES: dict[str, str] = {
     "mountain": "mountain",
     "heavy_bag": "heavy_bag",
 }
-FIGURE_SPRITE = "figure"
-FIGURE_HEIGHT_PX = 330  # on-screen height of the standing figure sprite
+FIGURE_SPRITE_SCALE = (
+    0.65  # satori canvas px -> output px: hip to ankle matches rig leg length (162 px)
+)
 
 GESTURE_POINT_WORDS = frozenset({"look", "see", "watch", "first", "start"})
 GESTURE_OPEN_WORDS = frozenset({"you", "your"})
@@ -414,16 +416,17 @@ def _draw_prop(
     )
 
 
-def _paste_figure(img: Image.Image, plan: BeatPlan) -> bool:
-    """Paste the standing figure sprite for a neutral, ungestured stand. False means use draw_rig."""
-    if not (plan.pose == "stand" and plan.expression == "neutral" and plan.gesture is None):
-        return False
-    size = sprite_size(FIGURE_SPRITE)
-    if size is None:
-        return False
-    scale = FIGURE_HEIGHT_PX / size[1]
-    centre = (RIG_ORIGIN[0], FLOOR_Y - FIGURE_HEIGHT_PX / 2)
-    return paste_sprite(img, FIGURE_SPRITE, centre, scale=scale, flip=plan.mirror)
+def _figure_joints(
+    plan: BeatPlan, shot_start: float, section_text: str, t: float
+) -> dict[str, float]:
+    """Joint angles for the satori figure: the planned pose plus head turn and raised hand."""
+    joints = dict(_rig_pose(plan, shot_start, t))
+    joints["head_turn"] = _head_turn(section_text)
+    lift = _hand_lift(t, shot_start)
+    if lift:
+        joints["r_upper"] += lift * HAND_LIFT_DEG
+        joints["r_lower"] += lift * HAND_LIFT_DEG
+    return joints
 
 
 def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
@@ -481,7 +484,15 @@ def draw_beat(
     if _is_space_topic(section_text):
         _draw_space(img, t, pal.blue, pal.highlight)
 
-    if not _paste_figure(img, plan):
+    if not draw_sprite_rig(
+        img,
+        _figure_joints(plan, start, section_text, t),
+        RIG_ORIGIN,
+        FIGURE_SPRITE_SCALE,
+        expression=plan.expression,
+        t=t,
+        mirror=plan.mirror,
+    ):
         draw_rig(
             img,
             _rig_pose(plan, start, t),

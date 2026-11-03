@@ -19,7 +19,7 @@ from typing import Literal
 
 logger = logging.getLogger("autoshorts.decider.records")
 
-DecisionSource = Literal["llm", "heuristic", "config", "default"]
+DecisionSource = Literal["llm", "heuristic", "config", "default", "user", "recipe"]
 
 MAX_RECORDS = 500
 DECISION_LOG_FORMAT = "DECISION job=%s name=%s value=%s source=%s reason=%s"

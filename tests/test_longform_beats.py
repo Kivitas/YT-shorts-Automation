@@ -12,10 +12,8 @@ import autoshorts.longform.beats as beats
 import autoshorts.longform.sprites as sprites
 from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
 from autoshorts.longform.beats import (
-    FLOOR_Y,
     PALETTE,
     POSE_CYCLE,
-    RIG_ORIGIN,
     SPHERE_CENTRE,
     BeatPlan,
     _entrance_start,
@@ -321,6 +319,3 @@ def test_sprites_change_frame_compared_with_fallback(tmp_path: Path, use_sprite_
     assert with_sprites.tobytes() != fallback.tobytes()
     # Backdrop sprite is pasted over the whole frame; the corner is its navy colour.
     assert with_sprites.getpixel((5, 5)) == (30, 60, 120)
-    # Figure sprite is centred on the rig origin, feet on the floor.
-    figure_pixel = with_sprites.getpixel((RIG_ORIGIN[0], int(FLOOR_Y - 165)))
-    assert all(abs(a - b) <= 2 for a, b in zip(figure_pixel, (240, 220, 200), strict=True))
