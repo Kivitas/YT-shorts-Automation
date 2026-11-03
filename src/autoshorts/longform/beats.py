@@ -13,6 +13,7 @@ section context, but the current rules only read the narration.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -49,6 +50,9 @@ from autoshorts.longform.sprite_rig import (
 from autoshorts.longform.sprites import paste_sprite, sprite_size
 
 RGB = tuple[int, int, int]
+Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in output pixels
+
+_LOG = logging.getLogger(__name__)
 
 FRAME_W = 1920
 FRAME_H = 1080
@@ -282,12 +286,78 @@ SPRITE_KEYWORDS: dict[str, str] = {
 }
 SPRITE_CAP = 3  # sprite props per section, taken in narration order
 SPRITE_HEIGHT_PX = 220
-# Free-area centres, on the floor line: two in the left third, one in the right third.
-SPRITE_SLOTS: tuple[tuple[int, int], ...] = (
-    (200, FLOOR_Y - SPRITE_HEIGHT_PX // 2),
-    (1720, FLOOR_Y - SPRITE_HEIGHT_PX // 2),
-    (420, FLOOR_Y - SPRITE_HEIGHT_PX // 2),
+# Placement classes. Each sprite gets a preferred centre from its class, then draw time moves it
+# to the first candidate that clears the figure, the drawn props and the other sprites.
+SKY_SPRITES = frozenset(
+    {
+        "sun",
+        "moon",
+        "moon_full",
+        "star",
+        "star_cluster",
+        "planet_ringed",
+        "earth",
+        "cloud",
+        "rocket",
+        "snowflake",
+        "lightning",
+        "rainbow",
+    }
 )
+HAND_SPRITES = frozenset(
+    {
+        "atom",
+        "molecule_water",
+        "molecule_co2",
+        "dna_helix",
+        "flask",
+        "test_tube",
+        "microscope",
+        "lightbulb",
+        "magnifier",
+        "book_stack",
+        "laptop",
+        "coffee_cup",
+        "phone",
+        "gear",
+        "battery",
+    }
+)
+ICON_SPRITES = frozenset(
+    {
+        "check_mark",
+        "cross_mark",
+        "warning_triangle",
+        "coin",
+        "trophy",
+        "medal",
+        "heart",
+        "shield",
+        "lock",
+        "key",
+        "chart_up",
+        "speech_bubble",
+        "megaphone",
+        "timer",
+        "brain",
+        "fire",
+        "water_drop",
+        "leaf",
+    }
+)  # any sprite name not listed in SKY or HAND is ICON
+SKY_BAND_Y = (300, 460)  # the centre y of a sky sprite stays in this band
+SKY_CENTRE_Y = 380
+SKY_SLOT_X = (240, 1680)  # left and right third, alternated by sky sprite order
+HAND_Y = 520  # hand height of the standing and seated figure
+HAND_OFFSET_X = 220
+ICON_Y = 330  # next to the head
+ICON_OFFSET_X = 260
+FIGURE_HALF_WIDTH_PX = 120  # the figure box, from the body centre, covers the arms at rest
+SPRITE_MARGIN_X = (40, 1880)
+SPRITE_CANDIDATES = 6
+SKY_STEP_X = 120
+SKY_STEP_Y = 80
+SPRITE_SHIFT_X = (0, 120, -120, 240, -240, 360)
 # One alternation, longest keys first, so "night sky" wins over any shorter key it contains.
 _SPRITE_KEYWORD_RE = re.compile(
     r"\b(?:"
@@ -496,8 +566,21 @@ def _choose_theme(words: set[str], section_index: int) -> str:
     return THEME_CYCLE[section_index % len(THEME_CYCLE)]
 
 
-def _choose_sprites(lowered: str) -> list[SpriteSpec]:
-    """Sprite props for the first distinct keyword matches, in narration order, capped at SPRITE_CAP."""
+def _sprite_class(name: str) -> str:
+    """Placement class of a sprite name: 'sky', 'hand' or 'icon' (the default)."""
+    if name in SKY_SPRITES:
+        return "sky"
+    if name in HAND_SPRITES:
+        return "hand"
+    return "icon"
+
+
+def _choose_sprites(lowered: str, figure_x: float) -> list[SpriteSpec]:
+    """Sprite props for the first distinct keyword matches, in narration order, capped at SPRITE_CAP.
+
+    Each sprite gets its class's preferred centre; ``draw_beat`` moves it clear of the figure and
+    props when it draws (see ``_place_sprites``).
+    """
     names: list[str] = []
     for match in _SPRITE_KEYWORD_RE.finditer(lowered):
         name = SPRITE_KEYWORDS[match.group(0)]
@@ -505,7 +588,24 @@ def _choose_sprites(lowered: str) -> list[SpriteSpec]:
             names.append(name)
         if len(names) == SPRITE_CAP:
             break
-    return [SpriteSpec(name, *SPRITE_SLOTS[index]) for index, name in enumerate(names)]
+    specs: list[SpriteSpec] = []
+    sky_count = hand_count = 0
+    for name in names:
+        kind = _sprite_class(name)
+        if kind == "sky":
+            x, y = SKY_SLOT_X[sky_count % len(SKY_SLOT_X)], SKY_CENTRE_Y
+            sky_count += 1
+        elif kind == "hand":
+            side = 1 if hand_count % 2 == 0 else -1
+            x, y = round(figure_x + side * HAND_OFFSET_X), HAND_Y
+            hand_count += 1
+        else:
+            x, y = (
+                round(figure_x + (ICON_OFFSET_X if len(specs) % 2 == 0 else -ICON_OFFSET_X)),
+                ICON_Y,
+            )
+        specs.append(SpriteSpec(name, x, y))
+    return specs
 
 
 def _has_prop(props: Sequence[PropSpec], name: str) -> bool:
@@ -642,6 +742,8 @@ def plan_beat(
         props.insert(0, PropSpec("bed", *BED_XY, BED_SCALE, {}))
 
     del props[MAX_PROPS:]
+    # Figure centre x, used to place the hand and icon sprites beside the body.
+    figure_x = LYING_HIP[0] if pose in LYING_POSES else RIG_ORIGIN[0]
 
     if mood_expression is not None:
         expression = mood_expression
@@ -663,7 +765,7 @@ def plan_beat(
         light_sources=light_sources,
         gesture=_choose_gesture(words, lowered) if pose in GESTURE_POSES else None,
         theme=_choose_theme(words, section_index),
-        sprites=_choose_sprites(lowered),
+        sprites=_choose_sprites(lowered, figure_x),
     )
 
 
@@ -799,6 +901,143 @@ def _draw_sprite(img: Image.Image, spec: SpriteSpec) -> None:
     paste_sprite(img, spec.name, (spec.x, spec.y), scale=SPRITE_HEIGHT_PX / native[1])
 
 
+def _sprite_draw_size(name: str) -> tuple[float, float] | None:
+    """Output size of a keyword sprite drawn SPRITE_HEIGHT_PX tall, or None when it is missing."""
+    native = sprite_size(name)
+    if native is None:
+        return None
+    return native[0] * SPRITE_HEIGHT_PX / native[1], float(SPRITE_HEIGHT_PX)
+
+
+def _box_at(cx: float, cy: float, size: tuple[float, float]) -> Box:
+    width, height = size
+    return (cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2)
+
+
+def _overlaps(a: Box, b: Box) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _in_margins(box: Box) -> bool:
+    return (
+        box[0] >= SPRITE_MARGIN_X[0]
+        and box[2] <= SPRITE_MARGIN_X[1]
+        and box[1] >= 0
+        and box[3] <= FRAME_H
+    )
+
+
+def _sprite_candidates(spec: SpriteSpec) -> list[tuple[float, float]]:
+    """Up to SPRITE_CANDIDATES centres to try, the preferred one first.
+
+    Other classes shift x in SPRITE_SHIFT_X steps. Sky sprites also move up and down inside
+    SKY_BAND_Y.
+    """
+    if _sprite_class(spec.name) == "sky":
+        steps = ((0, 0), (1, 0), (-1, 0), (0, -1), (0, 1), (1, -1))
+        low, high = SKY_BAND_Y
+        candidates = [
+            (spec.x + dx * SKY_STEP_X, min(max(spec.y + dy * SKY_STEP_Y, low), high))
+            for dx, dy in steps
+        ]
+    else:
+        candidates = [(spec.x + dx, spec.y) for dx in SPRITE_SHIFT_X]
+    return candidates[:SPRITE_CANDIDATES]
+
+
+def _prop_box(prop: PropSpec) -> Box | None:
+    """Frame box of a prop drawn from its sprite, or None when the box is not known."""
+    sprite_name = PROP_SPRITES.get(prop.name)
+    if sprite_name is None:
+        return None
+    size = sprite_size(sprite_name, prop.scale)
+    if size is None:
+        return None
+    return (prop.x, prop.y, prop.x + size[0], prop.y + size[1])
+
+
+def _drawn_prop_boxes(
+    plan: BeatPlan, shot_start: float, words: Sequence[Mapping[str, Any]] | None, t: float
+) -> list[Box]:
+    """Boxes of the props that have entered by ``t`` and have a known size."""
+    boxes: list[Box] = []
+    for prop in plan.props:
+        if _entrance_start(prop.name, words, shot_start) > t:
+            continue
+        box = _prop_box(prop)
+        if box is not None:
+            boxes.append(box)
+    return boxes
+
+
+def _figure_box(joints: dict[str, float], origin: tuple[float, float], scale: float) -> Box:
+    """Box around the figure: its arms-wide width, from the highest point down to the feet."""
+    origin_x, origin_y = origin
+    return (
+        origin_x - FIGURE_HALF_WIDTH_PX,
+        _highest_figure_y(joints, origin_y, scale),
+        origin_x + FIGURE_HALF_WIDTH_PX,
+        _feet_y(joints, origin_y, scale),
+    )
+
+
+def _place_sprites(plan: BeatPlan, figure_box: Box, prop_boxes: Sequence[Box]) -> list[SpriteSpec]:
+    """Final centres for the plan's sprites, in narration order.
+
+    A sprite takes the first candidate that stays inside the frame margins and does not overlap
+    the figure, a drawn prop or an already placed sprite. A sprite with no free candidate is
+    skipped, and a missing sprite file is skipped as it is at draw time.
+    """
+    placed: list[Box] = []
+    result: list[SpriteSpec] = []
+    for spec in plan.sprites:
+        size = _sprite_draw_size(spec.name)
+        if size is None:
+            continue
+        chosen: tuple[float, float, Box] | None = None
+        for cx, cy in _sprite_candidates(spec):
+            box = _box_at(cx, cy, size)
+            if not _in_margins(box):
+                continue
+            blockers = (figure_box, *prop_boxes, *placed)
+            if any(_overlaps(box, other) for other in blockers):
+                continue
+            chosen = (cx, cy, box)
+            break
+        if chosen is None:
+            _LOG.info("No free position for sprite %r; skipped for this section", spec.name)
+            continue
+        cx, cy, box = chosen
+        placed.append(box)
+        result.append(SpriteSpec(spec.name, round(cx), round(cy)))
+    return result
+
+
+def _figure_placement(
+    plan: BeatPlan, shot_start: float, section_text: str, t: float
+) -> tuple[dict[str, float], tuple[float, float], float, float]:
+    """Joints, origin, sprite scale and rig scale for the figure at ``t``."""
+    joints = _figure_joints(plan, shot_start, section_text, t)
+    if plan.pose in LYING_POSES:
+        return joints, LYING_HIP, BASE_SPRITE_SCALE, BASE_RIG_SCALE
+    origin = _lift_origin(joints, RIG_ORIGIN, FIGURE_SPRITE_SCALE)
+    return joints, origin, FIGURE_SPRITE_SCALE, RIG_SCALE
+
+
+def _sprite_layout(
+    plan: BeatPlan,
+    shot_start: float,
+    section_text: str,
+    t: float,
+    words: Sequence[Mapping[str, Any]] | None = None,
+) -> list[SpriteSpec]:
+    """The sprites ``draw_beat`` pastes at ``t``, at their collision-free centres."""
+    joints, origin, sprite_scale, _ = _figure_placement(plan, shot_start, section_text, t)
+    figure_box = _figure_box(joints, origin, sprite_scale)
+    prop_boxes = _drawn_prop_boxes(plan, shot_start, words, t)
+    return _place_sprites(plan, figure_box, prop_boxes)
+
+
 def _figure_joints(
     plan: BeatPlan, shot_start: float, section_text: str, t: float
 ) -> dict[str, float]:
@@ -899,18 +1138,14 @@ def draw_beat(
 
     for prop in plan.props:
         _draw_prop(img, prop, t, start, words)
-    for sprite in plan.sprites:
+    # Sprites go after the props so they can avoid them, and before the figure is drawn.
+    for sprite in _sprite_layout(plan, start, section_text, t, words):
         _draw_sprite(img, sprite)
 
     if _is_space_topic(section_text):
         _draw_space(img, t, pal.blue, pal.highlight)
 
-    joints = _figure_joints(plan, start, section_text, t)
-    if plan.pose in LYING_POSES:
-        origin, sprite_scale, rig_scale = LYING_HIP, BASE_SPRITE_SCALE, BASE_RIG_SCALE
-    else:
-        origin = _lift_origin(joints, RIG_ORIGIN, FIGURE_SPRITE_SCALE)
-        sprite_scale, rig_scale = FIGURE_SPRITE_SCALE, RIG_SCALE
+    joints, origin, sprite_scale, rig_scale = _figure_placement(plan, start, section_text, t)
     if not draw_sprite_rig(
         img,
         joints,

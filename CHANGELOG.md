@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Longform ideas**: 12 new curated topics and a ranked `generate_ideas` list (`longform/ideas.py`).
 - **Editing**: longform audio is loudness-normalised (-14 LUFS) with a fallback; background-music ducks apply when an EDL is present; `edit_planner/pacing.py` merges cuts and punches for Shorts.
 - **Upload**: longform descriptions get chapters and a sources footer; tags are de-duplicated and capped (15 longform, 10 Shorts); longform titles and descriptions are validated before upload.
+- **Scene variety**: 7 + 5 background themes, 11 + 8 + 8 new poses and expressions, 14 new objects, 39 science and icon sprites (atoms, molecules, sun, moon, planets, flasks, icons). Narration keywords select the theme, props, pose, expression and up to 3 sprites per section.
+- **Sprite placement**: sky objects go in the sky band, hand objects beside the hand, icons beside the head; each sprite avoids the figure, props and other sprites.
+- **Decisions**: `longform/decisions.py` picks a theme and caption per section, records each decision with its reason, and checks for repeated themes and unknown names.
 - **Satori figure**: `longform/sprite_rig.py` draws the character from the satori parts with joint rotation. Limbs are padded before rotating so nothing is clipped; the raised-hand pose is lowered so it stays in frame.
 - **Style decider**: `decider/style.py` chooses layout and caption (short clips get the `kurz` preset), respecting an explicit user choice first.
 - **GSAP in Remotion**: the title card, lower third, stat card and caption pop run on GSAP timelines keyed to the frame.

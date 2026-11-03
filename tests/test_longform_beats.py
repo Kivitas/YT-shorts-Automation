@@ -530,14 +530,111 @@ def test_repeated_sprite_keyword_is_used_once() -> None:
     assert [sprite.name for sprite in plan.sprites] == ["atom"]
 
 
-def test_sprites_sit_in_free_side_thirds_below_narration() -> None:
-    narration = "Sun, moon, earth, star, heart, and gear."
-    plan = plan_beat(0, "H", narration, "host", False)
+def _sprite_folder(tmp_path: Path, use_sprite_dir, extra: dict[str, tuple[int, int]]) -> None:
+    """A full sprite folder with the backdrop and figure stubs plus ``extra`` sprites."""
+    folder = _write_sprites(tmp_path / "full")
+    for name, size in extra.items():
+        _write_solid(folder, name, size, (10, 200, 10))
+    use_sprite_dir(folder)
 
-    assert plan.sprites
-    for sprite in plan.sprites:
-        assert sprite.x <= FRAME[0] // 3 or sprite.x >= 2 * FRAME[0] // 3
-        assert sprite.y - beats.SPRITE_HEIGHT_PX // 2 > NARRATION_BAND[1]
+
+def _figure_box_for(plan: BeatPlan, narration: str, t: float) -> beats.Box:
+    joints, origin, scale, _ = beats._figure_placement(plan, 0.0, narration, t)
+    return beats._figure_box(joints, origin, scale)
+
+
+def test_sun_sits_in_sky_band_clear_of_figure(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "The sun rises over the hill."
+    plan = plan_beat(0, "H", narration, "host", False)
+    assert [sprite.name for sprite in plan.sprites] == ["sun"]
+    _sprite_folder(tmp_path, use_sprite_dir, {"sun": (100, 100)})
+
+    placed = beats._sprite_layout(plan, 0.0, narration, 3.0)
+
+    assert len(placed) == 1
+    sun = placed[0]
+    low, high = beats.SKY_BAND_Y
+    assert low <= sun.y <= high
+    size = beats._sprite_draw_size("sun")
+    assert size is not None
+    assert not beats._overlaps(
+        beats._box_at(sun.x, sun.y, size), _figure_box_for(plan, narration, 3.0)
+    )
+
+
+def test_hand_sprite_sits_at_hand_height(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "Every atom counts."
+    plan = plan_beat(0, "H", narration, "host", False)
+    assert plan.pose == "stand"
+    _sprite_folder(tmp_path, use_sprite_dir, {"atom": (100, 400)})
+
+    placed = beats._sprite_layout(plan, 0.0, narration, 3.0)
+
+    assert len(placed) == 1
+    joints, origin, scale, _ = beats._figure_placement(plan, 0.0, narration, 3.0)
+    hand_y = origin[1] + wrist_offset(joints, scale, "l")[1]
+    assert abs(placed[0].y - hand_y) <= 100
+    assert abs(placed[0].y - beats.HAND_Y) <= 100
+
+
+def test_sprite_moves_to_next_candidate_when_a_prop_overlaps(
+    tmp_path: Path, use_sprite_dir
+) -> None:
+    narration = "Every atom counts."
+    plan = plan_beat(0, "H", narration, "host", False)
+    _sprite_folder(tmp_path, use_sprite_dir, {"atom": (100, 400)})
+    figure = _figure_box_for(plan, narration, 3.0)
+    preferred = plan.sprites[0]
+    size = beats._sprite_draw_size("atom")
+    assert size is not None
+    # A prop sitting exactly on the preferred spot pushes the sprite to the next candidate.
+    blocker = beats._box_at(preferred.x, preferred.y, size)
+
+    free = beats._place_sprites(plan, figure, [blocker])
+    blocked = beats._place_sprites(plan, figure, [])
+
+    assert blocked[0].x == preferred.x
+    assert len(free) == 1
+    assert free[0].x == preferred.x + beats.SPRITE_SHIFT_X[1]
+    assert free[0].y == preferred.y
+
+
+def test_sprite_is_skipped_when_no_candidate_is_free(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "The sun rises."
+    plan = plan_beat(0, "H", narration, "host", False)
+    _sprite_folder(tmp_path, use_sprite_dir, {"sun": (100, 100)})
+
+    everything = (0.0, 0.0, float(FRAME[0]), float(FRAME[1]))
+    assert beats._place_sprites(plan, everything, []) == []
+
+
+def test_at_most_three_sprites_are_placed(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "Atom, water, sun, star, heart, gear and coin."
+    plan = plan_beat(0, "H", narration, "host", False)
+    _sprite_folder(
+        tmp_path,
+        use_sprite_dir,
+        {
+            name: (100, 100)
+            for name in ("atom", "molecule_water", "sun", "star", "heart", "gear", "coin")
+        },
+    )
+
+    placed = beats._sprite_layout(plan, 0.0, narration, 3.0)
+
+    assert len(placed) <= beats.SPRITE_CAP
+    assert len(plan.sprites) == beats.SPRITE_CAP
+
+
+def test_draw_beat_with_placed_sprites_returns_rgb_frame(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "Every atom in the sun is warm."
+    plan = replace(plan_beat(0, "H", narration, "host", False), expression="neutral")
+    _sprite_folder(tmp_path, use_sprite_dir, {"atom": (100, 400), "sun": (100, 100)})
+
+    img = _render(plan, narration, t=3.0)
+
+    assert img.mode == "RGB"
+    assert img.size == FRAME
 
 
 def test_sprite_props_do_not_use_the_prop_cap() -> None:
@@ -576,4 +673,6 @@ def test_present_sprite_is_pasted_at_its_slot(tmp_path: Path, use_sprite_dir) ->
     with_sprite = _render(plan, narration)
 
     assert with_sprite.tobytes() != fallback.tobytes()
-    assert with_sprite.getpixel((spec.x, spec.y)) == (10, 200, 10)
+    placed = beats._sprite_layout(plan, 0.0, narration, 1.5)
+    assert len(placed) == 1
+    assert with_sprite.getpixel((placed[0].x, placed[0].y)) == (10, 200, 10)
