@@ -14,7 +14,7 @@
     "gsap": "3.12.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "remotion": "4.0.528",
+    "remotion": "4.0.539",
     "satori": "0.10.13"
   },
   "devDependencies": {
