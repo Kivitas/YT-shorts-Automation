@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 from PIL import Image
 
 from autoshorts.longform.rig import EXPRESSIONS, POSES, draw_rig
@@ -10,6 +12,11 @@ W, H = 1920, 1080
 ORIGIN = (960.0, 700.0)
 SCALE = 1.9
 BG = (40, 52, 70)
+THIGH_UNITS = 56.0
+SHIN_UNITS = 52.0
+
+NEW_POSES = {"sit_chair", "lean_wall", "hug_knees", "fist_up", "reach_up", "fall_back"}
+NEW_EXPRESSIONS = {"happy", "worried", "determined", "tired_smile"}
 
 
 def _canvas(mode: str = "RGB") -> Image.Image:
@@ -30,6 +37,17 @@ def test_every_expression_draws_without_error() -> None:
         draw_rig(img, "stand", ORIGIN, SCALE, expression=name, headband=True)
         assert img.size == (W, H)
         assert img.tobytes() != _canvas().tobytes(), f"expression {name!r} drew nothing"
+
+
+def test_new_poses_and_expressions_are_registered() -> None:
+    assert NEW_POSES <= set(POSES)
+    assert NEW_EXPRESSIONS <= set(EXPRESSIONS)
+
+
+def test_expressions_define_every_face_parameter() -> None:
+    required = set(EXPRESSIONS["neutral"])
+    for name, params in EXPRESSIONS.items():
+        assert set(params) == required, f"expression {name!r} has mismatched keys"
 
 
 def test_unknown_names_fall_back_to_stand_and_neutral() -> None:
@@ -57,6 +75,28 @@ def test_headband_ribbons_flutter_with_time() -> None:
     assert a.tobytes() != b.tobytes()
 
 
+def test_mirror_flips_the_whole_figure() -> None:
+    plain = _canvas()
+    draw_rig(plain, "point", ORIGIN, SCALE, expression="happy", headband=True)
+    mirrored = _canvas()
+    draw_rig(mirrored, "point", ORIGIN, SCALE, expression="happy", headband=True, mirror=True)
+    assert mirrored.tobytes() != plain.tobytes()
+    # The hip sits on the x = 960 boundary, so mirroring is an exact image flip.
+    assert mirrored.tobytes() == plain.transpose(Image.Transpose.FLIP_LEFT_RIGHT).tobytes()
+
+
+def test_mirror_defaults_to_false() -> None:
+    sig = inspect.signature(draw_rig)
+    assert sig.parameters["mirror"].default is False
+
+
+def test_public_signature_is_preserved() -> None:
+    names = list(inspect.signature(draw_rig).parameters)
+    assert names == [
+        "img", "pose", "origin", "scale", "expression", "headband", "t", "mirror",
+    ]  # fmt: skip
+
+
 def test_output_size_and_mode_unchanged() -> None:
     rgb = _canvas("RGB")
     draw_rig(rgb, "climb_slope", ORIGIN, SCALE, expression="grit", headband=True)
@@ -67,3 +107,14 @@ def test_output_size_and_mode_unchanged() -> None:
     draw_rig(rgba, "box_punch", ORIGIN, SCALE, expression="shadow_smirk")
     assert rgba.size == (W, H)
     assert rgba.mode == "RGBA"
+
+
+def test_ground_shadow_is_translucent_under_feet() -> None:
+    img = _canvas("RGBA")
+    draw_rig(img, "stand", ORIGIN, SCALE)
+    # Beside the legs, inside the shadow ellipse on the ground, the background is darkened.
+    feet_y = int(ORIGIN[1] + (THIGH_UNITS + SHIN_UNITS) * SCALE)
+    r, g, b, _ = img.getpixel((int(ORIGIN[0]) + 100, feet_y + 8))
+    bg_r, bg_g, bg_b = BG
+    assert r <= bg_r and g <= bg_g and b <= bg_b
+    assert (r, g, b) != (bg_r, bg_g, bg_b)

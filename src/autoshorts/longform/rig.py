@@ -1,8 +1,10 @@
-"""Cinematic flat-illustrated figure rig for longform scenes.
+"""Flat-illustrated explainer figure rig for longform scenes (Kurzgesagt-like).
 
-The figure has thick dark outlines, a cream body with a grey shaded back side, an
-optional red headband with fluttering ribbons, and a face that can read as
-exhausted, gritted, neutral or a shadowy smirk.
+The figure has a rounded cream body with a grey shaded back side, a shirt with a
+collar, three-finger mitt hands, shoes, a soft ground shadow, and a face with
+pupils, eyelids, highlights, brows and several mouth shapes. An optional red
+headband with fluttering ribbons is available, and the whole figure can be
+mirrored for variety.
 
 Pose format
 -----------
@@ -20,11 +22,20 @@ self-contained and does not import ``drawer.py``.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 from PIL import Image, ImageDraw
 
 CREAM = (234, 230, 223)
 CREAM_SHADE = (184, 180, 172)
+EYE_WHITE = (251, 250, 247)
+MOUTH = (92, 30, 40)
+BLUSH = (238, 118, 128, 110)
+SHIRT = (44, 122, 132)
+SHIRT_SHADE = (31, 92, 101)
+SHOE = (52, 40, 56)
+SHOE_SHADE = (34, 26, 38)
+SHADOW = (0, 0, 0, 70)
 INK = (16, 16, 22)
 HEADBAND = (230, 57, 70)
 
@@ -40,6 +51,9 @@ TORSO_W = 34.0
 NECK_W = 14.0
 ARM_W = 13.0
 LEG_W = 16.0
+
+_Point = tuple[float, float]
+_Map = Callable[[float, float], _Point]
 
 _STAND_KEYS = (
     "torso", "head",
@@ -184,20 +198,104 @@ POSES: dict[str, dict[str, float]] = {
         "r_thigh": 12,
         "r_shin": 10,
     },
+    "sit_chair": {
+        "torso": 6,
+        "head": 2,
+        "l_upper": 50,
+        "l_lower": 105,
+        "r_upper": 40,
+        "r_lower": 100,
+        "l_thigh": 92,
+        "l_shin": 2,
+        "r_thigh": 88,
+        "r_shin": 0,
+    },
+    "lean_wall": {
+        "torso": 16,
+        "head": 8,
+        "l_upper": 95,
+        "l_lower": 150,
+        "r_upper": -20,
+        "r_lower": -40,
+        "l_thigh": 18,
+        "l_shin": -6,
+        "r_thigh": 6,
+        "r_shin": 8,
+    },
+    "hug_knees": {
+        "torso": 25,
+        "head": 40,
+        "l_upper": 70,
+        "l_lower": 100,
+        "r_upper": 60,
+        "r_lower": 110,
+        "l_thigh": 110,
+        "l_shin": -30,
+        "r_thigh": 106,
+        "r_shin": -20,
+        "drop": 12,
+    },
+    "fist_up": {
+        "torso": 0,
+        "head": 0,
+        "r_upper": 165,
+        "r_lower": 178,
+        "l_upper": -14,
+        "l_lower": -18,
+        "l_thigh": -8,
+        "l_shin": -6,
+        "r_thigh": 8,
+        "r_shin": 6,
+    },
+    "reach_up": {
+        "torso": 0,
+        "head": -4,
+        "l_upper": -160,
+        "l_lower": -176,
+        "r_upper": 160,
+        "r_lower": 176,
+    },
+    "fall_back": {
+        "torso": -58,
+        "head": -30,
+        "l_upper": -150,
+        "l_lower": -175,
+        "r_upper": 130,
+        "r_lower": 165,
+        "l_thigh": 25,
+        "l_shin": -5,
+        "r_thigh": 45,
+        "r_shin": 15,
+        "drop": 0.5,
+    },
 }
 
 # Face parameters. lid: 0 open to 1 shut. brow: degrees, positive = inner end down
 # (angry), negative = inner end up (worried). curve: mouth, -1 frown to +1 smile.
-EXPRESSIONS: dict[str, dict[str, float]] = {
-    "neutral": {"lid": 0.0, "brow": 0.0, "curve": 0.2, "bags": 0, "teeth": 0,
-                "vein": 0, "glow": 0, "smirk": 0},
-    "exhausted": {"lid": 0.55, "brow": -10.0, "curve": -0.6, "bags": 1, "teeth": 0,
-                  "vein": 0, "glow": 0, "smirk": 0},
-    "grit": {"lid": 0.0, "brow": 28.0, "curve": 0.0, "bags": 0, "teeth": 1,
-             "vein": 1, "glow": 0, "smirk": 0},
-    "shadow_smirk": {"lid": 0.35, "brow": 14.0, "curve": 0.0, "bags": 0, "teeth": 0,
-                     "vein": 0, "glow": 1, "smirk": 1},
+# open: mouth oval height, 0 closed. squint: 1 turns the eyes into happy arcs.
+# look: pupil shift, -1 left to +1 right. blush, bags, teeth, vein, glow, smirk: 0/1.
+_EXPR_DEFAULTS: dict[str, float] = {
+    "lid": 0.0, "brow": 0.0, "curve": 0.0, "bags": 0, "teeth": 0, "vein": 0,
+    "glow": 0, "smirk": 0, "open": 0, "blush": 0, "squint": 0, "look": 0.0,
 }  # fmt: skip
+
+
+def _expr(**overrides: float) -> dict[str, float]:
+    values = dict(_EXPR_DEFAULTS)
+    values.update(overrides)
+    return values
+
+
+EXPRESSIONS: dict[str, dict[str, float]] = {
+    "neutral": _expr(curve=0.0),
+    "exhausted": _expr(lid=0.55, brow=-10.0, curve=-0.6, bags=1, look=-0.3),
+    "grit": _expr(brow=28.0, teeth=1, vein=1),
+    "shadow_smirk": _expr(lid=0.35, brow=14.0, glow=1, smirk=1, look=0.4),
+    "happy": _expr(squint=1, curve=1.0, open=1.0, blush=1, brow=-8.0),
+    "worried": _expr(brow=-22.0, curve=-0.5, open=0.5, look=-0.4),
+    "determined": _expr(lid=0.12, brow=22.0, curve=0.0, look=0.25),
+    "tired_smile": _expr(lid=0.5, brow=-4.0, curve=0.5, bags=1, blush=1),
+}
 
 _HALO_ALPHA = (HEADBAND[0], HEADBAND[1], HEADBAND[2], 80)
 
@@ -210,22 +308,27 @@ def _resolve_pose(name: str) -> dict[str, float]:
     return joints
 
 
-def _up(base: tuple[float, float], deg: float, length: float, s: float) -> tuple[float, float]:
+def _up(base: _Point, deg: float, length: float, s: float) -> _Point:
     """Point ``length`` units from ``base`` along an angle measured from straight up."""
     a = math.radians(deg)
     return (base[0] + length * s * math.sin(a), base[1] - length * s * math.cos(a))
 
 
-def _down(base: tuple[float, float], deg: float, length: float, s: float) -> tuple[float, float]:
+def _down(base: _Point, deg: float, length: float, s: float) -> _Point:
     """Point ``length`` units from ``base`` along an angle measured from straight down."""
     a = math.radians(deg)
     return (base[0] + length * s * math.sin(a), base[1] + length * s * math.cos(a))
 
 
+def _rot(v: _Point, deg: float) -> _Point:
+    a = math.radians(deg)
+    return (v[0] * math.cos(a) - v[1] * math.sin(a), v[0] * math.sin(a) + v[1] * math.cos(a))
+
+
 def _capsule(
     draw: ImageDraw.ImageDraw,
-    a: tuple[float, float],
-    b: tuple[float, float],
+    a: _Point,
+    b: _Point,
     width: float,
     fill: tuple[int, ...],
 ) -> None:
@@ -238,7 +341,7 @@ def _capsule(
 
 def _limb(
     draw: ImageDraw.ImageDraw,
-    pts: list[tuple[float, float]],
+    pts: list[_Point],
     width: float,
     fill: tuple[int, ...],
     ow: float,
@@ -251,15 +354,13 @@ def _limb(
         _capsule(draw, a, b, width, fill)
 
 
-def _disc(
-    draw: ImageDraw.ImageDraw, c: tuple[float, float], r: float, fill: tuple[int, ...]
-) -> None:
+def _disc(draw: ImageDraw.ImageDraw, c: _Point, r: float, fill: tuple[int, ...]) -> None:
     draw.ellipse([c[0] - r, c[1] - r, c[0] + r, c[1] + r], fill=fill)
 
 
 def _outlined_poly(
     draw: ImageDraw.ImageDraw,
-    pts: list[tuple[float, float]],
+    pts: list[_Point],
     fill: tuple[int, ...],
     ow: float,
 ) -> None:
@@ -271,17 +372,101 @@ def _outlined_poly(
     draw.polygon(pts, fill=fill)
 
 
-def _render(
+def _hand(
     draw: ImageDraw.ImageDraw,
+    elbow: _Point,
+    wrist: _Point,
+    s: float,
+    fill: tuple[int, ...],
+    ow: float,
+) -> None:
+    """Three-finger mitt continuing the forearm direction."""
+    dx, dy = wrist[0] - elbow[0], wrist[1] - elbow[1]
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return
+    d = (dx / length, dy / length)
+    hr = 7.0 * s
+    palm = (wrist[0] + d[0] * hr * 0.35, wrist[1] + d[1] * hr * 0.35)
+    base = (palm[0] + d[0] * hr * 0.4, palm[1] + d[1] * hr * 0.4)
+    fingers = []
+    for ang in (-30.0, 0.0, 30.0):
+        fd = _rot(d, ang)
+        fingers.append((base, (base[0] + fd[0] * hr * 0.85, base[1] + fd[1] * hr * 0.85)))
+    fw = hr * 0.62
+    for a, b in fingers:
+        _capsule(draw, a, b, fw + 2 * ow, INK)
+    _disc(draw, palm, hr + ow, INK)
+    for a, b in fingers:
+        _capsule(draw, a, b, fw, fill)
+    _disc(draw, palm, hr, fill)
+
+
+def _shoe(
+    draw: ImageDraw.ImageDraw,
+    ankle: _Point,
+    s: float,
+    fill: tuple[int, ...],
+    ow: float,
+) -> None:
+    """Rounded shoe pointing toward screen right."""
+    a = (ankle[0] - 3 * s, ankle[1] + 4 * s)
+    b = (ankle[0] + 9 * s, ankle[1] + 4 * s)
+    _capsule(draw, a, b, 12 * s + 2 * ow, INK)
+    _capsule(draw, a, b, 12 * s, fill)
+
+
+def _ell_pts(hp: _Map, cu: float, cv: float, rx: float, ry: float, n: int = 24) -> list[_Point]:
+    """Head-local ellipse sampled into canvas points."""
+    return [
+        hp(cu + rx * math.cos(2 * math.pi * k / n), cv + ry * math.sin(2 * math.pi * k / n))
+        for k in range(n)
+    ]
+
+
+def _lid_cover(
+    hp: _Map, cu: float, cv: float, rx: float, ry: float, lid: float
+) -> tuple[list[_Point], list[_Point]]:
+    """Top boundary and lid-edge boundary of the eyelid region, clipped to the eye."""
+    edge_v = cv - ry + 2 * ry * lid
+    tops: list[_Point] = []
+    bots: list[_Point] = []
+    for i in range(13):
+        u = -rx + 2 * rx * i / 12
+        half = math.sqrt(max(0.0, 1 - (u / rx) ** 2))
+        top = cv - ry * half
+        bot = cv + ry * half
+        edge = max(top, min(edge_v, bot))
+        tops.append(hp(cu + u, top))
+        bots.append(hp(cu + u, edge))
+    return tops, bots
+
+
+def _overlay_discs(
+    layer: Image.Image, items: list[tuple[_Point, float, float, tuple[int, ...]]]
+) -> None:
+    """Alpha-blend soft ellipses onto ``layer`` without erasing what is underneath."""
+    if not items:
+        return
+    overlay = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    for c, rx, ry, color in items:
+        od.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=color)
+    layer.alpha_composite(overlay)
+
+
+def _render(
+    layer: Image.Image,
     joints: dict[str, float],
-    origin: tuple[float, float],
+    origin: _Point,
     scale: float,
     expr: dict[str, float],
     headband: bool,
     t: float,
 ) -> None:
+    draw = ImageDraw.Draw(layer)
     s = scale
-    ow = max(2.0, 3.5 * s)
+    ow = max(1.0, 2.0 * s)
     ox, oy = origin
     hip = (ox, oy + joints["drop"] * s)
     top = _up(hip, joints["torso"], TORSO_LEN, s)
@@ -297,29 +482,50 @@ def _render(
     arm_r = [top, elb_r, _down(elb_r, joints["r_lower"], LOWER_LEN, s)]
     arm_l = [top, elb_l, _down(elb_l, joints["l_lower"], LOWER_LEN, s)]
 
-    # Back side (screen right) is shaded: far leg and far arm are CREAM_SHADE.
-    _limb(draw, leg_r, LEG_W * s, CREAM_SHADE, ow)
-    _limb(draw, leg_l, LEG_W * s, CREAM, ow)
-    _limb(draw, arm_r, ARM_W * s, CREAM_SHADE, ow)
+    # Soft cast shadow under the feet, drawn first so the figure sits on it.
+    shadow_y = max(leg_r[2][1], leg_l[2][1]) + 7 * s
+    draw.ellipse(
+        [hip[0] - 62 * s, shadow_y - 10 * s, hip[0] + 62 * s, shadow_y + 10 * s], fill=SHADOW
+    )
 
-    # Torso with a shaded strip along its back edge.
+    # Back side (screen right) is shaded: far leg, far arm and far hand use CREAM_SHADE.
+    _limb(draw, leg_r, LEG_W * s, CREAM_SHADE, ow)
+    _shoe(draw, leg_r[2], s, SHOE_SHADE, ow)
+    _limb(draw, leg_l, LEG_W * s, CREAM, ow)
+    _shoe(draw, leg_l[2], s, SHOE, ow)
+    _limb(draw, arm_r, ARM_W * s, CREAM_SHADE, ow)
+    _hand(draw, arm_r[1], arm_r[2], s, CREAM_SHADE, ow)
+
+    # Shirt torso with a shaded strip along its back edge.
     tw = TORSO_W * s
     _capsule(draw, hip, top, tw + 2 * ow, INK)
-    _capsule(draw, hip, top, tw, CREAM)
-    dx, dy = math.cos(math.radians(joints["torso"])), math.sin(math.radians(joints["torso"]))
+    _capsule(draw, hip, top, tw, SHIRT)
+    perp = (math.cos(math.radians(joints["torso"])), math.sin(math.radians(joints["torso"])))
+    axis = (-perp[1], perp[0])  # hip-to-top direction, perpendicular to perp
     off = 0.28 * tw
-    strip_a = (hip[0] + dx * off, hip[1] + dy * off)
-    strip_b = (top[0] + dx * off, top[1] + dy * off)
-    _capsule(draw, strip_a, strip_b, 0.36 * tw, CREAM_SHADE)
+    strip_a = (hip[0] + perp[0] * off, hip[1] + perp[1] * off)
+    strip_b = (top[0] + perp[0] * off, top[1] + perp[1] * off)
+    _capsule(draw, strip_a, strip_b, 0.36 * tw, SHIRT_SHADE)
 
-    # Neck, headband tails (behind the head), then the head.
+    # Neck, then a flat collar sitting over the neck base.
     _capsule(draw, top, head_c, NECK_W * s + 2 * ow, INK)
     _capsule(draw, top, head_c, NECK_W * s, CREAM)
+    half_w = 0.42 * tw
+    c_left = (
+        top[0] - perp[0] * half_w + axis[0] * 0.1 * tw,
+        top[1] - perp[1] * half_w + axis[1] * 0.1 * tw,
+    )
+    c_right = (
+        top[0] + perp[0] * half_w + axis[0] * 0.1 * tw,
+        top[1] + perp[1] * half_w + axis[1] * 0.1 * tw,
+    )
+    c_mid = (top[0] - axis[0] * 0.3 * tw, top[1] - axis[1] * 0.3 * tw)
+    _outlined_poly(draw, [c_left, c_right, c_mid], CREAM, ow * 0.8)
 
     h_rad = math.radians(joints["head"])
     hc_cos, hc_sin = math.cos(h_rad), math.sin(h_rad)
 
-    def hp(u: float, v: float) -> tuple[float, float]:
+    def hp(u: float, v: float) -> _Point:
         """Head-local (u right, v down, in head radii) to canvas coordinates."""
         return (
             head_c[0] + R * (u * hc_cos - v * hc_sin),
@@ -353,41 +559,58 @@ def _render(
         band = [hp(-0.69, -0.72), hp(0.69, -0.72), hp(0.86, -0.5), hp(-0.86, -0.5)]
         _outlined_poly(draw, band, HEADBAND, ow * 0.7)
 
-    _draw_face(draw, hp, R, expr)
+    _draw_face(draw, layer, hp, R, expr)
 
-    # Near arm sits over the torso and head.
+    # Near arm and hand sit over the torso and head.
     _limb(draw, arm_l, ARM_W * s, CREAM, ow)
+    _hand(draw, arm_l[1], arm_l[2], s, CREAM, ow)
 
 
 def _draw_face(
     draw: ImageDraw.ImageDraw,
-    hp,
+    layer: Image.Image,
+    hp: _Map,
     R: float,
     expr: dict[str, float],
 ) -> None:
-    lw = max(2, round(0.07 * R))
+    lw = max(2, round(0.06 * R))
+    brow_w = max(2, round(0.07 * R))
     line_w = max(2, round(0.05 * R))
     lid = float(expr["lid"])
+    look = float(expr["look"]) * 0.05
     glow = expr["glow"] > 0.5
+    squint = expr["squint"] > 0.5
+    eye_centers = [hp(ue, -0.08) for ue in (-0.36, 0.36)]
+
+    # Soft layers first: cheek blush and the glow halo, blended over the head.
+    soft: list[tuple[_Point, float, float, tuple[int, ...]]] = []
+    if expr["blush"] > 0.5:
+        for u in (-0.56, 0.56):
+            soft.append((hp(u, 0.2), 0.17 * R, 0.09 * R, BLUSH))
+    if glow:
+        for c in eye_centers:
+            soft.append((c, 0.34 * R, 0.34 * R, _HALO_ALPHA))
+    _overlay_discs(layer, soft)
 
     for ue in (-0.36, 0.36):
-        eye = hp(ue, -0.08)
-        if glow:
-            _disc(draw, eye, 0.34 * R, _HALO_ALPHA)
-            _disc(draw, eye, 0.15 * R, HEADBAND)
+        if squint:
+            arc = [hp(ue - 0.17, -0.02), hp(ue, -0.2), hp(ue + 0.17, -0.02)]
+            draw.line(arc, fill=INK, width=lw, joint="curve")
         else:
-            _disc(draw, eye, 0.12 * R, INK)
-
-        if lid > 0:
-            edge = -0.32 + lid * 0.46
-            lid_poly = [
-                hp(ue - 0.2, -0.34),
-                hp(ue + 0.2, -0.34),
-                hp(ue + 0.2, edge),
-                hp(ue - 0.2, edge),
-            ]
-            draw.polygon(lid_poly, fill=CREAM)
-            draw.line([hp(ue - 0.2, edge), hp(ue + 0.2, edge)], fill=INK, width=lw)
+            ring = _ell_pts(hp, ue, -0.08, 0.2, 0.24)
+            draw.polygon(ring, fill=EYE_WHITE)
+            pupil = hp(ue + look, -0.06)
+            if glow:
+                _disc(draw, pupil, 0.13 * R, HEADBAND)
+            else:
+                _disc(draw, pupil, 0.11 * R, INK)
+                _disc(draw, hp(ue + look - 0.05, -0.13), 0.035 * R, EYE_WHITE)
+            draw.line(ring + [ring[0]], fill=INK, width=lw, joint="curve")
+            if lid > 0.02:
+                tops, bots = _lid_cover(hp, ue, -0.08, 0.2, 0.24, lid)
+                draw.polygon(tops + bots[::-1], fill=CREAM)
+                draw.line(tops, fill=INK, width=lw, joint="curve")
+                draw.line(bots, fill=INK, width=lw, joint="curve")
 
         if expr["bags"] > 0.5:
             c = hp(ue, 0.22)
@@ -402,8 +625,10 @@ def _draw_face(
         sin_b = math.sin(math.radians(expr["brow"]))
         inner = hp(inner_u, -0.28 + 0.3 * sin_b)
         outer = hp(outer_u, -0.28 - 0.3 * sin_b)
-        draw.line([inner, outer], fill=INK, width=lw)
+        draw.line([inner, outer], fill=INK, width=brow_w)
 
+    open_amt = float(expr["open"])
+    curve = float(expr["curve"])
     if expr["teeth"] > 0.5:
         box = [hp(-0.3, 0.37), hp(0.3, 0.37), hp(0.3, 0.53), hp(-0.3, 0.53)]
         draw.polygon(box, fill=CREAM)
@@ -411,15 +636,18 @@ def _draw_face(
         for u in (-0.1, 0.1):
             draw.line([hp(u, 0.37), hp(u, 0.53)], fill=INK, width=line_w)
         draw.line([hp(-0.3, 0.45), hp(0.3, 0.45)], fill=INK, width=line_w)
+    elif open_amt > 0.05:
+        mouth_pts = _ell_pts(hp, 0.0, 0.44 + 0.04 * curve, 0.17, 0.13 * open_amt, 20)
+        draw.polygon(mouth_pts, fill=MOUTH)
+        draw.line(mouth_pts + [mouth_pts[0]], fill=INK, width=line_w, joint="curve")
     elif expr["smirk"] > 0.5:
         draw.line(
             [hp(-0.02, 0.44), hp(0.12, 0.42), hp(0.24, 0.34)],
-            fill=HEADBAND,
+            fill=INK,
             width=lw,
             joint="curve",
         )
     else:
-        curve = float(expr["curve"])
         mouth = []
         for i in range(9):
             u = -0.2 + 0.4 * i / 8
@@ -452,19 +680,20 @@ def draw_rig(
     expression: str = "neutral",
     headband: bool = False,
     t: float = 0.0,
+    mirror: bool = False,
 ) -> None:
     """Draw the figure onto ``img`` in place.
 
     ``origin`` is the hip in pixels and ``scale`` multiplies body units. Unknown pose
     or expression names fall back to ``stand`` and ``neutral``. ``t`` drives the
-    headband ribbon flutter.
+    headband ribbon flutter. ``mirror=True`` flips the figure horizontally about the
+    hip so it faces the other way.
     """
     pose_name = pose if pose in POSES else "stand"
     expr_name = expression if expression in EXPRESSIONS else "neutral"
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
     _render(
-        draw,
+        layer,
         _resolve_pose(pose_name),
         origin,
         scale,
@@ -472,4 +701,11 @@ def draw_rig(
         headband,
         t,
     )
+    if mirror:
+        layer = layer.transform(
+            layer.size,
+            Image.Transform.AFFINE,
+            (-1, 0, 2 * origin[0], 0, 1, 0),
+            resample=Image.Resampling.NEAREST,
+        )
     _composite(img, layer)

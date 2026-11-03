@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any
@@ -28,23 +27,9 @@ from autoshorts.core.theme import (
     ease_in_out_cubic,
     lerp_rgb,
 )
-from autoshorts.longform.engines import (
-    draw_comparison_canvas,
-    draw_finance_canvas,
-    draw_history_canvas,
-    draw_motivation_canvas,
-    draw_science_canvas,
-    font_candidates,
-)
-from autoshorts.longform.fx import (
-    camera_shake_offset,
-    draw_dust_motes,
-    draw_radial_glow,
-    draw_vignette,
-    impact_flash_alpha,
-    shatter_text,
-)
-from autoshorts.longform.rig import draw_rig
+from autoshorts.longform.beats import BeatPlan, draw_beat, plan_beat
+from autoshorts.longform.engines import font_candidates
+from autoshorts.longform.fx import camera_shake_offset, impact_flash_alpha
 from autoshorts.longform.shots import Shot, plan_shots
 from autoshorts.longform.types import MAX_VIDEO_SECONDS, VISEME_SHAPES, SectionAudio
 
@@ -84,25 +69,20 @@ MOODS = ("happy", "shocked", "deadpan", "smug", "hyped", "thinking", "angry", "w
 TRANSITIONS = ("cut", "dip", "flash", "cut", "dip", "cut")
 FLASH_FRAMES = 6
 FLASH_PEAK = 0.9
+SHOT_ZOOM: dict[str, float] = {
+    "wide": 1.0,
+    "close": 1.08,
+    "insert": 1.15,
+    "ecu": 1.25,
+    "match": 1.1,
+    "montage": 1.0,
+    "impact": 1.0,
+}
+IMPACT_FLASH_FRAMES = 3  # first frames of an impact shot blend towards white
 SHAKE_SECTION = 1  # the first section that has a transition into it
 SHAKE_SECONDS = 0.2
 SHAKE_AMPLITUDE = 14.0
-VOID_BG = (8, 8, 12)  # #08080C near-black void
 FLOOR_Y = 760
-FLOOR_LINE = (43, 46, 59)  # #2B2E3B
-OUTDOOR_SCENES = ("street", "beach")  # every other scene gets the indoor floor line
-DUST_BOX = (0, 64, WIDTH, FLOOR_Y)
-DUST_COUNT = 12
-SHOT_ZOOM = {"wide": 1.0, "close": 1.08, "insert": 1.15, "montage": 1.0}
-RIG_POSES = ("stand", "point", "slump_couch", "sleep_bed", "box_guard", "summit_stand")
-RIG_SCALE = 1.6
-LEG_UNITS = 108.0  # hip to foot in rig units (thigh + shin)
-HEAD_OFFSET = 146.0  # hip to head centre in rig units (torso + neck + head radius)
-HIP_Y = FLOOR_Y - LEG_UNITS * RIG_SCALE  # feet rest on the floor line
-STICKER_KINDS = ("star", "boom", "coin", "check", "arrow")
-STICKER_LABELS = ("WOW", "NO WAY", "REAL", "YES", "STOP", "KEY")
-STICKER_CYCLE = 5.0  # seconds between pops for one sticker slot
-STICKER_SIZE = 62
 
 # ---------------------------------------------------------------------------
 # Poses: joint positions relative to the hip, in "units" (y grows downward).
@@ -583,25 +563,6 @@ def draw_sticker(
             )
 
 
-def _draw_sparkles(d: ImageDraw.ImageDraw, t: float) -> None:
-    for i in range(14):
-        x = (i * 211 + t * (30 + (i % 4) * 18)) % WIDTH
-        y = STAGE_TOP + 40 + (i * 97) % (STAGE_BOTTOM - STAGE_TOP - 80)
-        if math.sin(t * 5 + i) < -0.2:
-            continue
-        r = 5 + (i % 3) * 2
-        d.ellipse([x - r, y - r, x + r, y + r], fill=WHITE if i % 2 else YELLOW)
-
-
-def _pop(age: float, life: float = 2.8) -> float:
-    """Scale factor for a sticker that grows, holds, then shrinks away."""
-    if age < 0:
-        return 0.0
-    grow = ease_out_back(min(1.0, age / 0.35))
-    shrink = 1.0 if age < life else max(0.0, 1 - (age - life) / 0.25)
-    return grow * shrink
-
-
 # ---------------------------------------------------------------------------
 # Scenes: flat sets painted once per scene and cached + dynamic genre engines.
 # ---------------------------------------------------------------------------
@@ -839,14 +800,6 @@ def _scene_background(name: str) -> Image.Image:
     return img
 
 
-@lru_cache(maxsize=1)
-def _void_base() -> Image.Image:
-    """Near-black void with a soft vignette; every scene is drawn on top of it."""
-    img = Image.new("RGB", (WIDTH, HEIGHT), VOID_BG)
-    draw_vignette(img, 0.6)
-    return img
-
-
 # ---------------------------------------------------------------------------
 # Fonts and captions
 # ---------------------------------------------------------------------------
@@ -891,96 +844,16 @@ def _fit_font(
     return load_font(18, bold)
 
 
-def _caption_chunk(
-    words: list[dict[str, Any]], active: int, per_line: int = 7
-) -> tuple[int, list[dict[str, Any]]]:
-    start = (max(active, 0) // per_line) * per_line
-    return start, words[start : start + per_line]
-
-
-def _active_word(words: list[dict[str, Any]], t: float) -> int:
-    active = -1
-    for i, w in enumerate(words):
-        if float(w.get("start", 0.0)) <= t:
-            active = i
-        else:
-            break
-    return active
-
-
-CAPTION_Y = 270  # centre line of the narration band (y 240..300)
 HEADING_Y = 150
 OFF_WHITE = (236, 232, 224)
 LETTERBOX_TOP = 64
 LETTERBOX_BOTTOM = 1016
-EXCUSE_PATTERN = re.compile(r"\b(not|lazy)\b", re.IGNORECASE)
-EXCUSE_AT = 0.6  # fraction of the section duration when the excuse word shatters
-EXCUSE_ADVANCE = 28.0  # horizontal advance used by shatter_text
-EXCUSE_Y = 420
 
 
 def _commit_layer(img: Image.Image, layer: Image.Image) -> None:
     base = img.convert("RGBA")
     base.alpha_composite(layer)
     img.paste(base.convert("RGB"))
-
-
-def _alpha_over(layer: Image.Image, sprite: Image.Image, x: int, y: int) -> None:
-    """Alpha-composite ``sprite`` onto ``layer`` at (x, y), clipped to the canvas."""
-    lw, lh = layer.size
-    sw, sh = sprite.size
-    x0, y0 = max(0, x), max(0, y)
-    x1, y1 = min(lw, x + sw), min(lh, y + sh)
-    if x1 <= x0 or y1 <= y0:
-        return
-    layer.alpha_composite(sprite.crop((x0 - x, y0 - y, x1 - x, y1 - y)), dest=(x0, y0))
-
-
-def _paint_caption(layer: Image.Image, words: list[dict[str, Any]], t: float) -> None:
-    """In-scene narration: off-white words centred on y=270, active word yellow, fades in over 0.5 s."""
-    alpha = min(1.0, max(0.0, t / 0.5))
-    if not words or alpha <= 0.0:
-        return
-    ld = ImageDraw.Draw(layer)
-    font = load_font(54, True)
-    active = _active_word(words, t)
-    base, chunk = _caption_chunk(words, active)
-    texts = [str(w.get("word", "")) for w in chunk]
-    space = ld.textlength(" ", font=font)
-    total = sum(ld.textlength(s, font=font) for s in texts) + space * max(len(texts) - 1, 0)
-    x = (WIDTH - total) / 2
-    a = round(255 * alpha)
-    for i, s in enumerate(texts):
-        colour = ACCENT_YELLOW if base + i == active else OFF_WHITE
-        ld.text((x, CAPTION_Y), s, font=font, fill=(*colour, a), anchor="lm")
-        x += ld.textlength(s, font=font) + space
-
-
-def _excuse_word(sa: SectionAudio) -> str:
-    """The first 'not' or 'lazy' in the heading or narration, upper-cased, or ''."""
-    text = " ".join([sa.section.heading, *(str(w.get("word", "")) for w in sa.words)])
-    match = EXCUSE_PATTERN.search(text)
-    return match.group(1).upper() if match else ""
-
-
-def _paint_excuse(
-    layer: Image.Image, word: str, t: float, start: float, duration: float = 1.2
-) -> None:
-    """Draw the excuse word in coral; from ``start`` its letters shatter outward and fall."""
-    if not word:
-        return
-    x0 = (WIDTH - (len(word) - 1) * EXCUSE_ADVANCE) / 2 - 20
-    font = load_font(64, True)
-    for ch, px, py, angle, alpha in shatter_text(word, x0, EXCUSE_Y, t, start, duration=duration):
-        if alpha <= 0.0 or not ch.strip():
-            continue
-        glyph = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
-        ImageDraw.Draw(glyph).text(
-            (48, 48), ch, font=font, fill=(*ACCENT_CORAL, round(255 * alpha)), anchor="mm"
-        )
-        if angle:
-            glyph = glyph.rotate(angle, resample=Image.Resampling.BICUBIC)
-        _alpha_over(layer, glyph, round(px) - 48, round(py) - 48)
 
 
 def _draw_chrome(d: ImageDraw.ImageDraw, title: str, index: int) -> None:
@@ -1012,74 +885,6 @@ def _paint_heading(layer: Image.Image, heading: str, t: float) -> None:
 # ---------------------------------------------------------------------------
 # Scene composition & Camera motion
 # ---------------------------------------------------------------------------
-def _blinking(t: float, offset: int) -> bool:
-    return (t + offset * 0.37) % 3.4 < 0.12
-
-
-def _layout(index: int) -> tuple[int, int, bool]:
-    """Return (main character x, facing flip, whether a friend sits on the bed)."""
-    slot = index % 3
-    if slot == 0:
-        return 1400, -1, True
-    if slot == 1:
-        return 520, 1, False
-    return 960, 1, False
-
-
-def _sticker_plan(index: int, main_x: int) -> list[tuple[int, float, float, float]]:
-    """(slot, x, y, first pop time) for the stickers in one section."""
-    if main_x == 960:
-        slots = [(250, 420), (1670, 420)]
-    else:
-        slots = [(1700, 380), (1700, 640)]
-    return [(n, x, y, 0.9 + n * 2.0) for n, (x, y) in enumerate(slots)]
-
-
-def _resolve_engine_kind(sa: SectionAudio, scene: str) -> str:
-    vm = getattr(sa.section, "visual_mode", "auto") or "auto"
-    if vm.startswith("history") or scene == "history":
-        return "history"
-    if vm.startswith("science") or scene == "science":
-        return "science"
-    if vm.startswith("comparison") or scene == "comparison":
-        return "comparison"
-    if vm.startswith("finance") or scene == "finance":
-        return "finance"
-    if vm.startswith("motivation") or scene == "motivation":
-        return "motivation"
-    if (
-        vm.startswith("parody")
-        or scene == "parody"
-        or getattr(sa.section, "speaker", "narrator") in ("skeptic", "cohost")
-    ):
-        return "parody"
-    return "classic"
-
-
-def _apply_camera_motion(
-    img: Image.Image, t: float, dur: float, engine_kind: str, speaker: str
-) -> Image.Image:
-    """Apply subtle Ken-Burns zoom/pan or parody deadpan punch-in on the stage area."""
-    zoom = 1.0 + 0.032 * (0.5 - 0.5 * math.cos(t * 0.55))
-    focus_x, focus_y = WIDTH * 0.5, HEIGHT * 0.48
-    if (
-        engine_kind == "parody"
-        and dur > 1.0
-        and (t > dur * 0.78 or speaker in ("skeptic", "cohost"))
-    ):
-        # Deadpan punch-in toward the active speaker
-        zoom = 1.06
-        focus_x = 1360.0 if speaker in ("skeptic", "cohost") else 560.0
-    if zoom <= 1.002:
-        return img
-    crop_w = int(WIDTH / zoom)
-    crop_h = int(HEIGHT / zoom)
-    x0 = max(0, min(WIDTH - crop_w, int(focus_x - crop_w / 2)))
-    y0 = max(0, min(HEIGHT - crop_h, int(focus_y - crop_h / 2)))
-    cropped = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
-    return cropped.resize((WIDTH, HEIGHT), Image.BICUBIC)
-
-
 def _zoom_centre(img: Image.Image, zoom: float) -> Image.Image:
     """Punch in on the frame centre by ``zoom``; 1.0 returns ``img`` unchanged."""
     if zoom <= 1.0:
@@ -1112,131 +917,60 @@ def _section_shots(sa: SectionAudio) -> list[Shot]:
         return [Shot(0.0, duration, "wide")]
 
 
-def _shot_zoom(shots: Sequence[Shot], t: float) -> float:
-    """Camera zoom for the shot that covers section time ``t``."""
+def _speaker(sa: SectionAudio) -> str:
+    return (getattr(sa.section, "speaker", "narrator") or "narrator").lower()
+
+
+def _locate_frame(shots: Sequence[Shot], frame: int) -> tuple[Shot, int]:
+    """Return the shot covering section frame ``frame`` and the frame where that shot starts."""
     for shot in shots:
-        if shot.start <= t < shot.end:
-            return SHOT_ZOOM.get(shot.kind, 1.0)
-    return 1.0
+        start_frame = round(shot.start * FPS)
+        if start_frame <= frame < round(shot.end * FPS):
+            return shot, start_frame
+    last = shots[-1]
+    return last, round(last.start * FPS)
 
 
-GLOW_SNAP = 4  # head glow position is snapped to this many px so the lit base can be cached
-GLOW_REST_T = 2.0  # seconds after which the entrance has settled
-
-
-@lru_cache(maxsize=8)
-def _lit_base(head_x: int, head_y: int) -> Image.Image:
-    """Void base with the teal key glow behind the head and the coral fill bottom-right.
-
-    The glows are the expensive part of a frame, so the lit base is cached per head position.
-    """
-    img = _void_base().copy()
-    draw_radial_glow(img, (head_x, head_y), 260, ACCENT_TEAL, 0.25)
-    draw_radial_glow(img, (WIDTH - 160, HEIGHT - 80), 420, ACCENT_CORAL, 0.2)
+def _shot_camera(img: Image.Image, shot: Shot, t_in_shot: float) -> Image.Image:
+    """Shot-kind camera: centre punch-in, plus a short decaying shake on impact shots."""
+    img = _zoom_centre(img, SHOT_ZOOM.get(shot.kind, 1.0))
+    if shot.kind == "impact":
+        dx, dy = camera_shake_offset(
+            t_in_shot, 0.0, duration=SHAKE_SECONDS, amplitude=SHAKE_AMPLITUDE
+        )
+        img = _shift(img, dx, dy)
     return img
 
 
-def _stage_hip(
-    engine_kind: str, index: int, t: float
-) -> tuple[float, list[tuple[int, float, float, float]]]:
-    """Hip x position of the figure for this section, plus the classic-scene sticker plan."""
-    if engine_kind in ("history", "science", "comparison", "finance", "motivation"):
-        enter = ease_out_back(min(1.0, t / 0.55))
-        return 265 - (1.0 - enter) * 360, []
-    if engine_kind == "parody":
-        enter = ease_out_back(min(1.0, t / 0.55))
-        return 440 - (1.0 - enter) * 450, []
-    main_x, _flip, _friend = _layout(index)
-    direction = (main_x > 960) - (main_x < 960)
-    enter = ease_out_back(min(1.0, t / 0.6))
-    return main_x + (1 - enter) * 700 * direction, _sticker_plan(index, main_x)
+def _impact_flash(img: Image.Image, shot: Shot, t_in_shot: float) -> Image.Image:
+    """Blend the first frames of an impact shot towards white."""
+    if shot.kind != "impact":
+        return img
+    alpha = impact_flash_alpha(t_in_shot, 0.0, frames=IMPACT_FLASH_FRAMES, fps=FPS)
+    if alpha <= 0.0:
+        return img
+    white = Image.new("RGB", img.size, (255, 255, 255))
+    return Image.blend(img, white, FLASH_PEAK * alpha)
 
 
 def _draw_scene(
     sa: SectionAudio,
     title: str,
-    t: float,
     index: int,
-    count: int,
-    elapsed_before: float,
-    total: float,
-    scene: str,
-    zoom: float = 1.0,
+    plan: BeatPlan,
+    shot: Shot,
+    t: float,
+    t_in_shot: float,
 ) -> Image.Image:
-    engine_kind = _resolve_engine_kind(sa, scene)
-    speaker = (getattr(sa.section, "speaker", "narrator") or "narrator").lower()
-    sub_domain = getattr(sa.section, "sub_domain", "") or ""
-    callout = getattr(sa.section, "hook_callout", "") or ""
-    comp_data = getattr(sa.section, "comparison_data", None)
-    bob = math.sin(t * 3.5) * 2.0
-    pose = RIG_POSES[index % len(RIG_POSES)]
-    expression = "exhausted" if index % 2 == 0 else "grit"
-    headband = index == count - 1
-
-    hip_x, stickers = _stage_hip(engine_kind, index, t)
-    # The glow sits at the settled rest position so the cached lit base is reused across frames.
-    rest_x, _ = _stage_hip(engine_kind, index, GLOW_REST_T)
-    head_x = round(rest_x / GLOW_SNAP) * GLOW_SNAP
-    head_y = round((HIP_Y - HEAD_OFFSET * RIG_SCALE) / GLOW_SNAP) * GLOW_SNAP
-    img = _lit_base(int(head_x), int(head_y)).copy()
-    d = ImageDraw.Draw(img)
-    if scene not in OUTDOOR_SCENES:
-        d.line([(0, FLOOR_Y), (WIDTH, FLOOR_Y)], fill=FLOOR_LINE, width=2)
-    draw_dust_motes(d, t, DUST_BOX, count=DUST_COUNT, seed=7 + index)
-
-    if engine_kind in ("history", "science", "comparison", "finance", "motivation"):
-        if engine_kind == "history":
-            draw_history_canvas(
-                img, d, t, index, sa.section.heading, callout, sub_domain, load_font
-            )
-        elif engine_kind == "science":
-            draw_science_canvas(
-                img, d, t, index, sa.section.heading, callout, sub_domain, load_font
-            )
-        elif engine_kind == "comparison":
-            draw_comparison_canvas(
-                img, d, t, index, sa.section.heading, comp_data, sub_domain, load_font
-            )
-        elif engine_kind == "finance":
-            draw_finance_canvas(img, d, t, index, sa.section.heading, callout, load_font)
-        else:
-            draw_motivation_canvas(
-                img, d, t, index, sa.section.heading, callout, sub_domain, load_font
-            )
-    else:
-        _draw_sparkles(d, t)
-
-    draw_rig(
-        img,
-        pose,
-        (hip_x, HIP_Y + bob),
-        RIG_SCALE,
-        expression=expression,
-        headband=headband,
-        t=t,
-    )
-    d = ImageDraw.Draw(img)
-
-    for slot, sx, sy, start in stickers:
-        if t < start:
-            continue
-        age = (t - start) % STICKER_CYCLE
-        cycle_no = int((t - start) // STICKER_CYCLE)
-        j = index * 2 + slot + cycle_no
-        size = STICKER_SIZE * _pop(age)
-        if size >= 2:
-            kind = STICKER_KINDS[j % len(STICKER_KINDS)]
-            draw_sticker(d, kind, sx, sy, size, STICKER_LABELS[j % len(STICKER_LABELS)])
-
-    img = _apply_camera_motion(img, t, sa.duration, engine_kind, speaker)
-    img = _zoom_centre(img, zoom)
+    """One frame: the beat scene at section time ``t``, then shot camera, heading and chrome."""
+    img = Image.new("RGB", (WIDTH, HEIGHT))
+    draw_beat(img, plan, t, shot.start, shot.end, sa.section.narration, sa.words)
+    img = _shot_camera(img, shot, t_in_shot)
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     _paint_heading(layer, sa.section.heading, t)
-    _paint_excuse(layer, _excuse_word(sa), t, start=EXCUSE_AT * sa.duration)
-    _paint_caption(layer, sa.words, t)
     _commit_layer(img, layer)
     _draw_chrome(ImageDraw.Draw(img), title, index)
-    return img
+    return _impact_flash(img, shot, t_in_shot)
 
 
 def _transition(kind: str, prev: Image.Image, cur: Image.Image, k: float) -> Image.Image:
@@ -1323,21 +1057,23 @@ def _frames(
     max_seconds: float | None,
     scenes: tuple[str, ...],
 ) -> Iterator[bytes]:
-    elapsed = 0.0
+    # ``total`` and ``scenes`` stay in the signature; beats paints its own backdrop per section.
     trans_frames = max(1, int(TRANSITION_SECONDS * FPS))
+    last_index = len(sections) - 1
     prev_last: Image.Image | None = None
     for idx, sa in enumerate(sections):
         dur = sa.duration if max_seconds is None else min(sa.duration, max_seconds)
         n = max(1, round(dur * FPS))
-        scene = scenes[idx % len(scenes)]
         kind = TRANSITIONS[idx % len(TRANSITIONS)]
-        shots = _section_shots(sa)
+        plan = plan_beat(
+            idx, sa.section.heading, sa.section.narration, _speaker(sa), idx == last_index
+        )
+        shots = _section_shots(sa) or [Shot(0.0, max(dur, 0.0), "wide")]
         img: Image.Image | None = None
         for f in range(n):
             t = f / FPS
-            img = _draw_scene(
-                sa, title, t, idx, len(sections), elapsed, total, scene, zoom=_shot_zoom(shots, t)
-            )
+            shot, shot_start = _locate_frame(shots, f)
+            img = _draw_scene(sa, title, idx, plan, shot, t, max(0, f - shot_start) / FPS)
             if prev_last is not None and f < trans_frames:
                 img = _transition(kind, prev_last, img, ease_in_out_cubic((f + 1) / trans_frames))
                 if idx == SHAKE_SECTION:
@@ -1348,4 +1084,3 @@ def _frames(
             yield img.tobytes()
         if img is not None:
             prev_last = img
-        elapsed += sa.duration

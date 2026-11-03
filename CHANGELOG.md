@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Captions** (Shorts): the default preset is `kurz`, a rounded translucent pill.
 - **Voice**: Shorts +12%, longform +10%, a 0.35 s gap between longform sections.
 - **Renderer**: CRF 18 encode, BICUBIC resampling for camera moves and transitions.
+- **Scene composer** (`longform/beats.py`): each section picks props, a pose and light from its narration and draws every shot.
+- **Props** (`longform/props.py`): 19 flat props (bed, desk monitor, phone, clock, calendar, mountain, shadow figure, and more).
+- **Lighting** (`longform/lighting.py`): bloom, coloured light cones, rim light, colour wash and source glow.
+- **Kinetic text** (`longform/kinetic_text.py`): word-by-word narration, red inner-voice lines, number pops and letter shatter.
+- **Cutting** (`longform/shots.py`): beat-synced cuts, montage runs, ECU and impact shots, and match cuts.
+- **Rig** (`longform/rig.py`): richer figure with more poses, expressions and a mirror option.
 
 ### Fixed
 

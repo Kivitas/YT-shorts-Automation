@@ -87,6 +87,32 @@ def test_render_scene_frames_yields_full_hd_frames_with_expected_count() -> None
     assert len(frames[0]) == WIDTH * HEIGHT * 3
 
 
+def test_render_scene_frames_caps_each_section_and_yields_full_hd_bytes() -> None:
+    impact_words = [
+        {"word": "Not", "start": 0.1, "end": 0.4},
+        {"word": "lazy", "start": 0.5, "end": 0.9},
+        {"word": "every", "start": 1.0, "end": 1.3},
+        {"word": "day.", "start": 1.4, "end": 1.8},
+    ]
+    sections = [
+        SectionAudio(
+            section=Section(heading="Not again", narration="Not lazy. Every day."),
+            audio_path=Path("unused.wav"),
+            words=impact_words,
+            duration=2.5,
+        ),
+        SectionAudio(
+            section=Section(heading="Keep going", narration="Keep going."),
+            audio_path=Path("unused.wav"),
+            words=[],
+            duration=2.0,
+        ),
+    ]
+    frames = list(render_scene_frames(sections, "Demo", max_seconds_per_section=1.0))
+    assert len(frames) == 2 * round(1.0 * drawer.FPS)
+    assert all(len(frame) == WIDTH * HEIGHT * 3 for frame in frames)
+
+
 def test_character_frame_renders_at_full_hd(tmp_path: Path) -> None:
     img = _frame("office")
     draw = ImageDraw.Draw(img)
