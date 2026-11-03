@@ -27,6 +27,13 @@ const FONT_CANDIDATES = [
 const INK = "#10101A";
 const CREAM = "#EAE6DF";
 const SHADE = "#B8B4AC";
+// Character palette matched to the reference figure: peach skin, red shirt, navy trousers.
+const SKIN = "#F2C79E";
+const SKIN_SHADE = "#D9A272";
+const RED = "#E5483D";
+const RED_SHADE = "#B53329";
+const NAVY = "#2C3E75";
+const NAVY_SHADE = "#1B2750";
 
 // ---- SVG primitives -------------------------------------------------------
 const P = (d, props = {}) => E("path", { d, ...props });
@@ -39,21 +46,21 @@ const rad = (id, stops, cx = 0.5, cy = 0.5, r = 0.5) =>
 const svgRoot = (width, height, defs, nodes) =>
   E("svg", { width, height, viewBox: `0 0 ${width} ${height}` }, E("defs", {}, ...defs), ...nodes);
 
-// Limb as a round-capped stroke: ink outline, cream body, shade band on the right side.
-function pill(x1, y1, x2, y2, w) {
+// Limb as a round-capped stroke: ink outline, body colour, shade band on the right side.
+function pill(x1, y1, x2, y2, w, body = CREAM, shade = SHADE) {
   const d = `M${x1} ${y1} L${x2} ${y2}`;
   const ds = `M${x1 + w * 0.32} ${y1} L${x2 + w * 0.32} ${y2}`;
   return [
-    P(d, { stroke: INK, strokeWidth: w + 12, strokeLinecap: "round", fill: "none" }),
-    P(d, { stroke: CREAM, strokeWidth: w, strokeLinecap: "round", fill: "none" }),
-    P(ds, { stroke: SHADE, strokeWidth: w * 0.35, strokeLinecap: "round", fill: "none" }),
+    P(d, { stroke: INK, strokeWidth: w + 8, strokeLinecap: "round", fill: "none" }),
+    P(d, { stroke: body, strokeWidth: w, strokeLinecap: "round", fill: "none" }),
+    P(ds, { stroke: shade, strokeWidth: w * 0.35, strokeLinecap: "round", fill: "none" }),
   ];
 }
 
 // ---- Character parts (400x800 canvas, figure centred on x=200) -----------
 const CHAR_DEFS = [
-  rad("headGrad", [[0, "#F6F3EE"], [0.55, CREAM], [1, SHADE]], 0.36, 0.32, 0.7),
-  lin("torsoGrad", [[0, CREAM], [0.6, CREAM], [1, SHADE]], 0, 0, 1, 0),
+  rad("headGrad", [[0, "#FBE3C6"], [0.55, SKIN], [1, SKIN_SHADE]], 0.36, 0.32, 0.7),
+  lin("torsoGrad", [[0, RED], [0.6, RED], [1, RED_SHADE]], 0, 0, 1, 0),
 ];
 
 const partHead = () => [E("circle", { cx: 200, cy: 150, r: 72, fill: "url(#headGrad)", ...OUTLINE })];
@@ -79,17 +86,29 @@ const partTorso = () => [
   }),
 ];
 
-const partUpperArm = () => [...pill(138, 250, 112, 350, 44), ...pill(262, 250, 288, 350, 44)];
-const partForearm = () => [...pill(112, 350, 118, 448, 40), ...pill(288, 350, 282, 448, 40)];
-const partHand = () => [
-  E("circle", { cx: 118, cy: 472, r: 24, fill: CREAM, ...OUTLINE }),
-  E("circle", { cx: 282, cy: 472, r: 24, fill: CREAM, ...OUTLINE }),
+const partUpperArm = () => [
+  ...pill(138, 250, 112, 350, 44, RED, RED_SHADE),
+  ...pill(262, 250, 288, 350, 44, RED, RED_SHADE),
 ];
-const partUpperLeg = () => [...pill(180, 470, 176, 600, 58), ...pill(220, 470, 224, 600, 58)];
-const partLowerLeg = () => [...pill(176, 600, 172, 720, 48), ...pill(224, 600, 228, 720, 48)];
+const partForearm = () => [
+  ...pill(112, 350, 118, 448, 40, RED, RED_SHADE),
+  ...pill(288, 350, 282, 448, 40, RED, RED_SHADE),
+];
+const partHand = () => [
+  E("circle", { cx: 118, cy: 472, r: 24, fill: SKIN, ...OUTLINE }),
+  E("circle", { cx: 282, cy: 472, r: 24, fill: SKIN, ...OUTLINE }),
+];
+const partUpperLeg = () => [
+  ...pill(180, 470, 176, 600, 58, NAVY, NAVY_SHADE),
+  ...pill(220, 470, 224, 600, 58, NAVY, NAVY_SHADE),
+];
+const partLowerLeg = () => [
+  ...pill(176, 600, 172, 720, 48, NAVY, NAVY_SHADE),
+  ...pill(224, 600, 228, 720, 48, NAVY, NAVY_SHADE),
+];
 const partShoe = () => [
-  E("ellipse", { cx: 158, cy: 744, rx: 38, ry: 18, fill: "#3A3A4C", ...OUTLINE }),
-  E("ellipse", { cx: 242, cy: 744, rx: 38, ry: 18, fill: "#3A3A4C", ...OUTLINE }),
+  E("ellipse", { cx: 158, cy: 744, rx: 38, ry: 18, fill: NAVY_SHADE, ...OUTLINE }),
+  E("ellipse", { cx: 242, cy: 744, rx: 38, ry: 18, fill: NAVY_SHADE, ...OUTLINE }),
 ];
 
 // Full figure: back-to-front draw order so limbs tuck under torso and head.

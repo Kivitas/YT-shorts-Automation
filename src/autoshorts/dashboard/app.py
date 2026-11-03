@@ -2753,13 +2753,50 @@ def create_app(
             from autoshorts.analytics.engine import AnalyticsEngine
 
             engine = AnalyticsEngine(state_manager=state_mgr, config=active_cfg)
+            from autoshorts.analytics.attribution import PerformanceAttributionEngine
+
+            attr_engine = PerformanceAttributionEngine(state_manager=state_mgr)
+            jobs_by_id = (
+                {j.id: j for j in state_mgr.list_jobs(limit=500)}
+                if hasattr(state_mgr, "list_jobs")
+                else {}
+            )
+            jobs_by_vid = {
+                j.upload_result.video_id: j
+                for j in jobs_by_id.values()
+                if j.upload_result and j.upload_result.video_id
+            }
             videos = await asyncio.to_thread(engine.get_videos, limit=limit)
 
             return {
                 "success": True,
                 "api_configured": yt_configured,
                 "missing_key_message": missing_msg,
-                "videos": [v.model_dump() if hasattr(v, "model_dump") else v for v in videos],
+                "videos": [
+                    {
+                        **(v.model_dump() if hasattr(v, "model_dump") else dict(v)),
+                        "svs_score": getattr(v, "svs_score", 0.0),
+                        "engagement_rate": getattr(v, "engagement_rate", 0.0),
+                        **(
+                            attr_engine.extract_style_attributes(
+                                jobs_by_id.get(getattr(v, "job_id", ""))
+                                or jobs_by_vid.get(getattr(v, "video_id", ""))
+                            )
+                            if (
+                                jobs_by_id.get(getattr(v, "job_id", ""))
+                                or jobs_by_vid.get(getattr(v, "video_id", ""))
+                            )
+                            is not None
+                            else {
+                                "layout_mode": "--",
+                                "style_preset": "--",
+                                "caption_preset": "--",
+                                "background_category": "--",
+                            }
+                        ),
+                    }
+                    for v in videos
+                ],
             }
         except Exception as e:
             logger.debug("Analytics videos fallback: %s", e)

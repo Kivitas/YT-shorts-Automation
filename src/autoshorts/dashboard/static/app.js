@@ -4840,22 +4840,22 @@ function renderAnalyticsOverview(data) {
   } else {
     if (kpiViews) kpiViews.textContent = Number(overview.total_views || 0).toLocaleString();
     if (kpiRet) kpiRet.textContent = `${Number(overview.avg_retention_pct || 0).toFixed(1)}%`;
-    if (kpiRetBadge) kpiRetBadge.textContent = (overview.avg_retention_pct >= 75) ? "Optimal" : "Growing";
+    if (kpiRetBadge) kpiRetBadge.textContent = (overview.avg_retention_pct >= 75) ? "Optimal" : ((overview.avg_retention_pct > 0) ? "Growing" : "0%");
     if (kpiViewed) {
-      const rate = overview.viewed_vs_swiped_pct || overview.viewed_rate_pct || 0;
-      kpiViewed.innerHTML = `${rate.toFixed(1)}% <span class="kpi-sub">/ ${(100 - rate).toFixed(1)}% swiped</span>`;
+      const rate = Number(overview.avg_viewed_vs_swiped_pct ?? overview.viewed_vs_swiped_pct ?? overview.viewed_rate_pct ?? 0);
+      kpiViewed.innerHTML = rate > 0 ? `${rate.toFixed(1)}% <span class="kpi-sub">/ ${(100 - rate).toFixed(1)}% swiped</span>` : `0.0% <span class="kpi-sub">/ 0.0% swiped</span>`;
     }
-    if (kpiViewedBadge) kpiViewedBadge.textContent = `${(overview.viewed_vs_swiped_pct || 0).toFixed(0)}%`;
+    if (kpiViewedBadge) kpiViewedBadge.textContent = `${Number(overview.avg_viewed_vs_swiped_pct ?? overview.viewed_vs_swiped_pct ?? 0).toFixed(0)}%`;
     if (kpiRev) {
-      const rev = overview.estimated_revenue_usd || 0;
-      const rpm = overview.rpm_usd || 0;
+      const rev = Number(overview.total_estimated_revenue_usd ?? overview.estimated_revenue_usd ?? 0);
+      const rpm = Number(overview.channel_rpm_usd ?? overview.rpm_usd ?? 0);
       kpiRev.textContent = `$${rev.toFixed(2)}`;
       if (kpiRpmBadge) kpiRpmBadge.textContent = `$${rpm.toFixed(2)} RPM`;
     }
-    if (kpiTop && overview.top_short) {
-      kpiTop.textContent = overview.top_short.title || "Top Short";
+    if (kpiTop && (overview.top_video || overview.top_short)) {
+      kpiTop.textContent = (overview.top_video || overview.top_short).title || "Top Short";
       if (kpiTopMeta) {
-        kpiTopMeta.textContent = `${Number(overview.top_short.views || 0).toLocaleString()} views • ${Number(overview.top_short.retention_pct || 0).toFixed(1)}% retention`;
+        kpiTopMeta.textContent = `${Number((overview.top_video || overview.top_short).views || 0).toLocaleString()} views • ${Number((overview.top_video || overview.top_short).avg_view_percentage ?? (overview.top_video || overview.top_short).retention_pct ?? 0).toFixed(1)}% retention`;
       }
     }
   }
@@ -4891,7 +4891,7 @@ function renderAnalyticsOverview(data) {
     none: "Clean (None)"
   };
 
-  if (!recipe || !recipe.layout_mode || !hasTelemetry) {
+  if (!recipe || !recipe.layout_mode || !hasTelemetry || Number(recipe.sample_size || 0) === 0) {
     if (recLayout) recLayout.textContent = "--";
     if (recCaption) recCaption.textContent = "--";
     if (recBg) recBg.textContent = "--";
@@ -4901,9 +4901,9 @@ function renderAnalyticsOverview(data) {
     }
   } else {
     if (recLayout) recLayout.textContent = layoutNames[recipe.layout_mode] || recipe.layout_mode;
-    if (recCaption) recCaption.textContent = presetNames[recipe.caption_preset] || recipe.caption_preset;
+    if (recCaption) recCaption.textContent = presetNames[recipe.style_preset || recipe.caption_preset] || recipe.style_preset || recipe.caption_preset;
     if (recBg) recBg.textContent = bgNames[recipe.background_category] || recipe.background_category;
-    if (recStats) recStats.textContent = `SVS ${recipe.svs_score || 0} / 100`;
+    if (recStats) recStats.textContent = recipe.uplift_summary || `SVS ${recipe.svs_score || 0} / 100`;
     if (recRationale) {
       recRationale.innerHTML = `💡 <strong>Algorithmic Attribution:</strong> ${escapeHtml(recipe.rationale || '')}`;
     }
@@ -4976,8 +4976,8 @@ function renderAnalyticsTable(videos) {
 
   tbody.innerHTML = videos.map(v => {
     const ytUrl = v.youtube_url || (v.youtube_id ? `https://www.youtube.com/shorts/${v.youtube_id}` : (v.video_id ? `https://www.youtube.com/shorts/${v.video_id}` : "#"));
-    const revStr = v.estimated_revenue !== undefined ? `$${Number(v.estimated_revenue).toFixed(2)}` : "$0.00";
-    const svs = v.svs_score || 85;
+    const revStr = `$${Number(v.estimated_revenue_usd ?? v.estimated_revenue ?? 0).toFixed(2)}`;
+    const svs = Number(v.svs_score ?? 0).toFixed(1);
     const outlierMult = Number(v.outlier_multiplier || 0);
     const outlierBadgeHtml = outlierMult >= 1.5
       ? `<span class="badge outlier-badge" title="Outlier performance vs channel median">🔥 ${outlierMult.toFixed(1)}x Outlier</span>`
@@ -4995,11 +4995,11 @@ function renderAnalyticsTable(videos) {
           </a>
         </td>
         <td><code>${escapeHtml(v.layout_mode || 'split_50_50')}</code></td>
-        <td><span class="badge" style="font-size: 0.72rem;">${escapeHtml(v.caption_preset || 'neon')}</span></td>
+        <td><span class="badge" style="font-size: 0.72rem;">${escapeHtml(v.style_preset || v.caption_preset || '--')}</span></td>
         <td class="table-metric-mono">${Number(v.views || 0).toLocaleString()}</td>
         <td class="table-metric-mono">${Number(v.likes || 0).toLocaleString()}</td>
-        <td class="table-metric-mono" style="color: var(--accent-green); font-weight: 700;">${Number(v.retention_pct || 0).toFixed(1)}%</td>
-        <td class="table-metric-mono">${Number(v.viewed_rate_pct || 75).toFixed(1)}%</td>
+        <td class="table-metric-mono" style="color: var(--accent-green); font-weight: 700;">${Number(v.avg_view_percentage ?? v.retention_pct ?? 0).toFixed(1)}%</td>
+        <td class="table-metric-mono">${Number(v.viewed_vs_swiped_pct ?? v.viewed_rate_pct ?? 0).toFixed(1)}%</td>
         <td class="table-metric-mono" style="color: #ffd33d;">${revStr}</td>
         <td><strong style="color: var(--accent-cyan); font-family: var(--font-mono);">${svs}</strong></td>
         <td>

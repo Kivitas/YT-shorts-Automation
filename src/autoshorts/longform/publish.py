@@ -207,7 +207,7 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
     # Scheduled publish: the uploader sets publishAt and YouTube requires private until then.
     publish_at = getattr(upload_cfg, "publish_at", None)
     scheduled = bool(publish_at) and upload_mode in ("api", "studio")
-    privacy = "private" if scheduled else getattr(upload_cfg, "default_privacy_status", "unlisted")
+    privacy = "private" if scheduled else "public"
     schedule_kwargs = {"publish_at": str(publish_at)} if scheduled else {}
 
     _reserve_slot(eff_cap)

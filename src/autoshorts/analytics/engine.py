@@ -71,7 +71,11 @@ class AnalyticsEngine:
         self.quota_tracker = quota_tracker
         self.config = config
         data_dir = get_data_dir()
-        self.token_path = Path(token_path) if token_path else (data_dir / "token.json")
+        db_dir = getattr(state_manager, "db_path", data_dir / "state.db").parent
+        default_token = db_dir / "token.json"
+        if not default_token.is_file() and (db_dir / "tokens" / "youtube_token.json").is_file():
+            default_token = db_dir / "tokens" / "youtube_token.json"
+        self.token_path = Path(token_path) if token_path else default_token
         self.client_secret_path = (
             Path(client_secret_path) if client_secret_path else (data_dir / "client_secret.json")
         )

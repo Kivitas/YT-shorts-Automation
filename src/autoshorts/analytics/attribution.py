@@ -447,7 +447,8 @@ class PerformanceAttributionEngine:
         try:
             from autoshorts.core.paths import atomic_write, get_data_dir
 
-            winners_path = get_data_dir() / "autotune_winners.json"
+            db_dir = getattr(self.state_manager, "db_path", get_data_dir() / "state.db").parent
+            winners_path = db_dir / "autotune_winners.json"
             winners_data = {
                 "updated_at": datetime.now(UTC).isoformat(),
                 "winning_recipe": recipe.model_dump(),
