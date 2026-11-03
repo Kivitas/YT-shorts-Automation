@@ -9,7 +9,7 @@
     "build:assets": "node scripts/build-assets.mjs"
   },
   "dependencies": {
-    "@remotion/cli": "4.0.528",
+    "@remotion/cli": "4.0.539",
     "@resvg/resvg-js": "2.6.2",
     "gsap": "3.12.5",
     "react": "18.3.1",
