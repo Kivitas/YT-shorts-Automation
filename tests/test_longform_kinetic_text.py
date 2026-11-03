@@ -6,8 +6,10 @@ import pytest
 from PIL import Image, ImageChops
 
 from autoshorts.longform.kinetic_text import (
+    _chunk_lines,
     _font,
     draw_inner_voice,
+    draw_kinetic_line,
     draw_narration,
     draw_number_pop,
     draw_shatter_text,
@@ -229,3 +231,81 @@ def test_shatter_is_deterministic() -> None:
     draw_shatter_text(a, "PUSH", (960, 540), 1.4, 1.0)
     draw_shatter_text(b, "PUSH", (960, 540), 1.4, 1.0)
     assert _diff_bbox(a, b) is None
+
+
+# --- draw_kinetic_line ------------------------------------------------------
+
+KINETIC_WORDS = "lift the bar every single day".split()
+
+
+def test_kinetic_line_changes_pixels_within_band_between_two_t() -> None:
+    y, font_size = 200, 84
+    rows = -(-len(KINETIC_WORDS) // 4)  # five words wrap onto two rows of at most four
+    band_top, band_bottom = y - 60, y + rows * int(font_size * 1.25) + 60
+    early = _canvas()
+    late = _canvas()
+    draw_kinetic_line(early, KINETIC_WORDS, 1.3, 1.0, 4.0, y=y)
+    draw_kinetic_line(late, KINETIC_WORDS, 2.5, 1.0, 4.0, y=y)
+    bbox = _diff_bbox(early, late)
+    assert bbox is not None
+    assert bbox[1] >= band_top and bbox[3] <= band_bottom
+    assert _diff_bbox(_canvas(), late) is not None
+
+
+def test_kinetic_line_is_empty_before_start() -> None:
+    img = _canvas()
+    before = img.copy()
+    draw_kinetic_line(img, KINETIC_WORDS, 0.9, 1.0, 4.0)
+    draw_kinetic_line(img, KINETIC_WORDS, 1.0, 1.0, 4.0)
+    assert _diff_bbox(before, img) is None
+
+
+def test_kinetic_line_is_empty_after_end() -> None:
+    img = _canvas()
+    before = img.copy()
+    draw_kinetic_line(img, KINETIC_WORDS, 4.5, 1.0, 4.0)
+    assert _diff_bbox(before, img) is None
+
+
+def test_chunk_lines_caps_words_per_line() -> None:
+    words = "one two three four five six seven eight nine ten".split()
+    rows = _chunk_lines(words, 4)
+    assert len(rows) == 3
+    assert all(len(row) <= 4 for row in rows)
+    assert [w for row in rows for w in row] == words
+
+
+def test_kinetic_line_wraps_into_more_rows_when_longer() -> None:
+    short = _canvas()
+    long = _canvas()
+    draw_kinetic_line(short, "one two three four", 5.0, 1.0, 9.0, max_per_line=4)
+    draw_kinetic_line(
+        long, "one two three four five six seven eight nine", 5.0, 1.0, 9.0, max_per_line=4
+    )
+    short_box = _diff_bbox(_canvas(), short)
+    long_box = _diff_bbox(_canvas(), long)
+    assert short_box is not None and long_box is not None
+    assert (long_box[3] - long_box[1]) > (short_box[3] - short_box[1])
+
+
+def test_kinetic_line_uppercase_flag_changes_rendering() -> None:
+    lower = _canvas()
+    upper = _canvas()
+    draw_kinetic_line(lower, "rise up", 5.0, 1.0, 9.0)
+    draw_kinetic_line(upper, "rise up", 5.0, 1.0, 9.0, uppercase=True)
+    assert lower.tobytes() != upper.tobytes()
+
+
+def test_kinetic_line_highlight_uses_highlight_colour() -> None:
+    plain = _canvas()
+    marked = _canvas()
+    draw_kinetic_line(plain, KINETIC_WORDS, 5.0, 1.0, 9.0)
+    draw_kinetic_line(marked, KINETIC_WORDS, 5.0, 1.0, 9.0, highlight_indices=(1,))
+    bbox = _diff_bbox(_canvas(), marked)
+    assert bbox is not None
+    gold = sum(1 for px in _pixels(marked, bbox) if px[0] > 200 and px[1] > 150 and px[2] < 120)
+    assert gold > 0
+    gold_plain = sum(
+        1 for px in _pixels(plain, bbox) if px[0] > 200 and px[1] > 150 and px[2] < 120
+    )
+    assert gold_plain == 0

@@ -270,7 +270,34 @@ POSES: dict[str, dict[str, float]] = {
         "r_shin": 15,
         "drop": 0.5,
     },
+    "gesture_point_up": {
+        "torso": 2,
+        "head": 4,
+        "r_upper": 150,
+        "r_lower": 176,
+    },
+    "gesture_open_hands": {
+        "torso": 0,
+        "head": 2,
+        "l_upper": -65,
+        "l_lower": -95,
+        "r_upper": 65,
+        "r_lower": 95,
+    },
+    "gesture_shrug": {
+        "torso": 0,
+        "head": 6,
+        "l_upper": -40,
+        "l_lower": -100,
+        "r_upper": 40,
+        "r_lower": 100,
+    },
 }
+
+# Look poses keep the stand body. ``head_turn`` is a pose-level key: it shifts the head
+# sideways, the same as the ``head_turn`` argument of :func:`draw_rig`.
+POSES["look_left"] = {**POSES["stand"], "head_turn": -1.0}
+POSES["look_right"] = {**POSES["stand"], "head_turn": 1.0}
 
 # Face parameters. lid: 0 open to 1 shut. brow: degrees, positive = inner end down
 # (angry), negative = inner end up (worried). curve: mouth, -1 frown to +1 smile.
@@ -301,10 +328,17 @@ EXPRESSIONS: dict[str, dict[str, float]] = {
 
 _HALO_ALPHA = (HEADBAND[0], HEADBAND[1], HEADBAND[2], 80)
 
+# How far a full head turn (head_turn = 1) moves the head sideways, in px at scale 1,
+# and how far it tilts the head, in degrees.
+HEAD_TURN_PX = 10.0
+HEAD_TURN_TILT_DEG = 6.0
+HAND_LIFT_DEG = 40.0
+
 
 def _resolve_pose(name: str | dict[str, float]) -> dict[str, float]:
     """Merge a named pose (or a joint dict) over the stand defaults so every joint has a value."""
     joints = {k: 0.0 for k in _STAND_KEYS}
+    joints["head_turn"] = 0.0
     joints.update({k: float(v) for k, v in POSES["stand"].items()})
     source = POSES[name] if isinstance(name, str) else name
     joints.update({k: float(v) for k, v in source.items()})
@@ -322,7 +356,7 @@ def animate_pose(pose_name_a: str, pose_name_b: str, p: float, t: float = 0.0) -
     a = _resolve_pose(pose_name_a if pose_name_a in POSES else "stand")
     b = _resolve_pose(pose_name_b if pose_name_b in POSES else "stand")
     e = ease_in_out_sine(p)
-    joints = {k: a[k] + (b[k] - a[k]) * e for k in _STAND_KEYS}
+    joints = {k: a[k] + (b[k] - a[k]) * e for k in (*_STAND_KEYS, "head_turn")}
     joints["head"] += 1.5 * math.sin(2.0 * math.pi * t / 3.1)
     return joints
 
@@ -490,7 +524,9 @@ def _render(
     ox, oy = origin
     hip = (ox, oy + joints["drop"] * s)
     top = _up(hip, joints["torso"], TORSO_LEN * torso_scale, s)
+    head_turn = float(joints.get("head_turn", 0.0))
     head_c = _up(top, joints["head"], NECK_LEN + HEAD_R, s)
+    head_c = (head_c[0] + head_turn * HEAD_TURN_PX * s, head_c[1])
     R = HEAD_R * s
 
     knee_r = _down(hip, joints["r_thigh"], THIGH_LEN, s)
@@ -542,7 +578,7 @@ def _render(
     c_mid = (top[0] - axis[0] * 0.3 * tw, top[1] - axis[1] * 0.3 * tw)
     _outlined_poly(draw, [c_left, c_right, c_mid], CREAM, ow * 0.8)
 
-    h_rad = math.radians(joints["head"])
+    h_rad = math.radians(joints["head"] + head_turn * HEAD_TURN_TILT_DEG)
     hc_cos, hc_sin = math.cos(h_rad), math.sin(h_rad)
 
     def hp(u: float, v: float) -> _Point:
@@ -701,6 +737,8 @@ def draw_rig(
     headband: bool = False,
     t: float = 0.0,
     mirror: bool = False,
+    head_turn: float = 0.0,
+    hand_lift: float = 0.0,
 ) -> None:
     """Draw the figure onto ``img`` in place.
 
@@ -711,6 +749,11 @@ def draw_rig(
     ``motion.blink``) and the torso breathes (see ``motion.breathe``). At ``t=0.0``
     neither applies. ``mirror=True`` flips the figure horizontally about the hip so
     it faces the other way.
+
+    ``head_turn`` in -1..1 shifts the head (and eyes) sideways by ``head_turn * 10``
+    px at scale 1 and tilts it by ``head_turn * 6`` degrees. It adds to any
+    ``head_turn`` key in the pose. ``hand_lift`` in 0..1 raises the right arm by
+    ``hand_lift * 40`` degrees. Both default to 0.0, which leaves the output unchanged.
     """
     if isinstance(pose, str):
         pose = pose if pose in POSES else "stand"
@@ -720,10 +763,17 @@ def draw_rig(
     if t != 0.0:
         expr["lid"] = max(float(expr["lid"]), 1.0 - blink(t))
         torso_scale = breathe(t)
+    joints = _resolve_pose(pose)
+    turn = max(-1.0, min(1.0, float(joints["head_turn"]) + float(head_turn)))
+    joints["head_turn"] = turn
+    lift = max(0.0, min(1.0, float(hand_lift)))
+    if lift != 0.0:
+        joints["r_upper"] += lift * HAND_LIFT_DEG
+        joints["r_lower"] += lift * HAND_LIFT_DEG
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     _render(
         layer,
-        _resolve_pose(pose),
+        joints,
         origin,
         scale,
         expr,

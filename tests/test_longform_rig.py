@@ -94,7 +94,70 @@ def test_public_signature_is_preserved() -> None:
     names = list(inspect.signature(draw_rig).parameters)
     assert names == [
         "img", "pose", "origin", "scale", "expression", "headband", "t", "mirror",
+        "head_turn", "hand_lift",
     ]  # fmt: skip
+
+
+GESTURE_POSES = {
+    "gesture_point_up",
+    "gesture_open_hands",
+    "gesture_shrug",
+    "look_left",
+    "look_right",
+}
+
+
+def test_gesture_and_look_poses_are_registered_and_draw() -> None:
+    assert GESTURE_POSES <= set(POSES)
+    for name in GESTURE_POSES:
+        img = _canvas()
+        draw_rig(img, name, ORIGIN, SCALE)
+        assert img.tobytes() != _canvas().tobytes(), f"pose {name!r} drew nothing"
+
+
+def test_look_poses_shift_the_head_not_the_body() -> None:
+    stand = _canvas()
+    draw_rig(stand, "stand", ORIGIN, SCALE)
+    for name in ("look_left", "look_right"):
+        img = _canvas()
+        draw_rig(img, name, ORIGIN, SCALE)
+        assert img.tobytes() != stand.tobytes(), f"pose {name!r} matches stand"
+    assert POSES["look_left"]["torso"] == POSES["stand"]["torso"]
+
+
+def test_head_turn_zero_matches_default() -> None:
+    default = _canvas()
+    draw_rig(default, "stand", ORIGIN, SCALE, headband=True)
+    explicit = _canvas()
+    draw_rig(explicit, "stand", ORIGIN, SCALE, headband=True, head_turn=0.0, hand_lift=0.0)
+    assert explicit.tobytes() == default.tobytes()
+
+
+def test_head_turn_one_changes_pixels() -> None:
+    base = _canvas()
+    draw_rig(base, "stand", ORIGIN, SCALE)
+    turned = _canvas()
+    draw_rig(turned, "stand", ORIGIN, SCALE, head_turn=1.0)
+    assert turned.tobytes() != base.tobytes()
+
+
+def test_head_turn_is_clamped_to_unit_range() -> None:
+    at_one = _canvas()
+    draw_rig(at_one, "stand", ORIGIN, SCALE, head_turn=1.0)
+    beyond = _canvas()
+    draw_rig(beyond, "stand", ORIGIN, SCALE, head_turn=3.0)
+    assert beyond.tobytes() == at_one.tobytes()
+
+
+def test_hand_lift_changes_pixels_and_zero_is_default() -> None:
+    base = _canvas()
+    draw_rig(base, "stand", ORIGIN, SCALE)
+    zero = _canvas()
+    draw_rig(zero, "stand", ORIGIN, SCALE, hand_lift=0.0)
+    assert zero.tobytes() == base.tobytes()
+    lifted = _canvas()
+    draw_rig(lifted, "stand", ORIGIN, SCALE, hand_lift=0.5)
+    assert lifted.tobytes() != base.tobytes()
 
 
 def test_output_size_and_mode_unchanged() -> None:

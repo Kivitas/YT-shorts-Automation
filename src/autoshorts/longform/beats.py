@@ -1,10 +1,11 @@
 """Per-section visual beats for long-form explainer videos.
 
 ``plan_beat`` turns one narration section into a :class:`BeatPlan` (figure pose,
-expression, props, light sources, inner voice and number pops). The rules are
+gesture, expression, props, light sources, inner voice and number pops). The rules are
 plain keyword matches on the lower-cased narration, so the same inputs always give
 the same plan. ``draw_beat`` renders that plan for one shot time ``t`` onto a
-1920x1080 RGB frame.
+1920x1080 RGB frame. The backdrop (sky, silhouettes, dust and vignette) comes from
+:func:`autoshorts.longform.background.draw_background`.
 
 The ``heading`` and ``speaker`` arguments are accepted so callers can pass the full
 section context, but the current rules only read the narration.
@@ -22,15 +23,18 @@ from PIL import Image, ImageDraw
 from autoshorts.core.theme import (
     ACCENT_CORAL,
     ACCENT_TEAL,
-    ACCENT_YELLOW,
     BG_SURFACE,
+    CORAL,
+    NAVY_DEEP,
+    NAVY_LIGHT,
+    OFFWHITE,
+    TEAL,
     TEXT_MUTED,
-    TEXT_PRIMARY,
+    YELLOW_SOFT,
 )
-from autoshorts.longform.fx import draw_dust_motes, draw_vignette
-from autoshorts.longform.kinetic_text import draw_inner_voice, draw_narration, draw_number_pop
-from autoshorts.longform.lighting import colour_wash, rim_light, source_glow
-from autoshorts.longform.motion import parallax_offset
+from autoshorts.longform.background import draw_background
+from autoshorts.longform.kinetic_text import draw_inner_voice, draw_kinetic_line, draw_number_pop
+from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
 from autoshorts.longform.rig import animate_pose, draw_rig
 from autoshorts.longform.sphere import draw_sphere, orbit_point
@@ -42,17 +46,17 @@ FRAME_H = 1080
 FLOOR_Y = 760
 RIG_SCALE = 1.5
 RIG_ORIGIN = (1000, 598)  # hip height so the feet land on FLOOR_Y (108 * 1.5 = 162 px leg)
-RIG_BOX = (913, 330, 1087, 765)  # rough bounds of the figure, used for the rim light
-DUST_BOX = (0, 64, FRAME_W, FLOOR_Y)
-DUST_COUNT = 12
-VIGNETTE_STRENGTH = 0.6
 MOOD_WASH_INTENSITY = 0.08
-NARRATION_Y = 240
+NARRATION_Y = 180
+NARRATION_FONT_SIZE = 66
+NARRATION_MAX_PER_LINE = 5
 INNER_VOICE_ANCHOR = (140, 420)
 NUMBER_ANCHOR = (1500, 520)
 
 REST_POSE = "stand"
 POSE_TRANSITION_S = 0.4  # the figure eases from REST_POSE into the planned pose after a shot start
+GESTURE_HAND_LIFT_S = 0.3  # the raised hand ramps from 0 to 1 over this long after a section start
+HEAD_TURN_MAGNITUDE = 0.5
 
 SPACE_WORDS = frozenset({"planet", "earth", "space", "moon", "orbit", "universe"})
 SPHERE_CENTRE = (1500, 380)
@@ -64,32 +68,25 @@ ORBIT_TILT = 0.35
 SATELLITE_SPEED_DEG_S = 45.0
 SATELLITE_RADIUS = 9
 
-PARALLAX_CAMERA_SPEED = 40.0  # px per second of camera pan
+PARALLAX_CAMERA_SPEED = 40.0  # px per second of camera pan, passed to the backdrop
 
+GESTURE_POINT_WORDS = frozenset({"look", "see", "watch", "first", "start"})
+GESTURE_OPEN_WORDS = frozenset({"you", "your"})
+GESTURE_SHRUG_WORDS = frozenset({"maybe", "why"})
+GESTURE_SHRUG_PHRASES = ("not sure",)
+LOOK_WORDS = frozenset({"look"})
+HEAD_TURN_WORDS = frozenset({"window", "bed"})
 
-class ParallaxShape(NamedTuple):
-    """A faint background shape. ``size`` is the radius for dots, the height for rounded bars."""
-
-    kind: str  # "dot" or "bar"
-    x: float
-    y: float
-    size: float
-    width: float
-    depth: float
-
-
-PARALLAX_SHAPES: tuple[ParallaxShape, ...] = (
-    ParallaxShape("dot", 220.0, 150.0, 6.0, 0.0, 0.2),
-    ParallaxShape("bar", 640.0, 120.0, 14.0, 180.0, 0.4),
-    ParallaxShape("dot", 1180.0, 220.0, 9.0, 0.0, 0.4),
-    ParallaxShape("bar", 1600.0, 90.0, 16.0, 220.0, 0.7),
-    ParallaxShape("dot", 420.0, 330.0, 5.0, 0.0, 0.7),
-)
+# Narration words drawn in the highlight colour. Positive and negative words have palette
+# tokens too, but draw_kinetic_line takes one highlight colour per line.
+HIGHLIGHT_WORDS = frozenset({"you", "your", "every", "more", "now", "today"})
+POSITIVE_WORDS = frozenset({"better", "start", "new"})
+NEGATIVE_WORDS = frozenset({"not", "never", "lazy", "fail"})
 
 
 @dataclass(frozen=True)
 class BeatPalette:
-    """Colours used by the beat renderer. Theme tokens are reused where they exist."""
+    """Colours used by the beat renderer. Every value is a theme token."""
 
     void: RGB
     floor: RGB
@@ -100,20 +97,24 @@ class BeatPalette:
     highlight: RGB
     inner_voice: RGB
     rim: RGB
+    positive: RGB
+    negative: RGB
 
 
 def beat_palette() -> BeatPalette:
-    """Return the beat palette. Only this function holds literal colour values."""
+    """Return the beat palette. Only this function names colours, all from the theme."""
     return BeatPalette(
-        void=(8, 8, 12),  # #08080C
-        floor=(43, 46, 59),  # #2B2E3B
-        red=(230, 46, 46),  # #E62E2E
-        blue=(77, 166, 255),  # #4DA6FF
-        text=TEXT_PRIMARY,
+        void=NAVY_DEEP,
+        floor=NAVY_LIGHT,
+        red=CORAL,
+        blue=TEAL,
+        text=OFFWHITE,
         text_muted=TEXT_MUTED,
-        highlight=ACCENT_YELLOW,
+        highlight=YELLOW_SOFT,
         inner_voice=ACCENT_CORAL,
         rim=ACCENT_TEAL,
+        positive=ACCENT_TEAL,
+        negative=ACCENT_CORAL,
     )
 
 
@@ -158,6 +159,7 @@ EXCUSE_LINES: dict[str, str] = {
 
 _WORD_RE = re.compile(r"[a-z]+")
 _NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 class PropSpec(NamedTuple):
@@ -194,6 +196,18 @@ class BeatPlan:
     number_values: list[str] = field(default_factory=list)
     mood: RGB | None = None
     light_sources: list[LightSource] = field(default_factory=list)
+    gesture: str | None = None  # when set, this rig pose replaces ``pose`` on screen
+
+
+def _choose_gesture(words: set[str], lowered: str) -> str | None:
+    """Pick a gesture from the narration, or None to keep the pose cycle."""
+    if words & GESTURE_POINT_WORDS:
+        return "gesture_point_up"
+    if words & GESTURE_OPEN_WORDS:
+        return "gesture_open_hands"
+    if words & GESTURE_SHRUG_WORDS or any(phrase in lowered for phrase in GESTURE_SHRUG_PHRASES):
+        return "gesture_shrug"
+    return None
 
 
 def plan_beat(
@@ -205,7 +219,8 @@ def plan_beat(
 ) -> BeatPlan:
     """Build the visual plan for one section. Deterministic for the same inputs."""
     del heading, speaker  # accepted for API context; the rules read the narration only
-    tokens = _WORD_RE.findall(narration.lower())
+    lowered = narration.lower()
+    tokens = _WORD_RE.findall(lowered)
     words = set(tokens)
 
     props: list[PropSpec] = []
@@ -245,6 +260,9 @@ def plan_beat(
     if not props:
         props.append(PropSpec("window", 80, 340, 1.0, {}))
 
+    if pose is None and words & LOOK_WORDS:
+        pose = "look_right" if section_index % 2 == 0 else "look_left"
+
     if pose is None:
         pose = POSE_CYCLE[section_index % len(POSE_CYCLE)]
 
@@ -261,15 +279,8 @@ def plan_beat(
         number_values=_NUMBER_RE.findall(narration),
         mood=mood,
         light_sources=light_sources,
+        gesture=_choose_gesture(words, lowered),
     )
-
-
-def _active_word(words: Sequence[Mapping[str, Any]] | None, t: float) -> str | None:
-    """Return the word whose ``[start, end)`` span covers ``t`` (absolute seconds)."""
-    for entry in words or ():
-        if float(entry["start"]) <= t < float(entry["end"]):
-            return str(entry["word"])
-    return None
 
 
 def _draw_number_pops(
@@ -303,31 +314,62 @@ def _entrance_start(
 
 
 def _rig_pose(plan: BeatPlan, shot_start: float, t: float) -> dict[str, float]:
-    """Joint angles easing from the rest pose into the planned pose after a shot start."""
+    """Joint angles easing from the rest pose into the gesture (or planned pose) after a shot start."""
+    target = plan.gesture or plan.pose
     p = (t - shot_start) / POSE_TRANSITION_S
-    return animate_pose(REST_POSE, plan.pose, p, t)
+    return animate_pose(REST_POSE, target, p, t)
+
+
+def _head_turn(section_text: str) -> float:
+    """Turn toward the window or bed when they are named, otherwise away from them."""
+    words = set(_WORD_RE.findall(section_text.lower()))
+    return HEAD_TURN_MAGNITUDE if words & HEAD_TURN_WORDS else -HEAD_TURN_MAGNITUDE
+
+
+def _hand_lift(t: float, start: float) -> float:
+    """Raised-hand amount in 0..1, ramping up over the first ``GESTURE_HAND_LIFT_S`` seconds."""
+    return min(1.0, max(0.0, (t - start) / GESTURE_HAND_LIFT_S))
 
 
 def _is_space_topic(section_text: str) -> bool:
     return bool(SPACE_WORDS.intersection(_WORD_RE.findall(section_text.lower())))
 
 
-def _draw_parallax(img: Image.Image, t: float) -> None:
-    """Faint background shapes that slide at a depth-dependent speed under a camera pan."""
-    draw = ImageDraw.Draw(img)
-    camera_x = PARALLAX_CAMERA_SPEED * t
-    for shape in PARALLAX_SHAPES:
-        x = (shape.x - parallax_offset(camera_x, shape.depth)) % FRAME_W
-        for dx in (0.0, -float(FRAME_W)):  # draw a second copy so the wrap is seamless
-            cx = x + dx
-            if shape.kind == "dot":
-                r = shape.size
-                draw.ellipse((cx - r, shape.y - r, cx + r, shape.y + r), fill=BG_SURFACE)
-            else:
-                h = shape.size
-                draw.rounded_rectangle(
-                    (cx, shape.y, cx + shape.width, shape.y + h), radius=h / 2, fill=BG_SURFACE
-                )
+def _split_sentences(text: str) -> list[str]:
+    """Split narration into sentences, keeping at least one (possibly empty) entry."""
+    parts = [part.strip() for part in _SENTENCE_SPLIT_RE.split(text.strip()) if part.strip()]
+    return parts or [text.strip()]
+
+
+def _plain_word(word: str) -> str:
+    return re.sub(r"[^a-z]", "", word.lower())
+
+
+def _draw_narration(
+    img: Image.Image, section_text: str, t: float, start: float, end: float
+) -> None:
+    """Show the sentence that is current at ``t``, each sentence taking an equal slice of the section."""
+    sentences = _split_sentences(section_text)
+    slot = (end - start) / len(sentences) if end > start else 0.0
+    last = len(sentences) - 1
+    index = last if slot <= 0 else min(last, max(0, int((t - start) // slot)))
+    sentence_start = start + index * slot
+    items = sentences[index].split()
+    highlight = [i for i, word in enumerate(items) if _plain_word(word) in HIGHLIGHT_WORDS]
+    draw_kinetic_line(
+        img,
+        items,
+        t,
+        sentence_start,
+        end,
+        y=NARRATION_Y,
+        color=PALETTE.text,
+        highlight_indices=highlight,
+        highlight_color=PALETTE.highlight,
+        max_per_line=NARRATION_MAX_PER_LINE,
+        font_size=NARRATION_FONT_SIZE,
+        uppercase=False,
+    )
 
 
 def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
@@ -365,8 +407,8 @@ def draw_beat(
     """Draw the full scene for one shot time ``t`` onto ``img`` in place.
 
     ``start`` and ``end`` are the section's absolute times in seconds. ``words`` is an
-    optional sequence of ``{"word", "start", "end"}`` mappings in absolute seconds;
-    the word active at ``t`` is highlighted in the narration line.
+    optional sequence of ``{"word", "start", "end"}`` mappings in absolute seconds; it
+    sets when named props enter. The narration line is drawn from ``section_text``.
     """
     if img.mode != "RGB" or img.size != (FRAME_W, FRAME_H):
         raise ValueError(
@@ -374,9 +416,8 @@ def draw_beat(
         )
 
     pal = PALETTE
-    ImageDraw.Draw(img).rectangle((0, 0, FRAME_W - 1, FRAME_H - 1), fill=pal.void)
+    draw_background(img, t, camera_x=PARALLAX_CAMERA_SPEED * t)
     ImageDraw.Draw(img).line([(0, FLOOR_Y), (FRAME_W, FLOOR_Y)], fill=pal.floor, width=2)
-    _draw_parallax(img, t)
 
     for prop in plan.props:
         draw_prop(
@@ -403,8 +444,9 @@ def draw_beat(
         headband=plan.headband,
         t=t,
         mirror=plan.mirror,
+        head_turn=_head_turn(section_text),
+        hand_lift=_hand_lift(t, start),
     )
-    rim_light(img, RIG_BOX, pal.rim, width=6, intensity=0.35)
 
     for src in plan.light_sources:
         source_glow(img, src.center, src.radius, src.color, src.intensity)
@@ -412,21 +454,8 @@ def draw_beat(
     if plan.mood is not None:
         colour_wash(img, plan.mood, MOOD_WASH_INTENSITY)
 
-    draw_dust_motes(ImageDraw.Draw(img), t, DUST_BOX, count=DUST_COUNT, seed=plan.section_index + 7)
-    draw_vignette(img, VIGNETTE_STRENGTH)
-
     if section_text.strip():
-        draw_narration(
-            img,
-            section_text,
-            t,
-            start,
-            end,
-            y=NARRATION_Y,
-            color=pal.text,
-            highlight=_active_word(words, t),
-            highlight_color=pal.highlight,
-        )
+        _draw_narration(img, section_text, t, start, end)
     if plan.inner_voice:
         draw_inner_voice(
             img, plan.inner_voice, INNER_VOICE_ANCHOR, t, start, end, color=pal.inner_voice

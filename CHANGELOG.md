@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kinetic text** (`longform/kinetic_text.py`): word-by-word narration, red inner-voice lines, number pops and letter shatter.
 - **Cutting** (`longform/shots.py`): beat-synced cuts, montage runs, ECU and impact shots, and match cuts.
 - **Rig** (`longform/rig.py`): richer figure with more poses, expressions and a mirror option.
+- **Motion** (`longform/motion.py`): overshoot and bounce easing, pop and drop entrances, blink, breathing and parallax helpers. Props enter on their narration word and can wiggle after landing.
+- **Planet** (`longform/sphere.py`): shaded rotating sphere with satellites for space topics.
+- **Navy atmosphere** (`longform/background.py`, `core/theme.py`): deep navy gradient, parallax hills, teal horizon band and soft dust replace the black void.
+- **Gestures and head turns** (`longform/rig.py`): point, open-hands and shrug poses, look left and right, hand lift and head turn.
+- **Kinetic narration** (`longform/kinetic_text.py`): sentence-by-sentence text with staggered word entrances and yellow highlights.
+- **Camera**: slow push-in per section and a wide-to-medium opener on the first section.
 
 ### Fixed
 

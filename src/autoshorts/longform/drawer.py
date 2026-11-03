@@ -27,6 +27,7 @@ from autoshorts.core.theme import (
     ease_in_out_cubic,
     lerp_rgb,
 )
+from autoshorts.longform import motion
 from autoshorts.longform.beats import BeatPlan, draw_beat, plan_beat
 from autoshorts.longform.engines import font_candidates
 from autoshorts.longform.fx import camera_shake_offset, impact_flash_alpha
@@ -68,7 +69,7 @@ MAIN_SHIRTS = (SHIRT_RED, SHIRT_BLUE, SHIRT_PURPLE)
 MOODS = ("happy", "shocked", "deadpan", "smug", "hyped", "thinking", "angry", "worried")
 TRANSITIONS = ("cut", "dip", "flash", "cut", "dip", "cut")
 FLASH_FRAMES = 6
-FLASH_PEAK = 0.9
+FLASH_PEAK = 0.45
 SHOT_ZOOM: dict[str, float] = {
     "wide": 1.0,
     "close": 1.08,
@@ -82,6 +83,9 @@ IMPACT_FLASH_FRAMES = 3  # first frames of an impact shot blend towards white
 SHAKE_SECTION = 1  # the first section that has a transition into it
 SHAKE_SECONDS = 0.2
 SHAKE_AMPLITUDE = 14.0
+PUSH_IN_END = 1.06  # slow push-in per section: 1.0 at the section start, this at the end
+OPENER_START = 1.12  # first section opens wide and pulls back to medium
+OPENER_SECONDS = 2.0
 FLOOR_Y = 760
 
 # ---------------------------------------------------------------------------
@@ -931,9 +935,31 @@ def _locate_frame(shots: Sequence[Shot], frame: int) -> tuple[Shot, int]:
     return last, round(last.start * FPS)
 
 
-def _shot_camera(img: Image.Image, shot: Shot, t_in_shot: float) -> Image.Image:
-    """Shot-kind camera: centre punch-in, plus a short decaying shake on impact shots."""
-    img = _zoom_centre(img, SHOT_ZOOM.get(shot.kind, 1.0))
+def _push_in_zoom(frame: int, frame_count: int) -> float:
+    """Section push-in: eases from 1.0 at the first frame to ``PUSH_IN_END`` at the last."""
+    p = frame / max(1, frame_count - 1)
+    return 1.0 + (PUSH_IN_END - 1.0) * motion.ease_in_out_sine(p)
+
+
+def _opener_zoom(frame: int) -> float:
+    """Wide-shot opener for section 0: pulls back from ``OPENER_START`` to 1.0 over two seconds."""
+    p = frame / (OPENER_SECONDS * FPS)
+    return OPENER_START + (1.0 - OPENER_START) * motion.ease_in_out_sine(p)
+
+
+def _camera_zoom(section_index: int, frame: int, frame_count: int) -> float:
+    """Combined section camera zoom: the push-in, plus the opener on the first section."""
+    zoom = _push_in_zoom(frame, frame_count)
+    if section_index == 0:
+        zoom *= _opener_zoom(frame)
+    return zoom
+
+
+def _shot_camera(
+    img: Image.Image, shot: Shot, t_in_shot: float, camera_zoom: float = 1.0
+) -> Image.Image:
+    """Shot-kind camera: centre punch-in (on top of the section camera), plus a decaying shake."""
+    img = _zoom_centre(img, SHOT_ZOOM.get(shot.kind, 1.0) * camera_zoom)
     if shot.kind == "impact":
         dx, dy = camera_shake_offset(
             t_in_shot, 0.0, duration=SHAKE_SECONDS, amplitude=SHAKE_AMPLITUDE
@@ -961,11 +987,12 @@ def _draw_scene(
     shot: Shot,
     t: float,
     t_in_shot: float,
+    camera_zoom: float = 1.0,
 ) -> Image.Image:
     """One frame: the beat scene at section time ``t``, then shot camera, heading and chrome."""
     img = Image.new("RGB", (WIDTH, HEIGHT))
     draw_beat(img, plan, t, shot.start, shot.end, sa.section.narration, sa.words)
-    img = _shot_camera(img, shot, t_in_shot)
+    img = _shot_camera(img, shot, t_in_shot, camera_zoom)
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     _paint_heading(layer, sa.section.heading, t)
     _commit_layer(img, layer)
@@ -1073,7 +1100,8 @@ def _frames(
         for f in range(n):
             t = f / FPS
             shot, shot_start = _locate_frame(shots, f)
-            img = _draw_scene(sa, title, idx, plan, shot, t, max(0, f - shot_start) / FPS)
+            camera = _camera_zoom(idx, f, n)
+            img = _draw_scene(sa, title, idx, plan, shot, t, max(0, f - shot_start) / FPS, camera)
             if prev_last is not None and f < trans_frames:
                 img = _transition(kind, prev_last, img, ease_in_out_cubic((f + 1) / trans_frames))
                 if idx == SHAKE_SECTION:

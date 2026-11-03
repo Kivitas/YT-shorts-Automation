@@ -24,6 +24,16 @@ ACCENT_GREEN: RGB = (120, 210, 140)
 TEXT_PRIMARY: RGB = (245, 247, 255)
 TEXT_MUTED: RGB = (160, 170, 200)
 
+# Navy atmosphere: deep navy replaces pure black for longform backdrops.
+NAVY_DEEP: RGB = (18, 24, 52)
+NAVY: RGB = (26, 36, 72)
+NAVY_LIGHT: RGB = (40, 56, 104)
+TEAL: RGB = (42, 184, 176)
+YELLOW_SOFT: RGB = (246, 200, 72)
+CORAL: RGB = (232, 122, 118)
+PURPLE: RGB = (120, 100, 190)
+OFFWHITE: RGB = (242, 240, 235)
+
 # Font stacks: first available wins. Display for titles and captions, body for text.
 FONT_DISPLAY: tuple[str, ...] = ("Montserrat", "Arial")
 FONT_BODY: tuple[str, ...] = ("Arial",)

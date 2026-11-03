@@ -17,6 +17,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from autoshorts.longform.motion import ease_out_back
+
 RGB = tuple[int, int, int]
 
 _BOLD_FONT_CANDIDATES = (
@@ -292,3 +294,76 @@ def draw_shatter_text(
         glyph = _ink_layer(ch, font, (*color, alpha))
         spun = glyph.rotate(omega * tau, resample=Image.Resampling.BICUBIC, expand=True)
         _blit(img, spun, round(cx - spun.width / 2), round(cy - spun.height / 2))
+
+
+KINETIC_WORD_STAGGER = 0.08  # seconds between successive word entrances
+KINETIC_WORD_FADE = 0.25  # seconds each word takes to scale in and fade in
+KINETIC_HIGHLIGHT_SCALE = 1.08
+
+
+def _chunk_lines(words: list[str], max_per_line: int) -> list[list[str]]:
+    """Split ``words`` into rows of at most ``max_per_line`` words, keeping their order."""
+    per = max(1, int(max_per_line))
+    return [words[i : i + per] for i in range(0, len(words), per)]
+
+
+def draw_kinetic_line(
+    img: Image.Image,
+    words: str | list[str],
+    t: float,
+    start: float,
+    end: float,
+    y: int = 200,
+    color: RGB = (234, 230, 223),
+    highlight_indices: tuple[int, ...] | list[int] | set[int] = (),
+    highlight_color: RGB = (246, 200, 72),
+    max_per_line: int = 4,
+    font_size: int = 84,
+    uppercase: bool = False,
+) -> None:
+    """Short centred kinetic phrase: words pop in one after another across [start, end].
+
+    At most ``max_per_line`` words share a row, and longer phrases wrap onto further rows
+    stacked from ``y``. Word ``i`` starts at ``start + i * 0.08`` s. It scales from 0.6 to
+    1.0 with an ease-out-back curve and fades in over 0.25 s. Indices in
+    ``highlight_indices`` use ``highlight_color`` and are drawn 1.08x larger. Nothing is
+    drawn before ``start`` or after ``end``.
+    """
+    items = words.split() if isinstance(words, str) else [str(w) for w in words]
+    if not items or t < start or t > end:
+        return
+    if uppercase:
+        items = [w.upper() for w in items]
+    highlighted = set(highlight_indices)
+
+    font = _font(font_size)
+    space_w = _text_width(" ", font)
+    line_h = int(font_size * 1.25)
+
+    index = 0
+    for row, line in enumerate(_chunk_lines(items, max_per_line)):
+        widths = [_text_width(w, font) for w in line]
+        total = sum(widths) + space_w * (len(line) - 1)
+        x = (img.width - total) / 2
+        row_mid = y + row * line_h + line_h / 2
+        for word, width in zip(line, widths, strict=True):
+            word_start = start + index * KINETIC_WORD_STAGGER
+            progress = max(0.0, min(1.0, (t - word_start) / KINETIC_WORD_FADE))
+            if progress > 0.0:
+                is_hi = index in highlighted
+                scale = 0.6 + 0.4 * ease_out_back(progress)
+                if is_hi:
+                    scale *= KINETIC_HIGHLIGHT_SCALE
+                rgb = highlight_color if is_hi else color
+                alpha = int(255 * progress)
+                ink = _ink_layer(
+                    word,
+                    _font(max(8, round(font_size * scale))),
+                    (*rgb, alpha),
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0, int(alpha * 0.8)),
+                )
+                cx = x + width / 2
+                _blit(img, ink, round(cx - ink.width / 2), round(row_mid - ink.height / 2))
+            x += width + space_w
+            index += 1

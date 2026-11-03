@@ -6,13 +6,17 @@ from dataclasses import replace
 
 from PIL import Image
 
+import autoshorts.longform.beats as beats
+from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
 from autoshorts.longform.beats import (
     PALETTE,
     POSE_CYCLE,
     SPHERE_CENTRE,
     BeatPlan,
-    _draw_parallax,
     _entrance_start,
+    _hand_lift,
+    _head_turn,
+    _split_sentences,
     draw_beat,
     plan_beat,
 )
@@ -24,6 +28,11 @@ FRAME = (1920, 1080)
 
 def _names(plan: BeatPlan) -> list[str]:
     return [prop.name for prop in plan.props]
+
+
+def _has_colour(img: Image.Image, colour: tuple[int, int, int]) -> bool:
+    colours = img.getcolors(maxcolors=FRAME[0] * FRAME[1]) or []
+    return any(rgb == colour for _count, rgb in colours)
 
 
 def test_excuse_narration_gives_shadow_demon_plan() -> None:
@@ -54,6 +63,7 @@ def test_default_window_and_pose_cycle() -> None:
         plan = plan_beat(index, "H", "Nothing special here.", "host", False)
         assert _names(plan) == ["window"]
         assert plan.pose == POSE_CYCLE[index % len(POSE_CYCLE)]
+        assert plan.gesture is None
         assert plan.mirror == (index % 2 == 1)
         assert plan.expression == ("exhausted" if index % 2 == 0 else "grit")
         assert plan.headband is False
@@ -89,11 +99,12 @@ def test_keyword_rules_pick_expected_props_and_poses() -> None:
 
 
 def test_planned_names_and_poses_exist_in_libraries() -> None:
-    narration = "bed alarm phone couch desk bag mountain excuse every day"
+    narration = "bed alarm phone couch desk bag mountain excuse every day look you maybe"
     plan = plan_beat(0, "H", narration, "host", True)
 
     assert all(prop.name in PROP_NAMES for prop in plan.props)
     assert plan.pose in POSES
+    assert plan.gesture in POSES
     assert plan.expression in EXPRESSIONS
 
 
@@ -101,6 +112,43 @@ def test_numbers_become_number_values() -> None:
     plan = plan_beat(0, "H", "Saved 42 dollars in 3 weeks.", "host", False)
 
     assert plan.number_values == ["42", "3"]
+
+
+def test_look_narration_gets_point_up_gesture() -> None:
+    plan = plan_beat(0, "H", "Look at the window.", "host", False)
+
+    assert plan.gesture == "gesture_point_up"
+    assert plan.pose in ("look_left", "look_right")
+
+
+def test_gesture_rules_follow_keywords_in_priority_order() -> None:
+    assert plan_beat(1, "H", "You can do this.", "host", False).gesture == "gesture_open_hands"
+    assert plan_beat(1, "H", "Maybe not today.", "host", False).gesture == "gesture_shrug"
+    assert plan_beat(1, "H", "I am not sure.", "host", False).gesture == "gesture_shrug"
+    # "look" outranks "you" because the point rule is checked first.
+    assert plan_beat(1, "H", "Look, you can see it.", "host", False).gesture == "gesture_point_up"
+    plain = plan_beat(1, "H", "Nothing special here.", "host", False)
+    assert plain.gesture is None and plain.pose == POSE_CYCLE[1]
+
+
+def test_head_turn_and_hand_lift_helpers() -> None:
+    assert _head_turn("Light from the window.") == 0.5
+    assert _head_turn("Still in bed.") == 0.5
+    assert _head_turn("Nothing about that here.") == -0.5
+
+    assert _hand_lift(2.0, 2.0) == 0.0
+    assert abs(_hand_lift(2.15, 2.0) - 0.5) < 1e-9
+    assert abs(_hand_lift(2.3, 2.0) - 1.0) < 1e-9
+    assert _hand_lift(9.0, 2.0) == 1.0
+
+
+def test_sentence_split_keeps_order() -> None:
+    assert _split_sentences("First one. Second one! Third?") == [
+        "First one.",
+        "Second one!",
+        "Third?",
+    ]
+    assert _split_sentences("   ") == [""]
 
 
 def test_draw_beat_returns_rgb_frame_and_changes_over_time() -> None:
@@ -172,10 +220,33 @@ def test_entrance_start_follows_naming_word_or_shot_start() -> None:
     assert _entrance_start("bed", None, 1.25) == 1.25
 
 
-def test_parallax_moves_background_shapes() -> None:
-    first = Image.new("RGB", FRAME, PALETTE.void)
-    _draw_parallax(first, 0.0)
-    second = Image.new("RGB", FRAME, PALETTE.void)
-    _draw_parallax(second, 2.0)
+def test_rim_light_box_is_gone() -> None:
+    assert not hasattr(beats, "rim_light")
+    assert not hasattr(beats, "RIG_BOX")
 
-    assert first.tobytes() != second.tobytes()
+
+def test_narration_highlight_uses_yellow_soft() -> None:
+    narration = "You choose the desk."
+    plan = plan_beat(0, "H", narration, "host", False)
+    img = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img, plan, 3.0, 0.0, 4.0, narration)
+
+    assert _has_colour(img, YELLOW_SOFT)
+
+
+def test_narration_without_highlight_words_has_no_yellow_text() -> None:
+    narration = "Nothing about that here."
+    plan = plan_beat(0, "H", narration, "host", False)
+    img = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img, plan, 3.0, 0.0, 4.0, narration)
+
+    assert not _has_colour(img, YELLOW_SOFT)
+
+
+def test_palette_uses_theme_tokens() -> None:
+    assert PALETTE.floor == NAVY_LIGHT
+    assert PALETTE.text == OFFWHITE
+    assert PALETTE.highlight == YELLOW_SOFT
+    assert PALETTE.positive == ACCENT_TEAL
+    assert PALETTE.negative == ACCENT_CORAL
+    assert PALETTE.inner_voice == ACCENT_CORAL

@@ -14,6 +14,9 @@ from autoshorts.longform.drawer import (
     POSES,
     TRANSITIONS,
     WIDTH,
+    _camera_zoom,
+    _opener_zoom,
+    _push_in_zoom,
     _scene_background,
     _transition,
     draw_character,
@@ -111,6 +114,48 @@ def test_render_scene_frames_caps_each_section_and_yields_full_hd_bytes() -> Non
     frames = list(render_scene_frames(sections, "Demo", max_seconds_per_section=1.0))
     assert len(frames) == 2 * round(1.0 * drawer.FPS)
     assert all(len(frame) == WIDTH * HEIGHT * 3 for frame in frames)
+
+
+def test_push_in_zoom_runs_from_1_0_to_1_06_across_a_section() -> None:
+    frame_count = round(3.0 * drawer.FPS)
+    assert _push_in_zoom(0, frame_count) == pytest.approx(1.0)
+    assert _push_in_zoom(frame_count - 1, frame_count) == pytest.approx(1.06)
+    mid = _push_in_zoom(frame_count // 2, frame_count)
+    assert 1.0 < mid < 1.06
+
+
+def test_camera_zoom_middle_section_ends_at_1_06() -> None:
+    frame_count = round(2.0 * drawer.FPS)
+    assert _camera_zoom(2, frame_count - 1, frame_count) == pytest.approx(1.06)
+    assert _camera_zoom(2, 0, frame_count) == pytest.approx(1.0)
+
+
+def test_opener_pulls_back_from_wide_over_first_two_seconds() -> None:
+    assert _opener_zoom(0) == pytest.approx(1.12)
+    assert _opener_zoom(round(drawer.OPENER_SECONDS * drawer.FPS)) == pytest.approx(1.0)
+    # Only section 0 carries the opener.
+    frame_count = round(2.0 * drawer.FPS)
+    assert _camera_zoom(0, 0, frame_count) == pytest.approx(1.12)
+    assert _camera_zoom(1, 0, frame_count) == pytest.approx(1.0)
+
+
+def test_push_in_keeps_frame_count_per_section() -> None:
+    sections = [
+        SectionAudio(
+            section=Section(heading="Open", narration="One."),
+            audio_path=Path("unused.wav"),
+            words=[],
+            duration=1.5,
+        ),
+        SectionAudio(
+            section=Section(heading="Middle", narration="Two."),
+            audio_path=Path("unused.wav"),
+            words=[],
+            duration=1.0,
+        ),
+    ]
+    frames = list(render_scene_frames(sections, "Demo", scenes=("bedroom", "street")))
+    assert len(frames) == round(1.5 * drawer.FPS) + round(1.0 * drawer.FPS)
 
 
 def test_character_frame_renders_at_full_hd(tmp_path: Path) -> None:
