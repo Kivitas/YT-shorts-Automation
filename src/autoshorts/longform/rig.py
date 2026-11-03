@@ -87,32 +87,48 @@ POSES: dict[str, dict[str, float]] = {
         "r_upper": 105,
         "r_lower": 115,
     },
-    # Lying on the back: the torso is horizontal with the head on the pillow side (screen
-    # left, -90). Legs are straight and together toward screen right (+90). Both arms rest
-    # along the body, the near one on the lower edge and the far one on the upper edge.
-    "sleep_bed": {
+    # Side-lying, the main bedtime pose. The torso is horizontal with the head on the pillow
+    # side (screen left). The near arm (l) hangs from the shoulder and bends 100 degrees at
+    # the elbow so the forearm runs back under the head. The far arm (r) rests along the body.
+    # The top leg (l) is bent at the knee (thigh 80, shin folded to 40); the bottom leg is
+    # straight. The head tilts down onto the arm.
+    "sleep_side": {
         "torso": -90,
-        "head": -90,
-        "l_upper": 80,
-        "l_lower": 90,
-        "r_upper": 100,
-        "r_lower": 90,
-        "l_thigh": 90,
-        "l_shin": 90,
+        "head": -102,
+        "l_upper": 0,
+        "l_lower": -100,
+        "r_upper": 8,
+        "r_lower": 14,
+        "l_thigh": 80,
+        "l_shin": 40,
         "r_thigh": 90,
         "r_shin": 90,
     },
-    # Lying face down: same body line as sleep_bed, head on the pillow side with the back of
-    # the head showing (back_of_head hides the face). Both elbows are bent, the forearms come
-    # forward under the chin.
+    # Flat on the back. Arms rest at the sides with 15 degree elbow bends, angled slightly
+    # toward the feet so they do not cross the torso. Legs are apart and bent at the knee.
+    "sleep_bed": {
+        "torso": -90,
+        "head": -90,
+        "l_upper": 10,
+        "l_lower": -5,
+        "r_upper": 10,
+        "r_lower": 25,
+        "l_thigh": 80,
+        "l_shin": 68,
+        "r_thigh": 100,
+        "r_shin": 112,
+    },
+    # Lying face down: head on the pillow side with the back of the head showing
+    # (back_of_head hides the face). The elbows point outward and the forearms fold back
+    # under the head, so they stay clear of the face.
     "lie_bed_prone": {
         "torso": -90,
         "head": -90,
         "back_of_head": 1,
-        "l_upper": 0,
-        "l_lower": -100,
-        "r_upper": 15,
-        "r_lower": -105,
+        "l_upper": -35,
+        "l_lower": -105,
+        "r_upper": 35,
+        "r_lower": -85,
         "l_thigh": 90,
         "l_shin": 90,
         "r_thigh": 90,
@@ -473,6 +489,107 @@ POSES: dict[str, dict[str, float]] = {
         "r_lower": 100,
         "l_upper": -14,
         "l_lower": -18,
+    },
+    # Seated on the floor, legs crossed: thighs out about 60 degrees, shins folded back in
+    # toward the middle. Torso upright, hands resting on the knees. drop sets the feet on the floor.
+    "sit_floor_cross": {
+        "torso": 0,
+        "head": 2,
+        "l_upper": -20,
+        "l_lower": -40,
+        "r_upper": 20,
+        "r_lower": 40,
+        "l_thigh": -60,
+        "l_shin": 35,
+        "r_thigh": 60,
+        "r_shin": -35,
+        "drop": 37,
+    },
+    # Squatting: knees bent deeply, thighs near horizontal and out, shins back under the hips.
+    # Torso leans forward 15 degrees and the arms hang forward between the knees.
+    "squat": {
+        "torso": 15,
+        "head": 12,
+        "l_upper": -30,
+        "l_lower": -40,
+        "r_upper": 30,
+        "r_lower": 40,
+        "l_thigh": -65,
+        "l_shin": 25,
+        "r_thigh": 65,
+        "r_shin": -25,
+        "drop": 37,
+    },
+    # One knee down: the near (l) knee rests on the floor with the shin folded back flat,
+    # the far (r) leg is planted forward. Torso upright, arms relaxed.
+    "kneel": {
+        "torso": 0,
+        "head": 2,
+        "l_upper": -12,
+        "l_lower": -14,
+        "r_upper": 12,
+        "r_lower": 14,
+        "l_thigh": 0,
+        "l_shin": -88,
+        "r_thigh": 20,
+        "r_shin": 80,
+        "drop": 48,
+    },
+    # Leaning on a table: torso forward 35 degrees, both arms reach forward and down so the
+    # forearms lie flat on the table top.
+    "lean_forward_table": {
+        "torso": 35,
+        "head": 20,
+        "l_upper": 55,
+        "l_lower": 85,
+        "r_upper": 70,
+        "r_lower": 95,
+    },
+    # Jump of joy: both arms up in a V, legs slightly apart, torso upright, feet lifted.
+    "celebrate_jump": {
+        "torso": 0,
+        "head": -4,
+        "l_upper": -150,
+        "l_lower": -170,
+        "r_upper": 150,
+        "r_lower": 170,
+        "l_thigh": -14,
+        "l_shin": -12,
+        "r_thigh": 14,
+        "r_shin": 12,
+        "drop": -8,
+    },
+    # Mid-stride walk: the left leg is forward and the right leg back, with the right arm
+    # forward and the left arm back (arms opposite the legs).
+    "walk_mid": {
+        "torso": 3,
+        "head": 2,
+        "l_upper": -20,
+        "l_lower": -30,
+        "r_upper": 20,
+        "r_lower": 35,
+        "l_thigh": 25,
+        "l_shin": 4,
+        "r_thigh": -20,
+        "r_shin": -5,
+    },
+    # Standing, the near forearm lifted to chest height, the hand holding a mug in front of the
+    # chest. The other arm hangs relaxed.
+    "hold_mug": {
+        "torso": 2,
+        "head": 4,
+        "r_upper": 30,
+        "r_lower": 115,
+        "l_upper": -12,
+        "l_lower": -14,
+    },
+    # Standing, the near arm raised with the elbow at shoulder height and the forearm bent up,
+    # so the hand sits at head height beside the head.
+    "wave_hand": {
+        "torso": 0,
+        "head": 6,
+        "l_upper": -95,
+        "l_lower": -165,
     },
 }
 

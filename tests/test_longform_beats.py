@@ -13,7 +13,9 @@ import autoshorts.longform.beats as beats
 import autoshorts.longform.sprites as sprites
 from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
 from autoshorts.longform.beats import (
+    FIGURE_SPRITE_SCALE,
     LYING_POSES,
+    NARRATION_BAND,
     PALETTE,
     POSE_CYCLE,
     RIG_ORIGIN,
@@ -21,7 +23,10 @@ from autoshorts.longform.beats import (
     BeatPlan,
     _choose_gesture,
     _entrance_start,
+    _figure_joints,
     _head_turn,
+    _highest_figure_y,
+    _lift_origin,
     _split_sentences,
     draw_beat,
     plan_beat,
@@ -58,6 +63,25 @@ def test_calendar_marks_equal_day_words() -> None:
     assert len(calendar) == 1
     day_count = sum(1 for word in narration.lower().split() if word.strip(".,") in {"day", "daily"})
     assert calendar[0].params["marks"] == day_count == 3
+
+
+def test_win_the_day_adds_no_calendar_prop() -> None:
+    plan = plan_beat(0, "H", "Win the day and celebrate with fun!", "host", False)
+
+    assert "calendar" not in _names(plan)
+    assert plan.pose == "thumbs_up"
+
+
+def test_calendar_needs_a_scheduling_word_or_every_day() -> None:
+    assert "calendar" in _names(plan_beat(0, "H", "Check your schedule.", "host", False))
+    assert "calendar" in _names(plan_beat(0, "H", "Mark the deadline.", "host", False))
+    assert "calendar" in _names(plan_beat(0, "H", "Do it every day.", "host", False))
+    assert "calendar" not in _names(plan_beat(0, "H", "Every time counts.", "host", False))
+
+
+def test_time_alone_does_not_add_a_clock() -> None:
+    assert "clock_wall" not in _names(plan_beat(0, "H", "Time to punch the bag.", "host", False))
+    assert "clock_wall" in _names(plan_beat(0, "H", "Look at the clock.", "host", False))
 
 
 def test_plan_is_deterministic() -> None:
@@ -241,6 +265,28 @@ def test_head_turn_helper() -> None:
     assert _head_turn("Light from the window.") == 0.5
     assert _head_turn("Still in bed.") == 0.5
     assert _head_turn("Nothing about that here.") == -0.5
+
+
+def test_standing_head_clears_narration_band_at_default_scale() -> None:
+    narration = "Nothing special here."
+    plan = plan_beat(0, "H", narration, "host", False)
+    assert plan.pose == "stand"
+    joints = _figure_joints(plan, 0.0, narration, 5.0)
+
+    top = _highest_figure_y(joints, RIG_ORIGIN[1], FIGURE_SPRITE_SCALE)
+    assert NARRATION_BAND[1] < top
+    # Feet already stand on the floor, so the lift never moves the figure.
+    assert _lift_origin(joints, RIG_ORIGIN, FIGURE_SPRITE_SCALE) == RIG_ORIGIN
+
+
+def test_win_narration_draws_rgb_frame() -> None:
+    narration = "Win the day and celebrate with fun!"
+    plan = plan_beat(0, "H", narration, "host", False)
+    img = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img, plan, 3.0, 0.0, 4.0, narration)
+
+    assert plan.pose == "thumbs_up"
+    assert img.mode == "RGB" and img.size == FRAME
 
 
 def test_figure_joints_raise_no_arm_by_default() -> None:

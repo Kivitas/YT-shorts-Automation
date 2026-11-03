@@ -48,11 +48,25 @@ def test_new_poses_and_expressions_are_registered() -> None:
 
 
 def test_body_positions_match_their_names() -> None:
-    # Lying flat: torso horizontal, legs straight out (thighs and shins at +/-90).
-    for name in ("sleep_bed", "lie_bed_prone"):
+    # Lying: torso horizontal, legs close to horizontal.
+    for name in ("sleep_side", "sleep_bed", "lie_bed_prone"):
         pose = POSES[name]
         assert abs(abs(pose["torso"]) - 90) < 1
-        assert abs(abs(pose["l_thigh"]) - 90) < 1 and abs(abs(pose["r_shin"]) - 90) < 1
+        assert abs(abs(pose["l_thigh"]) - 90) <= 15 and abs(abs(pose["r_thigh"]) - 90) <= 15
+    # Bent knees: the shin folds away from the thigh line.
+    for name in ("sleep_side", "sleep_bed"):
+        pose = POSES[name]
+        assert abs(pose["l_shin"] - pose["l_thigh"]) >= 10, name
+    # Arms: sleep_bed arms hang near straight down with a ~15 degree elbow bend, so they do
+    # not cross the torso. Prone elbows point outward. Side-lying bends the elbow ~100 degrees.
+    bed = POSES["sleep_bed"]
+    for side in ("l", "r"):
+        assert abs(bed[f"{side}_upper"]) <= 20
+        assert 10 <= abs(bed[f"{side}_lower"] - bed[f"{side}_upper"]) <= 20
+    prone = POSES["lie_bed_prone"]
+    assert abs(prone["l_upper"]) >= 25 and abs(prone["r_upper"]) >= 25
+    side_pose = POSES["sleep_side"]
+    assert abs((side_pose["l_lower"] - side_pose["l_upper"]) - (-100)) <= 5
     # Seated: thighs horizontal, shins hanging, hips lowered to seat height.
     for name in ("sit_chair", "sit_desk_focus"):
         pose = POSES[name]
@@ -242,3 +256,42 @@ def test_ground_shadow_is_translucent_under_feet() -> None:
     bg_r, bg_g, bg_b = BG
     assert r <= bg_r and g <= bg_g and b <= bg_b
     assert (r, g, b) != (bg_r, bg_g, bg_b)
+
+
+EIGHT_MORE_POSES = {
+    "sit_floor_cross", "squat", "kneel", "lean_forward_table",
+    "celebrate_jump", "walk_mid", "hold_mug", "wave_hand",
+}  # fmt: skip
+
+
+def test_eight_more_poses_are_registered_and_differ_from_stand() -> None:
+    assert EIGHT_MORE_POSES <= set(POSES)
+    stand = _drawn("stand")
+    for name in EIGHT_MORE_POSES:
+        assert _drawn(name) != stand, f"pose {name!r} matches stand"
+
+
+def test_eight_more_poses_sample_are_distinct() -> None:
+    sample = ["squat", "celebrate_jump", "walk_mid", "wave_hand"]
+    images = {name: _drawn(name) for name in sample}
+    assert len(set(images.values())) == len(sample)
+
+
+def test_eight_more_poses_match_their_names() -> None:
+    # Floor sitting: thighs out about 60 degrees, one on each side.
+    floor = POSES["sit_floor_cross"]
+    assert abs(abs(floor["l_thigh"]) - 60) <= 5 and abs(abs(floor["r_thigh"]) - 60) <= 5
+    assert floor["l_thigh"] < 0 < floor["r_thigh"]
+    # Squat and kneel bend the knees, so the thighs leave the vertical.
+    assert abs(POSES["squat"]["l_thigh"]) >= 55 and abs(POSES["squat"]["r_thigh"]) >= 55
+    assert POSES["squat"]["torso"] == 15
+    assert POSES["kneel"]["l_shin"] <= -80 and POSES["kneel"]["r_shin"] >= 60
+    assert POSES["lean_forward_table"]["torso"] == 35
+    # Celebration: both arms above the shoulders in a V.
+    jump = POSES["celebrate_jump"]
+    assert jump["l_upper"] <= -140 and jump["r_upper"] >= 140
+    assert jump["torso"] == 0
+    # Walking: legs split with opposite signs, and arms opposite the legs.
+    walk = POSES["walk_mid"]
+    assert walk["l_thigh"] > 0 > walk["r_thigh"]
+    assert walk["r_upper"] > 0 > walk["l_upper"]

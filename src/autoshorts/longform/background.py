@@ -56,9 +56,10 @@ _SKYLINE_SEED = 7
 _SKYLINE_DEPTH = 0.35
 _SKYLINE_BASE_Y = 900.0
 
-# Per-theme palettes. ``decor`` names an optional effect painted behind the hills:
-# "none", "sun", "lamp", "grid", "mist", "clouds" or "neon". ``skyline`` swaps the hill
-# silhouettes for a building skyline.
+# Per-theme palettes. ``decor`` names an optional effect: "none", "sun", "lamp", "grid",
+# "mist", "clouds", "neon", "beach", "stars", "snow", "cafe" or "mint_grid". Most effects are
+# painted behind the hills; those in ``_FOREGROUND_DECOR`` are painted over them. ``skyline``
+# swaps the hill silhouettes for a building skyline.
 THEMES: dict[str, dict[str, Any]] = {
     "navy_night": {
         "sky_top": NAVY,
@@ -149,6 +150,75 @@ THEMES: dict[str, dict[str, Any]] = {
         "decor": "clouds",
         "accent": (255, 255, 255),
         "accent2": (255, 240, 250),
+        "skyline": False,
+    },
+    "beach_day": {
+        "sky_top": (168, 214, 240),
+        "sky_bottom": (255, 246, 232),
+        "sky_glow": (255, 255, 246),
+        "hill_deep": (40, 150, 160),
+        "hill_light": (70, 180, 182),
+        "horizon": (150, 230, 225),
+        "dust": ((255, 255, 255), (255, 240, 200), (200, 240, 255)),
+        "decor": "beach",
+        "accent": (240, 255, 255),
+        "accent2": (255, 236, 185),
+        "sun": (255, 226, 130),
+        "sea": (32, 160, 170),
+        "sand": (236, 214, 178),
+        "skyline": False,
+    },
+    "space_violet": {
+        "sky_top": (74, 22, 124),
+        "sky_bottom": (28, 22, 96),
+        "sky_glow": (140, 70, 190),
+        "hill_deep": (30, 12, 70),
+        "hill_light": (62, 32, 122),
+        "horizon": (200, 120, 255),
+        "dust": ((255, 255, 255), (255, 150, 220), (200, 180, 255)),
+        "decor": "stars",
+        "accent": (255, 255, 255),
+        "accent2": (255, 110, 190),
+        "skyline": False,
+    },
+    "snow_blue": {
+        "sky_top": (186, 218, 248),
+        "sky_bottom": (246, 251, 255),
+        "sky_glow": (255, 255, 255),
+        "hill_deep": (206, 226, 246),
+        "hill_light": (255, 255, 255),
+        "horizon": (220, 238, 255),
+        "dust": ((255, 255, 255), (214, 234, 255), (245, 250, 255)),
+        "decor": "snow",
+        "accent": (255, 255, 255),
+        "accent2": (168, 200, 236),
+        "skyline": False,
+    },
+    "cafe_amber": {
+        "sky_top": (88, 50, 26),
+        "sky_bottom": (196, 124, 42),
+        "sky_glow": (255, 196, 110),
+        "hill_deep": (68, 34, 16),
+        "hill_light": (118, 64, 28),
+        "horizon": (255, 170, 80),
+        "dust": ((255, 220, 150), (255, 180, 90), (250, 236, 200)),
+        "decor": "cafe",
+        "accent": (255, 200, 110),
+        "accent2": (255, 150, 60),
+        "floor": (34, 18, 8),
+        "skyline": False,
+    },
+    "mint_grid": {
+        "sky_top": (168, 240, 208),
+        "sky_bottom": (222, 250, 204),
+        "sky_glow": (240, 255, 246),
+        "hill_deep": (64, 168, 128),
+        "hill_light": (118, 204, 164),
+        "horizon": (255, 255, 255),
+        "dust": ((255, 255, 255), (180, 255, 220), (220, 255, 200)),
+        "decor": "mint_grid",
+        "accent": (255, 255, 255),
+        "accent2": (120, 220, 180),
         "skyline": False,
     },
 }
@@ -440,6 +510,133 @@ def _paint_neon(img: Image.Image, theme: dict[str, Any]) -> None:
     _paint_mask(img, theme["accent2"], _blurred_mask((w, h), cyan_band, blur=28.0))
 
 
+_STAR_SEED = 11
+_STAR_COUNT = 40
+_STAR_WHITE: RGB = (255, 255, 255)
+_STAR_YELLOW: RGB = (255, 236, 150)
+_FLAKE_SEED = 23
+_FLAKE_COUNT = 60
+
+
+def _build_points(seed: int, count: int, y_max: float) -> tuple[tuple[float, float, float], ...]:
+    """Seeded scatter of (x, y, radius) dots across the frame, from y 0 down to ``y_max``."""
+    rng = random.Random(seed)
+    points: list[tuple[float, float, float]] = []
+    for _ in range(count):
+        points.append((rng.uniform(0.0, 1920.0), rng.uniform(0.0, y_max), rng.uniform(1.2, 3.0)))
+    return tuple(points)
+
+
+_STARS: tuple[tuple[float, float, float], ...] = _build_points(_STAR_SEED, _STAR_COUNT, 640.0)
+_FLAKES: tuple[tuple[float, float, float], ...] = _build_points(_FLAKE_SEED, _FLAKE_COUNT, 1080.0)
+
+
+def _paint_dots(
+    img: Image.Image,
+    dots: tuple[tuple[float, float, float], ...],
+    colours: tuple[RGB, ...],
+    alpha: int,
+) -> None:
+    """Draw soft dots cycling through ``colours`` at the given alpha (0 to 255)."""
+    w, h = img.size
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for index, (x, y, r) in enumerate(dots):
+        colour = colours[index % len(colours)]
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=(*colour, alpha))
+    overlay = overlay.filter(ImageFilter.GaussianBlur(0.6))
+    _blend_overlay(img, overlay)
+
+
+def _paint_beach(img: Image.Image, theme: dict[str, Any]) -> None:
+    """Foreground: warm sun glow top-right, a teal sea band with foam lines, then sand."""
+    w, h = img.size
+    sea_top, sand_top = int(h * 0.64), int(h * 0.80)
+    cx, cy = w * 0.84, h * 0.14
+
+    def halo(d: ImageDraw.ImageDraw) -> None:
+        d.ellipse((cx - 300, cy - 300, cx + 300, cy + 300), fill=int(255 * 0.5))
+
+    def core(d: ImageDraw.ImageDraw) -> None:
+        d.ellipse((cx - 90, cy - 90, cx + 90, cy + 90), fill=int(255 * 0.9))
+
+    _paint_mask(img, theme["accent2"], _blurred_mask((w, h), halo, blur=110.0))
+    _paint_mask(img, theme["sun"], _blurred_mask((w, h), core, blur=30.0))
+
+    def sea(d: ImageDraw.ImageDraw) -> None:
+        d.rectangle((0, sea_top, w, sand_top), fill=255)
+
+    _paint_mask(img, theme["sea"], _blurred_mask((w, h), sea, blur=3.0))
+
+    def foam(d: ImageDraw.ImageDraw) -> None:
+        for row in range(sea_top + 26, sand_top - 10, 28):
+            points = [
+                (float(x), row + 6.0 * math.sin(x / 38.0 + row * 0.3)) for x in range(0, w + 12, 12)
+            ]
+            d.line(points, fill=int(255 * 0.6), width=3)
+
+    _paint_mask(img, theme["accent"], _blurred_mask((w, h), foam, blur=1.2))
+
+    def sand(d: ImageDraw.ImageDraw) -> None:
+        d.rectangle((0, sand_top, w, h), fill=255)
+
+    _paint_mask(img, theme["sand"], _blurred_mask((w, h), sand, blur=3.0))
+
+
+def _paint_stars(img: Image.Image, theme: dict[str, Any]) -> None:
+    """Soft pink nebula glow with seeded white and yellow star dots."""
+    w, h = img.size
+    cx, cy = w * 0.28, h * 0.30
+
+    def nebula(d: ImageDraw.ImageDraw) -> None:
+        d.ellipse((cx - 460, cy - 280, cx + 460, cy + 280), fill=int(255 * 0.45))
+
+    _paint_mask(img, theme["accent2"], _blurred_mask((w, h), nebula, blur=150.0))
+    _paint_dots(img, _STARS, (_STAR_WHITE, _STAR_WHITE, _STAR_YELLOW), 230)
+
+
+def _paint_snow(img: Image.Image, theme: dict[str, Any]) -> None:
+    """Pale blue shadows beneath the white hills and seeded falling flakes."""
+    w, h = img.size
+
+    def shadow(d: ImageDraw.ImageDraw) -> None:
+        d.ellipse((-200, 740, w * 0.55, 1120), fill=int(255 * 0.6))
+        d.ellipse((w * 0.45, 800, w + 200, 1140), fill=int(255 * 0.6))
+
+    _paint_mask(img, theme["accent2"], _blurred_mask((w, h), shadow, blur=60.0))
+    _paint_dots(img, _FLAKES, (theme["accent"],), 210)
+
+
+def _paint_cafe(img: Image.Image, theme: dict[str, Any]) -> None:
+    """Foreground: soft amber lamp pool top-left and a darker floor band along the bottom."""
+    w, h = img.size
+    cx, cy = w * 0.18, h * 0.16
+
+    def pool(d: ImageDraw.ImageDraw) -> None:
+        d.ellipse((cx - 500, cy - 360, cx + 500, cy + 360), fill=int(255 * 0.45))
+
+    _paint_mask(img, theme["accent"], _blurred_mask((w, h), pool, blur=170.0))
+
+    def floor(d: ImageDraw.ImageDraw) -> None:
+        d.rectangle((0, int(h * 0.84), w, h), fill=int(255 * 0.6))
+
+    _paint_mask(img, theme["floor"], _blurred_mask((w, h), floor, blur=8.0))
+
+
+def _paint_mint_grid(img: Image.Image, theme: dict[str, Any]) -> None:
+    """Faint white grid of lines across the mint sky."""
+    w, h = img.size
+    spacing = 96
+
+    def lines(d: ImageDraw.ImageDraw) -> None:
+        for x in range(0, w, spacing):
+            d.line([(x, 0), (x, h)], fill=int(255 * 0.35), width=2)
+        for y in range(0, h, spacing):
+            d.line([(0, y), (w, y)], fill=int(255 * 0.35), width=2)
+
+    _paint_mask(img, theme["accent"], _blurred_mask((w, h), lines))
+
+
 _DECOR_PAINTERS: dict[str, Any] = {
     "sun": _paint_sun,
     "lamp": _paint_lamp,
@@ -447,7 +644,15 @@ _DECOR_PAINTERS: dict[str, Any] = {
     "mist": _paint_mist,
     "clouds": _paint_clouds,
     "neon": _paint_neon,
+    "beach": _paint_beach,
+    "stars": _paint_stars,
+    "snow": _paint_snow,
+    "cafe": _paint_cafe,
+    "mint_grid": _paint_mint_grid,
 }
+
+# Decor painted over the hill silhouettes rather than behind them.
+_FOREGROUND_DECOR: frozenset[str] = frozenset({"beach", "cafe"})
 
 
 def _resolve_theme(theme_name: str) -> dict[str, Any]:
@@ -495,7 +700,8 @@ def draw_themed_background(
     theme = _resolve_theme(theme_name)
     _paint_sky_palette(img, theme["sky_top"], theme["sky_bottom"], theme["sky_glow"])
     decor = _DECOR_PAINTERS.get(theme["decor"])
-    if decor is not None:
+    foreground = theme["decor"] in _FOREGROUND_DECOR
+    if decor is not None and not foreground:
         decor(img, theme)
     for index, (depth, base_y, amp, blend, harmonics) in enumerate(_LAYERS):
         if theme["skyline"]:
@@ -506,5 +712,7 @@ def draw_themed_background(
             _paint_silhouette(img, depth, base_y, amp, colour, harmonics, camera_x)
         if index == 0:
             _paint_horizon(img, theme["horizon"])
+    if decor is not None and foreground:
+        decor(img, theme)
     _paint_dust(img, t, camera_x, theme["dust"])
     draw_vignette(img, VIGNETTE_STRENGTH)

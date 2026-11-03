@@ -217,6 +217,332 @@ const bgNavy = () => ({
   ]),
 });
 
+// ---- Extra props and backgrounds (same palette, ink outlines, 2x sizes) ----
+const r2 = (n) => Math.round(n * 100) / 100;
+// Point on a clock-style circle: angle in degrees clockwise from 12 o'clock.
+const polar = (cx, cy, len, deg) => [
+  r2(cx + len * Math.sin((deg * Math.PI) / 180)),
+  r2(cy - len * Math.cos((deg * Math.PI) / 180)),
+];
+// Five-point star path, outer radius R, inner radius ri.
+function starPath(cx, cy, R, ri) {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const rr = i % 2 === 0 ? R : ri;
+    pts.push(`${r2(cx + rr * Math.cos(a))} ${r2(cy + rr * Math.sin(a))}`);
+  }
+  return `M${pts.join(" L")} Z`;
+}
+
+const GREEN = "#3FA66B";
+const GREEN_DARK = "#2F8A58";
+const CORAL = "#FF7A6B";
+const TEAL = "#1FB5B0";
+const AMBER = "#FFB84D";
+
+const propPlant = () => ({
+  width: 300,
+  height: 400,
+  element: svgRoot(300, 400, [], [
+    P("M150 240 Q80 220 70 150 Q140 160 150 240 Z", { fill: GREEN_DARK, ...OUTLINE }),
+    P("M150 240 Q220 220 230 150 Q160 160 150 240 Z", { fill: GREEN_DARK, ...OUTLINE }),
+    P("M150 240 Q120 150 150 80 Q180 160 150 240 Z", { fill: GREEN, ...OUTLINE }),
+    P("M150 232 Q140 160 150 92", { fill: "none", stroke: "#8BE0A8", strokeWidth: 4, strokeLinecap: "round" }),
+    E("rect", { x: 80, y: 240, width: 140, height: 28, rx: 8, fill: "#E0785F", ...OUTLINE }),
+    P("M90 268 L210 268 L196 372 Q194 386 180 386 L120 386 Q106 386 104 372 Z", { fill: "#D9825F", ...OUTLINE }),
+  ]),
+});
+
+const propLamp = () => ({
+  width: 240,
+  height: 520,
+  element: svgRoot(240, 520, [rad("lampGlow", [[0, "#FFD27A", 0.6], [1, "#FFD27A", 0]])], [
+    E("ellipse", { cx: 120, cy: 210, rx: 120, ry: 110, fill: "url(#lampGlow)" }),
+    E("ellipse", { cx: 120, cy: 500, rx: 64, ry: 14, fill: "#3A3A4C", ...OUTLINE }),
+    E("rect", { x: 114, y: 190, width: 12, height: 300, fill: "#5A5A6C", ...OUTLINE }),
+    P("M70 60 L170 60 L212 190 L28 190 Z", { fill: AMBER, ...OUTLINE }),
+    E("ellipse", { cx: 120, cy: 60, rx: 50, ry: 10, fill: "#FFE7A8", ...OUTLINE }),
+    P("M92 84 L100 170", { fill: "none", stroke: "#FFF0C2", strokeWidth: 6, strokeLinecap: "round", opacity: 0.8 }),
+  ]),
+});
+
+const SPINE_COLS = ["#FF7A6B", "#1FB5B0", "#FFB84D", "#4D7CFE", "#EAE6DF", "#3FA66B", "#8E6CEF"];
+function spines(y, h, x0, widths, offset) {
+  let x = x0;
+  return widths.map((w, i) => {
+    const el = E("rect", {
+      x, y, width: w, height: h, fill: SPINE_COLS[(i + offset) % SPINE_COLS.length], stroke: INK, strokeWidth: 4,
+    });
+    x += w;
+    return el;
+  });
+}
+
+const propBookshelf = () => ({
+  width: 360,
+  height: 400,
+  element: svgRoot(360, 400, [], [
+    E("rect", { x: 20, y: 20, width: 320, height: 360, rx: 8, fill: "#A0643A", ...OUTLINE }),
+    E("rect", { x: 40, y: 40, width: 280, height: 320, fill: "#7A4A2A" }),
+    spines(60, 90, 48, [26, 20, 32, 24, 18, 28, 22, 30, 20, 26], 0),
+    E("rect", { x: 40, y: 150, width: 280, height: 14, rx: 3, fill: "#C98A56", ...OUTLINE }),
+    spines(164, 106, 48, [22, 30, 18, 26, 34, 20, 24, 28, 20], 2),
+    E("rect", { x: 40, y: 270, width: 280, height: 14, rx: 3, fill: "#C98A56", ...OUTLINE }),
+    spines(284, 76, 48, [28, 24, 20, 32, 26, 22], 4),
+  ]),
+});
+
+const propLaptop = () => ({
+  width: 400,
+  height: 300,
+  element: svgRoot(400, 300, [lin("lapScr", [[0, "#5FE3DC"], [1, TEAL]])], [
+    E("rect", { x: 70, y: 20, width: 260, height: 180, rx: 12, fill: "#2E2E3E", ...OUTLINE }),
+    E("rect", { x: 88, y: 36, width: 224, height: 148, rx: 4, fill: "url(#lapScr)" }),
+    E("rect", { x: 110, y: 60, width: 120, height: 10, rx: 5, fill: "#FFFFFF", opacity: 0.85 }),
+    E("rect", { x: 110, y: 82, width: 180, height: 8, rx: 4, fill: "#FFFFFF", opacity: 0.55 }),
+    E("rect", { x: 110, y: 100, width: 150, height: 8, rx: 4, fill: "#FFFFFF", opacity: 0.55 }),
+    E("circle", { cx: 280, cy: 140, r: 14, fill: AMBER }),
+    P("M30 200 L370 200 L350 252 Q344 262 330 262 L70 262 Q56 262 50 252 Z", { fill: "#C9CAD6", ...OUTLINE }),
+    E("rect", { x: 170, y: 200, width: 60, height: 10, rx: 4, fill: "#8A8BA0" }),
+  ]),
+});
+
+const propCoffeeCup = () => ({
+  width: 280,
+  height: 300,
+  element: svgRoot(280, 300, [], [
+    P("M220 110 Q272 110 272 160 Q272 210 218 210", { fill: "none", stroke: INK, strokeWidth: 30, strokeLinecap: "round" }),
+    P("M220 110 Q272 110 272 160 Q272 210 218 210", { fill: "none", stroke: CORAL, strokeWidth: 14, strokeLinecap: "round" }),
+    P("M40 90 L220 90 L212 250 Q210 272 188 272 L72 272 Q50 272 48 250 Z", { fill: CORAL, ...OUTLINE }),
+    E("ellipse", { cx: 130, cy: 90, rx: 90, ry: 16, fill: "#FF9A8C", ...OUTLINE }),
+    E("ellipse", { cx: 130, cy: 90, rx: 76, ry: 9, fill: "#5A2A24" }),
+    P("M70 120 L72 226", { fill: "none", stroke: "#FFD2C9", strokeWidth: 8, strokeLinecap: "round", opacity: 0.8 }),
+    P("M100 58 Q88 42 100 28 Q112 14 100 4", { fill: "none", stroke: SHADE, strokeWidth: 6, strokeLinecap: "round" }),
+  ]),
+});
+
+const propSofa = () => ({
+  width: 480,
+  height: 260,
+  element: svgRoot(480, 260, [], [
+    E("rect", { x: 40, y: 210, width: 26, height: 30, rx: 6, fill: INK }),
+    E("rect", { x: 414, y: 210, width: 26, height: 30, rx: 6, fill: INK }),
+    E("rect", { x: 40, y: 40, width: 400, height: 130, rx: 36, fill: "#8E6CEF", ...OUTLINE }),
+    E("rect", { x: 20, y: 130, width: 440, height: 80, rx: 30, fill: "#A285F5", ...OUTLINE }),
+    E("rect", { x: 110, y: 138, width: 110, height: 62, rx: 20, fill: "#B49CFA", ...OUTLINE }),
+    E("rect", { x: 260, y: 138, width: 110, height: 62, rx: 20, fill: "#B49CFA", ...OUTLINE }),
+    E("rect", { x: 0, y: 110, width: 70, height: 120, rx: 30, fill: "#7A58DB", ...OUTLINE }),
+    E("rect", { x: 410, y: 110, width: 70, height: 120, rx: 30, fill: "#7A58DB", ...OUTLINE }),
+  ]),
+});
+
+const propTv = () => ({
+  width: 400,
+  height: 320,
+  element: svgRoot(400, 320, [lin("tvBlue", [[0, "#5B8CFF"], [1, "#1E3FA8"]])], [
+    P("M170 60 L130 14 M230 60 L270 14", STROKE_LINE),
+    E("rect", { x: 20, y: 56, width: 360, height: 220, rx: 22, fill: "#2E2E3E", ...OUTLINE }),
+    E("rect", { x: 46, y: 82, width: 230, height: 170, rx: 12, fill: "url(#tvBlue)", ...OUTLINE }),
+    P("M64 100 L120 100 L76 160 L64 160 Z", { fill: "#FFFFFF", opacity: 0.15 }),
+    E("rect", { x: 292, y: 96, width: 62, height: 22, rx: 6, fill: "#8A8BA0" }),
+    E("circle", { cx: 323, cy: 150, r: 10, fill: CORAL }),
+    E("rect", { x: 292, y: 180, width: 62, height: 10, rx: 5, fill: "#8A8BA0" }),
+    E("rect", { x: 110, y: 276, width: 180, height: 16, rx: 8, fill: "#3A3A4C", ...OUTLINE }),
+  ]),
+});
+
+const propClock = () => {
+  const c = 150;
+  const ticks = Array.from({ length: 12 }, (_, i) => {
+    const [x1, y1] = polar(c, c, 98, i * 30);
+    const [x2, y2] = polar(c, c, 116, i * 30);
+    return P(`M${x1} ${y1} L${x2} ${y2}`, { fill: "none", stroke: INK, strokeWidth: 8, strokeLinecap: "round" });
+  });
+  const [hx, hy] = polar(c, c, 60, -60);
+  const [mx, my] = polar(c, c, 96, 60);
+  return {
+    width: 300,
+    height: 300,
+    element: svgRoot(300, 300, [], [
+      E("circle", { cx: c, cy: c, r: 130, fill: "#F6F3EE", ...OUTLINE }),
+      ticks,
+      P(`M${c} ${c} L${hx} ${hy}`, { fill: "none", stroke: INK, strokeWidth: 12, strokeLinecap: "round" }),
+      P(`M${c} ${c} L${mx} ${my}`, { fill: "none", stroke: INK, strokeWidth: 8, strokeLinecap: "round" }),
+      E("circle", { cx: c, cy: c, r: 9, fill: CORAL, ...OUTLINE }),
+    ]),
+  };
+};
+
+const propWindowNight = () => ({
+  width: 400,
+  height: 400,
+  element: svgRoot(400, 400, [lin("nightSky", [[0, "#14123A"], [1, "#2E2A6A"]])], [
+    E("rect", { x: 20, y: 20, width: 360, height: 360, rx: 14, fill: CREAM, ...OUTLINE }),
+    E("rect", { x: 44, y: 44, width: 312, height: 312, rx: 4, fill: "url(#nightSky)" }),
+    E("circle", { cx: 270, cy: 130, r: 48, fill: "#FFF4C2" }),
+    E("circle", { cx: 286, cy: 118, r: 44, fill: "#1B1A52" }),
+    [[90, 90, 2.5], [130, 150, 2], [120, 250, 3], [320, 240, 2], [80, 320, 2], [300, 300, 2.5], [200, 80, 2], [230, 200, 1.8]]
+      .map(([x, y, r]) => E("circle", { cx: x, cy: y, r, fill: "#FFFFFF" })),
+    E("rect", { x: 196, y: 44, width: 8, height: 312, fill: CREAM, stroke: INK, strokeWidth: 3 }),
+    E("rect", { x: 44, y: 196, width: 312, height: 8, fill: CREAM, stroke: INK, strokeWidth: 3 }),
+  ]),
+});
+
+const propBeachUmbrella = () => {
+  const dome = "M40 190 Q40 40 200 40 Q360 40 360 190 Q340 200 320 190 Q300 200 280 190 Q260 200 240 190 Q220 200 200 190 Q180 200 160 190 Q140 200 120 190 Q100 200 80 190 Q60 200 40 190 Z";
+  return {
+    width: 400,
+    height: 400,
+    element: svgRoot(400, 400, [], [
+      E("rect", { x: 194, y: 150, width: 12, height: 230, fill: CREAM, stroke: INK, strokeWidth: 4 }),
+      P(dome, { fill: "#FFFFFF" }),
+      P("M200 40 L40 190 L120 190 Z", { fill: CORAL }),
+      P("M200 40 L200 190 L280 190 Z", { fill: CORAL }),
+      P(dome, { fill: "none", ...OUTLINE }),
+      E("circle", { cx: 200, cy: 34, r: 8, fill: INK }),
+      E("ellipse", { cx: 200, cy: 384, rx: 70, ry: 14, fill: "#F2D28E", ...OUTLINE }),
+    ]),
+  };
+};
+
+const propCloud = () => {
+  const shapes = (p) => [
+    E("circle", { cx: 110, cy: 150, r: 60, ...p }),
+    E("circle", { cx: 190, cy: 110, r: 80, ...p }),
+    E("circle", { cx: 280, cy: 140, r: 64, ...p }),
+    E("rect", { x: 50, y: 150, width: 300, height: 60, rx: 30, ...p }),
+  ];
+  return {
+    width: 400,
+    height: 240,
+    element: svgRoot(400, 240, [], [
+      shapes({ fill: INK, stroke: INK, strokeWidth: 14, strokeLinejoin: "round" }),
+      shapes({ fill: "#FFFFFF" }),
+      E("ellipse", { cx: 200, cy: 190, rx: 120, ry: 12, fill: "#DDE8F5" }),
+    ]),
+  };
+};
+
+const propStarCluster = () => ({
+  width: 300,
+  height: 260,
+  element: svgRoot(300, 260, [], [
+    P(starPath(60, 190, 50, 21), { fill: "#FFD84D", ...OUTLINE }),
+    P(starPath(240, 70, 42, 18), { fill: "#FFD84D", ...OUTLINE }),
+    P(starPath(150, 130, 84, 36), { fill: "#FFD84D", ...OUTLINE }),
+    E("circle", { cx: 150, cy: 120, r: 10, fill: "#FFF6C2" }),
+  ]),
+});
+
+const propRocket = () => ({
+  width: 300,
+  height: 420,
+  element: svgRoot(300, 420, [], [
+    P("M110 260 L70 320 L110 310 Z", { fill: CORAL, ...OUTLINE }),
+    P("M190 260 L230 320 L190 310 Z", { fill: CORAL, ...OUTLINE }),
+    P("M124 302 Q150 400 176 302 Z", { fill: AMBER, ...OUTLINE }),
+    P("M138 302 Q150 350 162 302 Z", { fill: "#FFF0A0" }),
+    P("M150 30 Q196 90 196 200 L196 290 Q196 300 186 300 L114 300 Q104 300 104 290 L104 200 Q104 90 150 30 Z", {
+      fill: "#FFFFFF",
+      ...OUTLINE,
+    }),
+    P("M104 240 L196 240 L196 290 Q196 300 186 300 L114 300 Q104 300 104 290 Z", { fill: CORAL }),
+    E("circle", { cx: 150, cy: 150, r: 26, fill: "#5CC8FF", ...OUTLINE }),
+    E("circle", { cx: 142, cy: 142, r: 6, fill: "#FFFFFF" }),
+  ]),
+});
+
+const propBookStack = () => ({
+  width: 340,
+  height: 260,
+  element: svgRoot(340, 260, [], [
+    E("rect", { x: 30, y: 190, width: 280, height: 50, rx: 6, fill: CORAL, ...OUTLINE }),
+    E("rect", { x: 296, y: 196, width: 10, height: 38, fill: CREAM, stroke: INK, strokeWidth: 3 }),
+    E("rect", { x: 56, y: 136, width: 250, height: 54, rx: 6, fill: TEAL, ...OUTLINE }),
+    E("rect", { x: 280, y: 140, width: 12, height: 46, fill: CREAM, stroke: INK, strokeWidth: 3 }),
+    E("rect", { x: 80, y: 84, width: 210, height: 52, rx: 6, fill: AMBER, ...OUTLINE }),
+    E("rect", { x: 268, y: 88, width: 12, height: 44, fill: CREAM, stroke: INK, strokeWidth: 3 }),
+    E("rect", { x: 60, y: 213, width: 160, height: 6, rx: 3, fill: "#FFFFFF", opacity: 0.4 }),
+    E("rect", { x: 96, y: 110, width: 150, height: 6, rx: 3, fill: "#FFFFFF", opacity: 0.4 }),
+    E("rect", { x: 104, y: 158, width: 130, height: 6, rx: 3, fill: "#FFFFFF", opacity: 0.4 }),
+  ]),
+});
+
+const bgBeachSunset = () => ({
+  width: 1920,
+  height: 1080,
+  element: svgRoot(1920, 1080, [
+    lin("sunsetSky", [[0, CORAL], [0.6, "#FFB36B"], [1, "#FFD84D"]]),
+    lin("seaGrad", [[0, TEAL], [1, "#0F6E6C"]]),
+    rad("sunGlow", [[0, "#FFF0A0", 0.9], [1, "#FFF0A0", 0]]),
+  ], [
+    E("rect", { x: 0, y: 0, width: 1920, height: 1080, fill: "url(#sunsetSky)" }),
+    E("ellipse", { cx: 960, cy: 660, rx: 520, ry: 420, fill: "url(#sunGlow)" }),
+    E("circle", { cx: 960, cy: 640, r: 150, fill: "#FFF4B8" }),
+    E("rect", { x: 0, y: 700, width: 1920, height: 380, fill: "url(#seaGrad)" }),
+    P("M260 760 Q380 744 500 760 M1380 800 Q1500 784 1620 800", {
+      fill: "none", stroke: "#8FF0E8", strokeWidth: 6, strokeLinecap: "round", opacity: 0.5,
+    }),
+  ]),
+});
+
+const bgSpaceNight = () => {
+  let seed = 42; // fixed seed so the star field is the same on every build
+  const rnd = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const stars = Array.from({ length: 90 }, () =>
+    E("circle", {
+      cx: Math.round(rnd() * 1920),
+      cy: Math.round(rnd() * 1080),
+      r: r2(1 + rnd() * 2.5),
+      fill: "#FFFFFF",
+      opacity: r2(0.4 + rnd() * 0.6),
+    }),
+  );
+  return {
+    width: 1920,
+    height: 1080,
+    element: svgRoot(1920, 1080, [
+      lin("spaceSky", [[0, "#2A1B5E"], [1, "#0B0520"]]),
+      rad("nebulaGlow", [[0, "#B06BFF", 0.35], [1, "#B06BFF", 0]]),
+    ], [
+      E("rect", { x: 0, y: 0, width: 1920, height: 1080, fill: "url(#spaceSky)" }),
+      E("ellipse", { cx: 1400, cy: 300, rx: 800, ry: 460, fill: "url(#nebulaGlow)" }),
+      stars,
+      E("circle", { cx: 420, cy: 260, r: 6, fill: "#FFF6C2" }),
+    ]),
+  };
+};
+
+const bgSnowDay = () => ({
+  width: 1920,
+  height: 1080,
+  element: svgRoot(1920, 1080, [lin("snowSky", [[0, "#A9D8FF"], [1, "#E8F5FF"]])], [
+    E("rect", { x: 0, y: 0, width: 1920, height: 1080, fill: "url(#snowSky)" }),
+    P("M0 700 Q480 560 960 690 Q1440 820 1920 660 L1920 1080 L0 1080 Z", {
+      fill: "#FFFFFF", stroke: "#C9DDEF", strokeWidth: 4,
+    }),
+    P("M0 860 Q520 740 1080 850 Q1500 930 1920 820 L1920 1080 L0 1080 Z", {
+      fill: "#F7FBFF", stroke: "#C9DDEF", strokeWidth: 4,
+    }),
+  ]),
+});
+
+const bgCafeWarm = () => ({
+  width: 1920,
+  height: 1080,
+  element: svgRoot(1920, 1080, [
+    lin("cafeWall", [[0, "#5A3A24"], [1, "#2A1A10"]]),
+    rad("amberGlow", [[0, AMBER, 0.55], [0.5, AMBER, 0.18], [1, AMBER, 0]]),
+  ], [
+    E("rect", { x: 0, y: 0, width: 1920, height: 1080, fill: "url(#cafeWall)" }),
+    E("ellipse", { cx: 960, cy: 480, rx: 820, ry: 560, fill: "url(#amberGlow)" }),
+  ]),
+});
+
 // ---- Asset registry -------------------------------------------------------
 // Characters are 400x800 at 2x; each body part is its own transparent PNG on the same canvas,
 // so rig pivots line up with the full figure. Both sides (left/right) are included in each part.
@@ -241,6 +567,24 @@ const ASSETS = {
   mountain: propMountain(),
   heavy_bag: propHeavyBag(),
   navy_gradient: bgNavy(),
+  plant: propPlant(),
+  lamp: propLamp(),
+  bookshelf: propBookshelf(),
+  laptop: propLaptop(),
+  coffee_cup: propCoffeeCup(),
+  sofa_purple: propSofa(),
+  tv_blue: propTv(),
+  clock_wall: propClock(),
+  window_night: propWindowNight(),
+  beach_umbrella: propBeachUmbrella(),
+  cloud: propCloud(),
+  star_cluster: propStarCluster(),
+  rocket: propRocket(),
+  book_stack: propBookStack(),
+  beach_sunset: bgBeachSunset(),
+  space_night: bgSpaceNight(),
+  snow_day: bgSnowDay(),
+  cafe_warm: bgCafeWarm(),
 };
 
 // ---- Pipeline -------------------------------------------------------------

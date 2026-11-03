@@ -77,6 +77,11 @@ def test_theme_names_lists_every_theme_with_default_first() -> None:
         "forest_dawn",
         "city_neon",
         "candy",
+        "beach_day",
+        "space_violet",
+        "snow_blue",
+        "cafe_amber",
+        "mint_grid",
     } <= set(names)
 
 
@@ -91,6 +96,22 @@ def test_every_theme_draws_rgb_1920x1080(name: str) -> None:
 def test_themes_produce_different_pixels() -> None:
     renders = {name: _render_theme(name).tobytes() for name in theme_names()}
     assert len(set(renders.values())) == len(renders)
+
+
+NEW_THEMES = ("beach_day", "space_violet", "snow_blue", "cafe_amber", "mint_grid")
+
+
+@pytest.mark.parametrize("name", NEW_THEMES)
+def test_new_theme_is_listed_and_draws_rgb_1920x1080(name: str) -> None:
+    assert name in theme_names()
+    img = _render_theme(name, t=0.5, camera_x=30.0)
+    assert img.mode == "RGB"
+    assert img.size == (1920, 1080)
+
+
+@pytest.mark.parametrize("name", NEW_THEMES)
+def test_new_theme_differs_from_navy_night(name: str) -> None:
+    assert _render_theme(name).tobytes() != _render_theme("navy_night").tobytes()
 
 
 def test_navy_night_theme_matches_default_background() -> None:

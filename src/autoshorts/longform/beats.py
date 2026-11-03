@@ -13,6 +13,7 @@ section context, but the current rules only read the narration.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -38,7 +39,13 @@ from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
 from autoshorts.longform.rig import POSES, animate_pose, draw_rig
 from autoshorts.longform.sphere import draw_sphere, orbit_point
-from autoshorts.longform.sprite_rig import draw_sprite_rig, wrist_offset
+from autoshorts.longform.sprite_rig import (
+    ANKLE,
+    CANVAS_PX_PER_RIG_UNIT,
+    HIP,
+    draw_sprite_rig,
+    wrist_offset,
+)
 from autoshorts.longform.sprites import paste_sprite, sprite_size
 
 RGB = tuple[int, int, int]
@@ -46,12 +53,28 @@ RGB = tuple[int, int, int]
 FRAME_W = 1920
 FRAME_H = 1080
 FLOOR_Y = 760
-RIG_SCALE = 1.5
-RIG_ORIGIN = (1000, 598)  # hip height so the feet land on FLOOR_Y (108 * 1.5 = 162 px leg)
+# Standing and seated figures are drawn FIGURE_SCALE_UP times the base size.
+FIGURE_SCALE_UP = 1.25
+BASE_RIG_SCALE = 1.5  # rig.draw_rig scale: 108 units from hip to ankle
+BASE_SPRITE_SCALE = 0.65  # satori canvas px -> output px at the base size
+RIG_SCALE = BASE_RIG_SCALE * FIGURE_SCALE_UP
+FIGURE_SPRITE_SCALE = BASE_SPRITE_SCALE * FIGURE_SCALE_UP
+# Hip origin that puts the ankles on FLOOR_Y: the hip-to-ankle drop in canvas px, times the scale.
+RIG_ORIGIN = (1000, round(FLOOR_Y - (ANKLE["l"][1] - HIP[1]) * FIGURE_SPRITE_SCALE))
+# Top of the satori head art (head.png alpha box) in canvas px, for the head-top placement.
+HEAD_TOP_CANVAS_Y = 75.0
+HAND_REACH_CANVAS_PX = 50.0  # approximate length of the hand past the wrist, in canvas px
+# A standing figure's highest point should stay below this line (see _lift_origin).
+FIGURE_TOP_MIN_Y = 300
 MOOD_WASH_INTENSITY = 0.08
-NARRATION_Y = 180
+# Narration sits in the top band, from NARRATION_TOP down to just above a standing head.
+NARRATION_TOP = 120
+NARRATION_BOTTOM = round(RIG_ORIGIN[1] + (HEAD_TOP_CANVAS_Y - HIP[1]) * FIGURE_SPRITE_SCALE) - 8
+NARRATION_BAND = (NARRATION_TOP, NARRATION_BOTTOM)
 NARRATION_FONT_SIZE = 66
-NARRATION_MAX_PER_LINE = 5
+NARRATION_MIN_FONT_SIZE = 40
+NARRATION_MAX_PER_LINE = 7
+NARRATION_LINE_SPACING = 1.25  # draw_kinetic_line uses int(font_size * 1.25) per row
 INNER_VOICE_ANCHOR = (140, 420)
 NUMBER_ANCHOR = (1500, 520)
 
@@ -123,9 +146,6 @@ PROP_XY: dict[str, tuple[int, int]] = {
     "computer": (1440, 509),
 }
 MAX_PROPS = 4  # keeps each frame readable; earlier rules win when the cap cuts props
-FIGURE_SPRITE_SCALE = (
-    0.65  # satori canvas px -> output px: hip to ankle matches rig leg length (162 px)
-)
 # Seated figure's near hand, relative to RIG_ORIGIN, from the DESK_POSE pose.
 _HAND_OFFSET = wrist_offset(POSES[DESK_POSE], FIGURE_SPRITE_SCALE, "l")
 
@@ -193,8 +213,10 @@ PRONE_WORDS = frozenset({"stomach", "prone", "face"})
 CHAIR_WORDS = frozenset({"chair", "sit"})
 WIN_WORDS = frozenset({"better", "new", "win", "won", "success", "celebrate"})
 START_WORDS = frozenset({"start", "begin"})
-CALENDAR_WORDS = frozenset({"every", "day", "daily"})
-DAY_WORDS = frozenset({"day", "daily"})
+# The calendar needs a clear scheduling word or the phrase "every day"; "day" alone is too generic.
+CALENDAR_WORDS = frozenset({"calendar", "schedule", "date", "planner", "deadline"})
+CALENDAR_PHRASE_RE = re.compile(r"\bevery day\b")
+DAY_WORDS = frozenset({"day", "daily"})  # counted for the calendar marks once it is shown
 # Extra props and poses, each from the narration keywords named in the section rules.
 LAMP_WORDS = frozenset({"bed", "sleep"})
 STUDY_WORDS = frozenset({"study", "book", "read", "reading"})
@@ -202,7 +224,7 @@ PLANT_WORDS = frozenset({"plant", "nature", "grow", "garden"})
 TV_WORDS = frozenset({"tv", "watch", "show"})
 SOFA_WORDS = frozenset({"sofa", "couch", "relax"})
 TRASH_WORDS = frozenset({"trash", "delete", "throw"})
-CLOCK_WORDS = frozenset({"clock", "time", "late"})
+CLOCK_WORDS = frozenset({"clock", "late"})  # "time" is too generic to pick a clock
 MORNING_SUN_WORDS = frozenset({"sun", "morning", "dawn", "rise"})
 NIGHT_WORDS = frozenset({"night", "midnight", "dark"})
 COMPUTER_WORDS = frozenset({"email", "typing", "office", "meeting"})
@@ -232,7 +254,7 @@ PROP_ENTRANCE_WORDS: dict[str, frozenset[str]] = {
     "heavy_bag": BAG_WORDS,
     "mountain": MOUNTAIN_WORDS,
     "shadow_demon": SHADOW_WORDS,
-    "calendar": CALENDAR_WORDS,
+    "calendar": CALENDAR_WORDS | DAY_WORDS | {"every"},
 }
 PROP_ENTRANCE_KIND: dict[str, str] = {"heavy_bag": "drop", "mountain": "drop"}
 PROP_WIGGLE: dict[str, float] = {"alarm_clock_7seg": 1.2, "phone": 1.2}
@@ -400,7 +422,7 @@ def plan_beat(
             if token in EXCUSE_LINES:
                 inner_voice = EXCUSE_LINES[token]
                 break
-    if words & CALENDAR_WORDS:
+    if words & CALENDAR_WORDS or CALENDAR_PHRASE_RE.search(lowered):
         marks = sum(1 for token in tokens if token in DAY_WORDS)
         props.append(PropSpec("calendar", 1380, 300, 1.0, {"marks": marks}))
 
@@ -532,6 +554,17 @@ def _plain_word(word: str) -> str:
     return re.sub(r"[^a-z]", "", word.lower())
 
 
+def _narration_font_size(sentences: Sequence[str]) -> int:
+    """Largest font whose rows for the longest sentence fit inside NARRATION_BAND."""
+    rows = max(
+        (math.ceil(len(sentence.split()) / NARRATION_MAX_PER_LINE) for sentence in sentences),
+        default=1,
+    )
+    height = NARRATION_BAND[1] - NARRATION_BAND[0]
+    fit = int(height // (max(1, rows) * NARRATION_LINE_SPACING))
+    return max(NARRATION_MIN_FONT_SIZE, min(NARRATION_FONT_SIZE, fit))
+
+
 def _draw_narration(
     img: Image.Image, section_text: str, t: float, start: float, end: float
 ) -> None:
@@ -549,12 +582,12 @@ def _draw_narration(
         t,
         sentence_start,
         end,
-        y=NARRATION_Y,
+        y=NARRATION_TOP,
         color=PALETTE.text,
         highlight_indices=highlight,
         highlight_color=PALETTE.highlight,
         max_per_line=NARRATION_MAX_PER_LINE,
-        font_size=NARRATION_FONT_SIZE,
+        font_size=_narration_font_size(sentences),
         uppercase=False,
     )
 
@@ -598,6 +631,40 @@ def _figure_joints(
     joints = dict(_rig_pose(plan, shot_start, t))
     joints["head_turn"] = _head_turn(section_text)
     return joints
+
+
+def _figure_drop_px(joints: dict[str, float], scale: float) -> float:
+    return joints.get("drop", 0.0) * CANVAS_PX_PER_RIG_UNIT * scale
+
+
+def _highest_figure_y(joints: dict[str, float], origin_y: float, scale: float) -> float:
+    """Output y of the figure's highest point: the head top or a raised wrist."""
+    head = origin_y + _figure_drop_px(joints, scale) + (HEAD_TOP_CANVAS_Y - HIP[1]) * scale
+    # The fist sits past the wrist along the forearm, so the hand's top is HAND_REACH_CANVAS_PX above it.
+    hands = [
+        origin_y + wrist_offset(joints, scale, side)[1] - HAND_REACH_CANVAS_PX * scale
+        for side in ("l", "r")
+    ]
+    return min(head, *hands)
+
+
+def _feet_y(joints: dict[str, float], origin_y: float, scale: float) -> float:
+    return origin_y + _figure_drop_px(joints, scale) + (ANKLE["l"][1] - HIP[1]) * scale
+
+
+def _lift_origin(
+    joints: dict[str, float], origin: tuple[float, float], scale: float
+) -> tuple[float, float]:
+    """Lower a standing figure so its highest point sits at FIGURE_TOP_MIN_Y.
+
+    The shift is clamped so the feet never go below FLOOR_Y, so a figure already standing on
+    the floor is not moved.
+    """
+    origin_x, origin_y = origin
+    top_gap = FIGURE_TOP_MIN_Y - _highest_figure_y(joints, origin_y, scale)
+    floor_gap = FLOOR_Y - _feet_y(joints, origin_y, scale)
+    shift = min(max(0.0, top_gap), max(0.0, floor_gap))
+    return (origin_x, origin_y + shift)
 
 
 def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
@@ -658,12 +725,17 @@ def draw_beat(
     if _is_space_topic(section_text):
         _draw_space(img, t, pal.blue, pal.highlight)
 
-    origin = LYING_HIP if plan.pose in LYING_POSES else RIG_ORIGIN
+    joints = _figure_joints(plan, start, section_text, t)
+    if plan.pose in LYING_POSES:
+        origin, sprite_scale, rig_scale = LYING_HIP, BASE_SPRITE_SCALE, BASE_RIG_SCALE
+    else:
+        origin = _lift_origin(joints, RIG_ORIGIN, FIGURE_SPRITE_SCALE)
+        sprite_scale, rig_scale = FIGURE_SPRITE_SCALE, RIG_SCALE
     if not draw_sprite_rig(
         img,
-        _figure_joints(plan, start, section_text, t),
+        joints,
         origin,
-        FIGURE_SPRITE_SCALE,
+        sprite_scale,
         expression=plan.expression,
         t=t,
         mirror=plan.mirror,
@@ -672,7 +744,7 @@ def draw_beat(
             img,
             _rig_pose(plan, start, t),
             origin,
-            RIG_SCALE,
+            rig_scale,
             expression=plan.expression,
             headband=plan.headband,
             t=t,
