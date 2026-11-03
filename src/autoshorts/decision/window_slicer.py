@@ -975,6 +975,9 @@ def slice_transcript_windows(
 
     # If no window met criteria (e.g. edge cases), wrap full text as single candidate
     if not candidates:
+        logger.warning(
+            "Window selection fallback: no window met duration criteria, using full transcript as one candidate"
+        )
         full_text = " ".join(s["text"] for s in segments)
         candidates.append(
             _build_candidate(
@@ -991,6 +994,9 @@ def slice_transcript_windows(
         if clean_candidates:
             candidates = clean_candidates
         else:
+            logger.info(
+                "Window selection fallback: every window overlaps a sponsor segment, keeping the least-overlapping window(s)"
+            )
             # Fallback: keep the cleanest window(s) if filtering would leave 0 windows
             min_ratio = min(
                 _sponsor_overlap_ratio(c.start, c.end, sponsor_segments) for c in candidates

@@ -126,6 +126,7 @@ def evaluate_heuristic(text: str, duration_sec: float | None = None) -> float:
     """
     cleaned = text.strip()
     if not cleaned:
+        logger.info("Heuristic score fallback: empty text, score 0.0")
         return 0.0
 
     words = cleaned.split()

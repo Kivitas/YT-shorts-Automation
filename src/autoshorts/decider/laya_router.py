@@ -270,6 +270,7 @@ class LayaRouter:
         3. If all candidates < 70.0 -> attempt patch on argmax(score); if exhausted, return argmax.
         """
         if not candidates:
+            logger.warning("Hook selection fallback: no candidates, scoring empty hook")
             return self.score_hook("")
 
         scored = self.evaluate_candidates(candidates)
@@ -294,6 +295,10 @@ class LayaRouter:
             patched_res = self.score_hook(patched_text)
             if patched_res.score > best.score:
                 return patched_res
+            logger.info(
+                "Hook selection fallback: no candidate reached threshold, keeping argmax (score=%.1f)",
+                best.score,
+            )
 
         return best
 

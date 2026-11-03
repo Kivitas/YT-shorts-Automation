@@ -38,6 +38,7 @@ from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
 from autoshorts.longform.rig import animate_pose, draw_rig
 from autoshorts.longform.sphere import draw_sphere, orbit_point
+from autoshorts.longform.sprites import paste_sprite, sprite_size
 
 RGB = tuple[int, int, int]
 
@@ -69,6 +70,18 @@ SATELLITE_SPEED_DEG_S = 45.0
 SATELLITE_RADIUS = 9
 
 PARALLAX_CAMERA_SPEED = 40.0  # px per second of camera pan, passed to the backdrop
+
+BACKDROP_SPRITE = "navy_gradient"
+# Props with a PNG sprite; the sprite is used once the prop has entered, else draw_prop runs.
+PROP_SPRITES: dict[str, str] = {
+    "window": "window",
+    "phone": "phone",
+    "alarm_clock_7seg": "alarm_clock",
+    "mountain": "mountain",
+    "heavy_bag": "heavy_bag",
+}
+FIGURE_SPRITE = "figure"
+FIGURE_HEIGHT_PX = 330  # on-screen height of the standing figure sprite
 
 GESTURE_POINT_WORDS = frozenset({"look", "see", "watch", "first", "start"})
 GESTURE_OPEN_WORDS = frozenset({"you", "your"})
@@ -372,6 +385,47 @@ def _draw_narration(
     )
 
 
+def _draw_prop(
+    img: Image.Image,
+    prop: PropSpec,
+    t: float,
+    start: float,
+    words: Sequence[Mapping[str, Any]] | None,
+) -> None:
+    """Paste the prop's sprite once it has entered, otherwise draw it procedurally."""
+    entrance_start = _entrance_start(prop.name, words, start)
+    sprite_name = PROP_SPRITES.get(prop.name)
+    if sprite_name is not None and entrance_start <= t:
+        size = sprite_size(sprite_name, prop.scale)
+        if size is not None:
+            centre = (prop.x + size[0] / 2, prop.y + size[1] / 2)
+            if paste_sprite(img, sprite_name, centre, scale=prop.scale):
+                return
+    draw_prop(
+        img,
+        prop.name,
+        (prop.x, prop.y),
+        scale=prop.scale,
+        t=t,
+        entrance_start=entrance_start,
+        entrance=PROP_ENTRANCE_KIND.get(prop.name, "pop"),
+        wiggle=PROP_WIGGLE.get(prop.name, 0.0),
+        **prop.params,
+    )
+
+
+def _paste_figure(img: Image.Image, plan: BeatPlan) -> bool:
+    """Paste the standing figure sprite for a neutral, ungestured stand. False means use draw_rig."""
+    if not (plan.pose == "stand" and plan.expression == "neutral" and plan.gesture is None):
+        return False
+    size = sprite_size(FIGURE_SPRITE)
+    if size is None:
+        return False
+    scale = FIGURE_HEIGHT_PX / size[1]
+    centre = (RIG_ORIGIN[0], FLOOR_Y - FIGURE_HEIGHT_PX / 2)
+    return paste_sprite(img, FIGURE_SPRITE, centre, scale=scale, flip=plan.mirror)
+
+
 def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
     """A spinning planet with two satellites on a tilted orbit."""
     draw_sphere(
@@ -416,37 +470,30 @@ def draw_beat(
         )
 
     pal = PALETTE
-    draw_background(img, t, camera_x=PARALLAX_CAMERA_SPEED * t)
+    # The backdrop sprite replaces the procedural backdrop, parallax and dust included.
+    if not paste_sprite(img, BACKDROP_SPRITE, (FRAME_W / 2, FRAME_H / 2)):
+        draw_background(img, t, camera_x=PARALLAX_CAMERA_SPEED * t)
     ImageDraw.Draw(img).line([(0, FLOOR_Y), (FRAME_W, FLOOR_Y)], fill=pal.floor, width=2)
 
     for prop in plan.props:
-        draw_prop(
-            img,
-            prop.name,
-            (prop.x, prop.y),
-            scale=prop.scale,
-            t=t,
-            entrance_start=_entrance_start(prop.name, words, start),
-            entrance=PROP_ENTRANCE_KIND.get(prop.name, "pop"),
-            wiggle=PROP_WIGGLE.get(prop.name, 0.0),
-            **prop.params,
-        )
+        _draw_prop(img, prop, t, start, words)
 
     if _is_space_topic(section_text):
         _draw_space(img, t, pal.blue, pal.highlight)
 
-    draw_rig(
-        img,
-        _rig_pose(plan, start, t),
-        RIG_ORIGIN,
-        RIG_SCALE,
-        expression=plan.expression,
-        headband=plan.headband,
-        t=t,
-        mirror=plan.mirror,
-        head_turn=_head_turn(section_text),
-        hand_lift=_hand_lift(t, start),
-    )
+    if not _paste_figure(img, plan):
+        draw_rig(
+            img,
+            _rig_pose(plan, start, t),
+            RIG_ORIGIN,
+            RIG_SCALE,
+            expression=plan.expression,
+            headband=plan.headband,
+            t=t,
+            mirror=plan.mirror,
+            head_turn=_head_turn(section_text),
+            hand_lift=_hand_lift(t, start),
+        )
 
     for src in plan.light_sources:
         source_glow(img, src.center, src.radius, src.color, src.intensity)

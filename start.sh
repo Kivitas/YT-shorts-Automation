@@ -9,6 +9,7 @@
 #   ./start.sh --port 8080     use another port
 #   ./start.sh --no-browser    do not open a browser tab
 #   ./start.sh --host 0.0.0.0  listen on another interface
+#   ./start.sh --build-assets  force a rebuild of the longform sprite assets
 #
 # Everything the app needs is installed on first run. Paste your API keys into .env.
 # =============================================================================
@@ -34,6 +35,7 @@ PORT="8765"
 HOST="127.0.0.1"
 MODE="run"
 NO_BROWSER=0
+FORCE_ASSETS=0
 COLLECT_ARGS=()
 
 show_help() {
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
         --collect|--collect-gameplay) MODE="collect"; shift
                        while [ $# -gt 0 ]; do COLLECT_ARGS+=("$1"); shift; done ;;
         --no-browser)  NO_BROWSER=1; shift ;;
+        --build-assets) FORCE_ASSETS=1; shift ;;
         --help|-h)     show_help ;;
         *)             notice "Ignoring unknown argument: $1 (see --help)"; shift ;;
     esac
@@ -134,12 +137,18 @@ if ! "$PYTHON_EXE" -c "$PY_DEPS_CHECK" >/dev/null 2>&1; then
 fi
 ok "Python dependencies ready"
 
-# ----------------------------------------------------------------------------- Remotion (optional captions engine)
+# ----------------------------------------------------------------------------- Remotion (optional captions engine + longform sprites)
 REMOTION_DIR="$SCRIPT_DIR/remotion"
-if [ -f "$REMOTION_DIR/package.json" ] && [ ! -x "$REMOTION_DIR/node_modules/.bin/remotion" ]; then
-    if command -v npm >/dev/null 2>&1; then
-        info "Installing the Remotion caption renderer - one time..."
+SATORI_DIR="$REMOTION_DIR/node_modules/satori"
+SPRITE_PNG="$SCRIPT_DIR/assets/longform/sprites/navy_gradient.png"
+if [ -f "$REMOTION_DIR/package.json" ]; then
+    REMOTION_READY=0
+    if [ -x "$REMOTION_DIR/node_modules/.bin/remotion" ] && [ -d "$SATORI_DIR" ]; then
+        REMOTION_READY=1
+    elif command -v npm >/dev/null 2>&1; then
+        info "Installing the Remotion caption renderer and longform assets - one time..."
         if (cd "$REMOTION_DIR" && npm install --no-audit --no-fund >/dev/null 2>&1); then
+            REMOTION_READY=1
             info "Downloading Remotion's headless browser - one time, about 100 MB..."
             (cd "$REMOTION_DIR" && npx remotion browser ensure >/dev/null 2>&1) \
                 || notice "Browser download failed; it will be retried on the first render."
@@ -148,6 +157,14 @@ if [ -f "$REMOTION_DIR/package.json" ] && [ ! -x "$REMOTION_DIR/node_modules/.bi
         fi
     else
         notice "Node.js is not installed, so the Remotion caption engine is unavailable (https://nodejs.org)."
+    fi
+    if [ "$REMOTION_READY" -eq 1 ] && { [ "$FORCE_ASSETS" -eq 1 ] || [ ! -f "$SPRITE_PNG" ]; }; then
+        info "Building the longform sprite assets with satori..."
+        if (cd "$REMOTION_DIR" && npm run build:assets); then
+            ok "Longform sprite assets built"
+        else
+            notice "Sprite build failed; longform will use the PIL drawing fallback."
+        fi
     fi
 fi
 

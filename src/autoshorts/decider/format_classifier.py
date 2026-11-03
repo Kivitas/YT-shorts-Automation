@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from autoshorts.decider.records import DecisionRecord, record_decision
+
 logger = logging.getLogger(__name__)
 
 FormatKind = Literal["watching", "ranking"]
@@ -122,6 +124,8 @@ def classify_format(
     text: str,
     duration_sec: float,
     words: list[dict[str, Any]] | None = None,
+    *,
+    job_id: str | None = None,
 ) -> FormatDecision:
     """Classify a clip as "watching" or "ranking".
 
@@ -130,6 +134,7 @@ def classify_format(
         duration_sec: Clip length in seconds (very short clips cannot hold a list).
         words: Optional word dicts (``{"word"|"text": str, ...}``); used as the
             transcript when ``text`` is empty.
+        job_id: Optional job id the recorded decision is filed under.
     """
     src = text or ""
     if not src.strip() and words:
@@ -137,6 +142,7 @@ def classify_format(
     src = src.strip()
     reasons: list[str] = []
     if not src:
+        logger.info("Format defaulted to watching: empty transcript")
         return FormatDecision("watching", 0.9, None, ["empty transcript"])
 
     ranks = _extract_ranks(src)
@@ -151,6 +157,7 @@ def classify_format(
         reasons.append(f"only {len(distinct)} distinct rank(s) mentioned (need >= {MIN_RANKS})")
         if cues:
             reasons.append("cues without enough ranks: " + ", ".join(cues))
+        logger.info("Format defaulted to watching: %s", reasons[-1])
         return FormatDecision("watching", 0.85 if not cues else 0.7, None, reasons)
 
     desc = _descending_fraction(ranks)
@@ -159,17 +166,21 @@ def classify_format(
     reasons.append(f"longest descending run {run}, descending fraction {desc:.2f}")
     if desc < _DESC_FRACTION:
         reasons.append(f"not a countdown pattern (descending fraction {desc:.2f})")
+        logger.info("Format defaulted to watching: %s", reasons[-1])
         return FormatDecision("watching", 0.7, None, reasons)
     if not cues and not (run >= 3 and desc >= 0.8):
         reasons.append("no ranking cue phrase and no clear countdown run")
+        logger.info("Format defaulted to watching: %s", reasons[-1])
         return FormatDecision("watching", 0.65, None, reasons)
     if cues and run < 3 and len(distinct) < 4:
         reasons.append("cue phrase present but no descending run of 3")
+        logger.info("Format defaulted to watching: %s", reasons[-1])
         return FormatDecision("watching", 0.65, None, reasons)
 
     rank_count = max(len(distinct), top_n or 0)
     if not (MIN_RANKS <= rank_count <= MAX_RANKS):
         reasons.append(f"rank_count {rank_count} outside {MIN_RANKS}..{MAX_RANKS}")
+        logger.info("Format defaulted to watching: %s", reasons[-1])
         return FormatDecision("watching", 0.7, None, reasons)
 
     conf = 0.55 + 0.07 * min(len(distinct), 6) + 0.05 * min(len(cues), 3)
@@ -189,4 +200,13 @@ def classify_format(
         reasons.append("cues: " + ", ".join(cues))
     decision = FormatDecision("ranking", conf, rank_count, reasons)
     logger.info("Format classified as ranking (count=%d, conf=%.2f)", rank_count, conf)
+    record_decision(
+        DecisionRecord(
+            job_id=job_id,
+            name="format_class",
+            value="ranking",
+            reason=f"count={rank_count} conf={conf:.2f}",
+            source="heuristic",
+        )
+    )
     return decision

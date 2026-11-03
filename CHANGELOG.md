@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gestures and head turns** (`longform/rig.py`): point, open-hands and shrug poses, look left and right, hand lift and head turn.
 - **Kinetic narration** (`longform/kinetic_text.py`): sentence-by-sentence text with staggered word entrances and yellow highlights.
 - **Camera**: slow push-in per section and a wide-to-medium opener on the first section.
+- **Satori sprite pipeline** (`remotion/scripts/build-assets.mjs`, `remotion/assets-src/`): SVG characters, props and backgrounds rendered to PNG; the scene composer uses them when present and falls back to drawing otherwise.
+- **Launchers**: `start.bat` and `start.sh` install the Remotion packages (including satori) and build the sprites when missing; `--build-assets` forces a rebuild.
+- **GSAP skills** installed in `.claude/skills/` for AI agents working in this repo (MIT, see `LICENSE-gsap-skills.txt`).
+- **Decisions**: `decider/records.py` records each decision with its job ID and reason; silent fallbacks now log.
 
 ### Fixed
 

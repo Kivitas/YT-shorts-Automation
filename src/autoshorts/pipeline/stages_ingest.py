@@ -280,6 +280,7 @@ class IngestMixin:
             clips = self.decider.select_clips(
                 scored,
                 count=self.config.job_defaults.clips_per_video,
+                job_id=job.id,
             )
 
             if not clips:

@@ -320,6 +320,7 @@ class MediaMixin:
                     sel.candidate.text,
                     float(edl.hook_out_sec - edl.hook_in_sec),
                     getattr(sel.candidate, "words", None),
+                    job_id=job.id,
                 )
                 edl.edit_format = "ranking" if fmt.kind == "ranking" else "standard"
                 job.record_diagnostic(

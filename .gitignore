@@ -81,3 +81,4 @@ Desktop.ini
 # Remotion caption overlay (npm install output and render artifacts)
 remotion/node_modules/
 remotion/build/
+assets/longform/sprites/

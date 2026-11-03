@@ -146,6 +146,18 @@ class SemIfDecider(Decider):
         elif self.provider is not None:
             eligible_for_llm = set(range(len(candidates)))
 
+        if self.provider is None:
+            logger.info(
+                "Window scoring fallback: no LLM provider, heuristic scores for %d candidate(s)",
+                len(candidates),
+            )
+        elif len(eligible_for_llm) < len(candidates):
+            logger.info(
+                "Window scoring fallback: %d candidate(s) outside top-%d LLM set scored heuristically",
+                len(candidates) - len(eligible_for_llm),
+                max_llm_candidates,
+            )
+
         for idx, cand in enumerate(candidates):
             score = 0.0
             reason = "Heuristic fallback evaluation"
@@ -232,6 +244,8 @@ class SemIfDecider(Decider):
                 scores_by_letter = self.provider.score_options(prompt, options)
             except Exception as e:
                 logger.warning("Multi-candidate SemIf scoring failed: %s", e)
+        else:
+            logger.info("Multi-candidate fallback: no LLM provider, heuristic scores for batch")
 
         scored: list[ClipCandidate] = []
         for i, cand in enumerate(batch):
@@ -261,6 +275,11 @@ class SemIfDecider(Decider):
             )
 
         # Append remaining candidates evaluated via heuristic
+        if len(candidates) > 5:
+            logger.info(
+                "Multi-candidate fallback: %d candidate(s) beyond the 5-item batch scored heuristically",
+                len(candidates) - 5,
+            )
         for cand in candidates[5:]:
             s = evaluate_heuristic(cand.text, cand.duration)
             nc = compute_narrative_completeness_score(cand.text)
@@ -287,6 +306,8 @@ class SemIfDecider(Decider):
         self,
         candidates: Sequence[ClipCandidate],
         count: int = 1,
+        *,
+        job_id: str | None = None,
     ) -> list[ClipSelection]:
         """Select top non-overlapping candidate segments and attach styling parameters."""
         if not candidates or count <= 0:
@@ -319,11 +340,24 @@ class SemIfDecider(Decider):
         chosen_candidates = select_non_overlapping_candidates(candidates, count=count)
         selections: list[ClipSelection] = []
 
+        from autoshorts.decider.records import DecisionRecord, record_decision
+
         for i, cand in enumerate(chosen_candidates):
             # 1. Decide background style
             bg_style = self.decide_action(
                 "BACKGROUND_SELECTION",
                 {"text": cand.text, "duration": cand.duration},
+                job_id=job_id,
+            )
+
+            record_decision(
+                DecisionRecord(
+                    job_id=job_id,
+                    name="clip_window",
+                    value=f"{cand.start:.2f}-{cand.end:.2f}",
+                    reason=cand.reason or "unspecified",
+                    source="llm" if self.provider is not None else "heuristic",
+                )
             )
 
             # 2. Generate hook text
@@ -358,6 +392,8 @@ class SemIfDecider(Decider):
         self,
         action_key: str,
         context: Mapping[str, Any],
+        *,
+        job_id: str | None = None,
     ) -> str:
         """Execute a Semantic-IF decision prompt and return the chosen action identifier.
 
@@ -372,6 +408,7 @@ class SemIfDecider(Decider):
         action_fn = table_entry["action"]
 
         chosen_letter = "A"
+        source = "llm"
 
         if self.provider is not None:
             try:
@@ -379,16 +416,42 @@ class SemIfDecider(Decider):
                 probs = self.provider.score_options(prompt, options)
                 if probs:
                     chosen_letter = max(probs.items(), key=lambda item: item[1])[0]
+                else:
+                    source = "default"
+                    logger.warning(
+                        "Decider fallback for '%s': provider returned no scores, defaulting to 'A'",
+                        action_key,
+                    )
             except Exception as e:
                 logger.warning("Decider failed evaluating '%s': %s", action_key, e)
+                source = "heuristic"
                 chosen_letter = self._heuristic_action_fallback(action_key, context)
         else:
+            source = "heuristic"
+            logger.info(
+                "Decider fallback for '%s': no LLM provider, using rule-based choice",
+                action_key,
+            )
             chosen_letter = self._heuristic_action_fallback(action_key, context)
 
         # Execute action handler to map choice to pipeline string
         result_action = action_fn(chosen_letter, context)
         logger.info(
             "Decider action '%s' -> choice '%s' => '%s'", action_key, chosen_letter, result_action
+        )
+
+        from autoshorts.decider.records import DecisionRecord, record_decision
+
+        record_decision(
+            DecisionRecord(
+                job_id=job_id,
+                name="background_category"
+                if action_key == "BACKGROUND_SELECTION"
+                else action_key.lower(),
+                value=str(result_action),
+                reason=f"choice {chosen_letter} via {source}",
+                source=source,  # type: ignore[arg-type]
+            )
         )
         return str(result_action)
 
@@ -419,6 +482,9 @@ class SemIfDecider(Decider):
         elif action_key == "UPLOAD_VERIFICATION_GATE":
             return "A"
 
+        logger.warning(
+            "Decider fallback for '%s': no heuristic rule, defaulting to 'A'", action_key
+        )
         return "A"
 
     # -------------------------------------------------------------------------
@@ -499,8 +565,11 @@ class SemIfDecider(Decider):
                 hook = hook.replace('"', "").replace("'", "").strip()
                 if hook:
                     return hook
+                logger.info("Hook fallback: LLM returned an empty hook, using excerpt text")
             except Exception as e:
                 logger.warning("Generative hook failed: %s", e)
+        else:
+            logger.info("Hook fallback: no LLM provider, using excerpt text as hook")
 
         # Fallback hook: first sentence or question
         sentences = re.split(r"(?<=[.?!])\s+", transcript_text.strip())
@@ -510,6 +579,7 @@ class SemIfDecider(Decider):
         if sentences:
             words = sentences[0].split()
             return " ".join(words[:8])
+        logger.warning("Hook fallback: empty excerpt, using default hook text")
         return "Watch Until The End!"
 
     def generate_description_hook(self, transcript_text: str) -> str:

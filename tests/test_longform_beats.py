@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
+import pytest
 from PIL import Image
 
 import autoshorts.longform.beats as beats
+import autoshorts.longform.sprites as sprites
 from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
 from autoshorts.longform.beats import (
+    FLOOR_Y,
     PALETTE,
     POSE_CYCLE,
+    RIG_ORIGIN,
     SPHERE_CENTRE,
     BeatPlan,
     _entrance_start,
@@ -250,3 +255,72 @@ def test_palette_uses_theme_tokens() -> None:
     assert PALETTE.positive == ACCENT_TEAL
     assert PALETTE.negative == ACCENT_CORAL
     assert PALETTE.inner_voice == ACCENT_CORAL
+
+
+@pytest.fixture
+def use_sprite_dir(monkeypatch: pytest.MonkeyPatch):
+    """Point the sprite loader at a chosen folder and reset its cache around the test."""
+
+    def use(folder: Path) -> None:
+        monkeypatch.setattr(sprites, "SPRITE_DIR", folder)
+        sprites.load_sprite.cache_clear()
+
+    yield use
+    sprites.load_sprite.cache_clear()
+
+
+def _write_solid(
+    folder: Path, name: str, size: tuple[int, int], colour: tuple[int, int, int]
+) -> None:
+    Image.new("RGBA", size, (*colour, 255)).save(folder / f"{name}.png")
+
+
+def _write_sprites(folder: Path) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    _write_solid(folder, "navy_gradient", (1920, 1080), (30, 60, 120))
+    _write_solid(folder, "figure", (400, 800), (240, 220, 200))
+    for name in ("window", "phone", "alarm_clock", "mountain", "heavy_bag"):
+        _write_solid(folder, name, (120, 120), (200, 50, 50))
+    return folder
+
+
+def _render(plan: BeatPlan, narration: str, t: float = 1.5) -> Image.Image:
+    img = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img, plan, t, 0.0, 4.0, narration)
+    return img
+
+
+def test_draw_beat_renders_without_sprites(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(tmp_path)  # empty folder: every sprite is missing
+    narration = "Stop the phone scroll, then the desk."
+    plan = plan_beat(0, "H", narration, "host", False)
+    img = _render(plan, narration)
+    assert img.mode == "RGB"
+    assert img.size == FRAME
+
+    figure_plan = replace(plan_beat(0, "H", "Stand tall.", "host", False), expression="neutral")
+    assert figure_plan.pose == "stand" and figure_plan.gesture is None
+    figure = _render(figure_plan, "Stand tall.")
+    assert figure.mode == "RGB"
+    assert figure.size == FRAME
+
+
+def test_sprites_change_frame_compared_with_fallback(tmp_path: Path, use_sprite_dir) -> None:
+    narration = "Stop the phone scroll."
+    plan = replace(plan_beat(0, "H", narration, "host", False), expression="neutral")
+    assert "phone" in _names(plan)
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    use_sprite_dir(empty)
+    fallback = _render(plan, narration)
+
+    use_sprite_dir(_write_sprites(tmp_path / "full"))
+    with_sprites = _render(plan, narration)
+
+    assert with_sprites.tobytes() != fallback.tobytes()
+    # Backdrop sprite is pasted over the whole frame; the corner is its navy colour.
+    assert with_sprites.getpixel((5, 5)) == (30, 60, 120)
+    # Figure sprite is centred on the rig origin, feet on the floor.
+    figure_pixel = with_sprites.getpixel((RIG_ORIGIN[0], int(FLOOR_Y - 165)))
+    assert all(abs(a - b) <= 2 for a, b in zip(figure_pixel, (240, 220, 200), strict=True))

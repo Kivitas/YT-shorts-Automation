@@ -9,6 +9,7 @@ rem   start.bat --collect        download background gameplay footage
 rem   start.bat --port 8080      use another port
 rem   start.bat --no-browser     do not open a browser tab
 rem   start.bat --host 0.0.0.0   listen on another interface
+rem   start.bat --build-assets   force a rebuild of the longform sprite assets
 rem
 rem Everything the app needs is installed on first run. Paste your API keys into .env.
 rem =============================================================================
@@ -29,6 +30,7 @@ set "HOST=127.0.0.1"
 set "MODE=run"
 set "NO_BROWSER=0"
 set "COLLECT_ARGS="
+set "FORCE_ASSETS=0"
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -40,6 +42,7 @@ if /i "%~1"=="-c" set "MODE=check" & shift & goto parse_args
 if /i "%~1"=="--test" set "MODE=test" & shift & goto parse_args
 if /i "%~1"=="-t" set "MODE=test" & shift & goto parse_args
 if /i "%~1"=="--no-browser" set "NO_BROWSER=1" & shift & goto parse_args
+if /i "%~1"=="--build-assets" set "FORCE_ASSETS=1" & shift & goto parse_args
 if /i "%~1"=="--port" set "PORT=%~2" & shift & shift & goto parse_args
 if /i "%~1"=="-p" set "PORT=%~2" & shift & shift & goto parse_args
 if /i "%~1"=="--host" set "HOST=%~2" & shift & shift & goto parse_args
@@ -113,13 +116,16 @@ if !ERRORLEVEL! neq 0 (
 :deps_ready
 echo %C_GREEN%[ OK ]%C_RESET% Python dependencies ready
 
-rem ----------------------------------------------------------------------------- Remotion (optional captions engine)
+rem ----------------------------------------------------------------------------- Remotion (optional captions engine + longform sprites)
 set "REMOTION_BIN=%~dp0remotion\node_modules\.bin\remotion.cmd"
+set "SATORI_DIR=%~dp0remotion\node_modules\satori"
+set "SPRITE_PNG=%~dp0assets\longform\sprites\navy_gradient.png"
+set "REMOTION_READY=0"
 if not exist "%~dp0remotion\package.json" goto remotion_done
-if exist "!REMOTION_BIN!" goto remotion_done
+if exist "!REMOTION_BIN!" if exist "%SATORI_DIR%" set "REMOTION_READY=1" & goto remotion_ready
 where npm >nul 2>&1
 if !ERRORLEVEL! neq 0 goto remotion_no_node
-echo %C_CYAN%[INFO]%C_RESET% Installing the Remotion caption renderer - one time...
+echo %C_CYAN%[INFO]%C_RESET% Installing the Remotion caption renderer and longform assets - one time...
 pushd "%~dp0remotion"
 call npm install --no-audit --no-fund >nul 2>&1
 if !ERRORLEVEL! neq 0 (
@@ -130,6 +136,20 @@ if !ERRORLEVEL! neq 0 (
 echo %C_CYAN%[INFO]%C_RESET% Downloading Remotion's headless browser - one time, about 100 MB...
 call npx remotion browser ensure >nul 2>&1
 popd
+set "REMOTION_READY=1"
+:remotion_ready
+if "%REMOTION_READY%"=="0" goto remotion_done
+if "%FORCE_ASSETS%"=="1" goto build_sprites
+if exist "%SPRITE_PNG%" goto remotion_done
+:build_sprites
+where npm >nul 2>&1
+if !ERRORLEVEL! neq 0 goto remotion_no_node
+echo %C_CYAN%[INFO]%C_RESET% Building the longform sprite assets with satori...
+pushd "%~dp0remotion"
+call npm run build:assets
+set "ASSET_RC=!ERRORLEVEL!"
+popd
+if !ASSET_RC! neq 0 echo %C_YELLOW%[NOTE]%C_RESET% Sprite build failed; longform will use the PIL drawing fallback.
 goto remotion_done
 :remotion_no_node
 echo %C_YELLOW%[NOTE]%C_RESET% Node.js is not installed, so the Remotion caption engine is unavailable ^(https://nodejs.org^).
@@ -239,4 +259,5 @@ echo   start.bat --test           run the test suite
 echo   start.bat --collect        download background gameplay footage
 echo   start.bat --port 8080      use another port
 echo   start.bat --no-browser     do not open a browser tab
+echo   start.bat --build-assets   force a rebuild of the longform sprite assets
 exit /b 0
