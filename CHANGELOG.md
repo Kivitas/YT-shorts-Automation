@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Repeated figure actions** (`longform/drawer.py`, `longform/beats.py`): the beat ran on shot time, so every shot cut replayed the pose transition, prop entrances and sprite pops. The beat now runs on section time, so each section's pose, props and icons animate once.
+- **Narration restarted each shot** (`longform/drawer.py`): sentences were timed against the shot, so the same line showed again at every cut. Sentences now follow the section.
+- **Narration clipped by the camera** (`longform/beats.py`, `longform/drawer.py`): the text layer is drawn after the shot camera (`draw_beat_text`), so the zoom no longer pushes it into the letterbox bars.
+- **Heading over the narration** (`longform/drawer.py`): the section heading moved into the bottom letterbox bar.
+
+### Changed
+
+- **Idle life on the satori figure** (`longform/sprite_rig.py`): the eyes blink and the figure breathes, using the same `blink` and `breathe` motion as the procedural rig. The still pose at `t=0` is unchanged.
+
 ## [1.5.0] - 2026-11-02
 
 ### Changed

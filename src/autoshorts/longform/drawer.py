@@ -28,7 +28,7 @@ from autoshorts.core.theme import (
     lerp_rgb,
 )
 from autoshorts.longform import motion
-from autoshorts.longform.beats import BeatPlan, draw_beat, plan_beat
+from autoshorts.longform.beats import BeatPlan, draw_beat, draw_beat_text, plan_beat
 from autoshorts.longform.engines import font_candidates
 from autoshorts.longform.fx import camera_shake_offset, impact_flash_alpha
 from autoshorts.longform.gsap_bridge import sample_timeline, sample_value
@@ -849,7 +849,8 @@ def _fit_font(
     return load_font(18, bold)
 
 
-HEADING_Y = 150
+HEADING_Y = 1048  # centred in the bottom letterbox bar, clear of the narration line
+HEADING_SIZE = 40
 OFF_WHITE = (236, 232, 224)
 LETTERBOX_TOP = 64
 LETTERBOX_BOTTOM = 1016
@@ -872,12 +873,12 @@ def _draw_chrome(d: ImageDraw.ImageDraw, title: str, index: int) -> None:
 
 
 def _paint_heading(layer: Image.Image, heading: str, t: float) -> None:
-    """Section heading: centred off-white line at y=150 that fades in over 0.4 s."""
+    """Section heading: centred off-white line in the bottom bar that fades in over 0.4 s."""
     alpha = min(1.0, max(0.0, t / 0.4))
     if not heading or alpha <= 0.0:
         return
     ld = ImageDraw.Draw(layer)
-    font = _fit_font(ld, heading, 56, WIDTH - 360)
+    font = _fit_font(ld, heading, HEADING_SIZE, WIDTH - 360)
     ld.text(
         (WIDTH / 2, HEADING_Y),
         heading,
@@ -1020,16 +1021,22 @@ def _draw_scene(
     shot: Shot,
     t: float,
     t_in_shot: float,
+    section_seconds: float,
     camera_zoom: float = 1.0,
 ) -> Image.Image:
     """One frame: the beat scene at section time ``t``, then shot camera, heading and chrome."""
     img = Image.new("RGB", (WIDTH, HEIGHT))
-    draw_beat(img, plan, t, shot.start, shot.end, sa.section.narration, sa.words)
+    # The beat runs on section time: the pose, props, sprites and narration start once per
+    # section. A shot cut only changes the camera, so nothing replays its entrance at each cut.
+    draw_beat(img, plan, t, 0.0, section_seconds, sa.section.narration, sa.words, text=False)
     img = _shot_camera(img, shot, t_in_shot, camera_zoom)
+    # Text goes on after the camera, so the zoom cannot push the narration into the letterbox.
+    draw_beat_text(img, plan, t, 0.0, section_seconds, sa.section.narration)
+    _draw_chrome(ImageDraw.Draw(img), title, index)
+    # The heading sits in the bottom bar, so it is painted after the letterbox.
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     _paint_heading(layer, sa.section.heading, t)
     _commit_layer(img, layer)
-    _draw_chrome(ImageDraw.Draw(img), title, index)
     return _impact_flash(img, shot, t_in_shot)
 
 
@@ -1134,7 +1141,9 @@ def _frames(
             t = f / FPS
             shot, shot_start = _locate_frame(shots, f)
             camera = _camera_zoom(idx, f, n)
-            img = _draw_scene(sa, title, idx, plan, shot, t, max(0, f - shot_start) / FPS, camera)
+            img = _draw_scene(
+                sa, title, idx, plan, shot, t, max(0, f - shot_start) / FPS, sa.duration, camera
+            )
             if prev_last is not None and f < trans_frames:
                 img = _transition(kind, prev_last, img, ease_in_out_cubic((f + 1) / trans_frames))
                 if idx == SHAKE_SECTION:

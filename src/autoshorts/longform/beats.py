@@ -1107,6 +1107,28 @@ def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
         draw.ellipse((x - r, y - r, x + r, y + r), fill=colour)
 
 
+def draw_beat_text(
+    img: Image.Image,
+    plan: BeatPlan,
+    t: float,
+    start: float,
+    end: float,
+    section_text: str,
+) -> None:
+    """Draw the text layer for time ``t``: narration line, inner voice and number pops.
+
+    Kept apart from :func:`draw_beat` so the caller can paint it after the camera. Text
+    drawn before a zoom would drift toward the frame edge and into the letterbox bars.
+    """
+    if section_text.strip():
+        _draw_narration(img, section_text, t, start, end)
+    if plan.inner_voice:
+        draw_inner_voice(
+            img, plan.inner_voice, INNER_VOICE_ANCHOR, t, start, end, color=PALETTE.inner_voice
+        )
+    _draw_number_pops(img, plan.number_values, t, start, end)
+
+
 def draw_beat(
     img: Image.Image,
     plan: BeatPlan,
@@ -1115,12 +1137,15 @@ def draw_beat(
     end: float,
     section_text: str,
     words: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    text: bool = True,
 ) -> None:
     """Draw the full scene for one shot time ``t`` onto ``img`` in place.
 
     ``start`` and ``end`` are the section's absolute times in seconds. ``words`` is an
     optional sequence of ``{"word", "start", "end"}`` mappings in absolute seconds; it
     sets when named props enter. The narration line is drawn from ``section_text``.
+    ``text=False`` leaves the text layer to :func:`draw_beat_text`.
     """
     if img.mode != "RGB" or img.size != (FRAME_W, FRAME_H):
         raise ValueError(
@@ -1173,13 +1198,8 @@ def draw_beat(
     if plan.mood is not None:
         colour_wash(img, plan.mood, MOOD_WASH_INTENSITY)
 
-    if section_text.strip():
-        _draw_narration(img, section_text, t, start, end)
-    if plan.inner_voice:
-        draw_inner_voice(
-            img, plan.inner_voice, INNER_VOICE_ANCHOR, t, start, end, color=pal.inner_voice
-        )
-    _draw_number_pops(img, plan.number_values, t, start, end)
+    if text:
+        draw_beat_text(img, plan, t, start, end, section_text)
 
 
 __all__ = [
@@ -1191,5 +1211,6 @@ __all__ = [
     "PropSpec",
     "beat_palette",
     "draw_beat",
+    "draw_beat_text",
     "plan_beat",
 ]

@@ -36,6 +36,7 @@ from PIL import Image, ImageDraw
 
 import autoshorts.longform.sprites as sprites
 from autoshorts.longform import rig
+from autoshorts.longform.motion import blink, breathe
 from autoshorts.longform.sprites import load_sprite
 
 CANVAS_SIZE = (400, 800)
@@ -229,11 +230,14 @@ def wrist_offset(joints: dict[str, float], scale: float, side: str = "l") -> tup
     return ((wrist_w[0] - HIP[0]) * scale, drop_px + (wrist_w[1] - HIP[1]) * scale)
 
 
-def _draw_procedural_face(canvas: Image.Image, centre: _Point, phi: float, expression: str) -> None:
+def _draw_procedural_face(
+    canvas: Image.Image, centre: _Point, phi: float, expression: str, blink_lid: float = 0.0
+) -> None:
     """Draw the eyes, brows and mouth of ``expression`` on the head centred at ``centre``.
 
     ``centre`` is in figure coordinates and ``phi`` is the head rotation, the same as the
     head part. The face uses :func:`rig._draw_face`, so it matches the procedural figure.
+    ``blink_lid`` is the lid closure from :func:`motion.blink`; it only ever closes the eyes.
     """
     layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
@@ -247,7 +251,9 @@ def _draw_procedural_face(canvas: Image.Image, centre: _Point, phi: float, expre
         return (cx + radius * (c * u - s * v), cy + radius * (s * u + c * v))
 
     name = expression if expression in rig.EXPRESSIONS else "neutral"
-    rig._draw_face(draw, layer, hp, radius, dict(rig.EXPRESSIONS[name]))
+    expr = dict(rig.EXPRESSIONS[name])
+    expr["lid"] = max(float(expr["lid"]), blink_lid)
+    rig._draw_face(draw, layer, hp, radius, expr)
     canvas.alpha_composite(layer)
 
 
@@ -271,14 +277,15 @@ def draw_sprite_rig(
     The face is drawn procedurally on the head for every expression, so it always shows.
     A complete set of ``eyes``, ``eyebrows`` and ``mouth`` variants named
     ``<name>_<expression>.png`` is drawn in its place. A ``back_of_head`` joint of 0.5 or
-    more hides the face altogether. ``t`` is accepted for parity with ``draw_rig`` but is
-    not used: the satori parts do not blink or breathe. ``mirror=True`` flips the figure
-    about ``origin``.
+    more hides the face altogether. ``mirror=True`` flips the figure about ``origin``.
+
+    ``t`` drives the idle life of the procedural face and body, as in ``rig.draw_rig``: the
+    eyes blink on :func:`motion.blink` and the figure breathes with :func:`motion.breathe`
+    about the hip. At ``t=0`` neither applies, so the still pose stays exact.
 
     Returns ``False`` without drawing when any required part PNG is missing or is not the
     400x800 canvas size, so the caller can fall back to ``rig.draw_rig``.
     """
-    del t  # accepted for signature parity with rig.draw_rig; the satori parts do not animate
     parts = _load_parts()
     if parts is None:
         return False
@@ -333,16 +340,19 @@ def draw_sprite_rig(
             paint(variants[name], TORSO_TOP, head_w, head_phi)
     elif not back_of_head:
         head_centre = _to_world(HEAD_CENTRE_REST, TORSO_TOP, head_w, head_phi)
-        _draw_procedural_face(canvas, head_centre, head_phi, expression)
+        blink_lid = 1.0 - blink(t) if t != 0.0 else 0.0
+        _draw_procedural_face(canvas, head_centre, head_phi, expression, blink_lid)
 
-    # Scale the whole figure once, anchoring the canvas hip on the output origin.
+    # Scale the whole figure once, anchoring the canvas hip on the output origin. The breath
+    # scales about the hip, so the head and shoulders rise and fall a few pixels.
     ox, oy = origin
-    width = max(1, round(canvas_w * scale))
-    height = max(1, round(canvas_h * scale))
+    fig_scale = scale * (breathe(t) if t != 0.0 else 1.0)
+    width = max(1, round(canvas_w * fig_scale))
+    height = max(1, round(canvas_h * fig_scale))
     scaled = canvas.resize((width, height), Image.Resampling.LANCZOS)
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    left = round(ox - (HIP[0] + FIGURE_MARGIN) * scale)
-    top = round(oy + drop_px - (HIP[1] + FIGURE_MARGIN) * scale)
+    left = round(ox - (HIP[0] + FIGURE_MARGIN) * fig_scale)
+    top = round(oy + drop_px - (HIP[1] + FIGURE_MARGIN) * fig_scale)
     layer.paste(scaled, (left, top))
     if mirror:
         layer = layer.transform(
