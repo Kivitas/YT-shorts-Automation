@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
 import struct
 import subprocess
 import wave
+from collections.abc import Sequence
 from pathlib import Path
 from uuid import uuid4
 
@@ -29,10 +31,17 @@ from autoshorts.longform.types import (
     LongformScript,
     SectionAudio,
 )
+from autoshorts.media.audio_master import normalize_two_pass
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 # Level of the diegetic SFX stem under the narration (narration stays at unity).
 SFX_GAIN = 0.35
+# Integrated loudness target for the final longform audio (EBU R128).
+LOUDNESS_TARGET_LUFS = -14.0
+# Gain applied to the music bed inside EDL ``bgm_ducks`` spans (multiplies the bed level).
+BGM_DUCK_GAIN = 0.3
+# Name of the EDL file (same naming as workflow_optimizer's snapshots) read for bgm_ducks.
+EDL_FILENAME = "edl.json"
 _SFX_SAMPLE_RATE = 48000
 _SKEPTIC_PATTERN = re.compile(r"\b(not|lazy)\b", re.IGNORECASE)
 
@@ -160,11 +169,64 @@ def build_sfx_track(sections: list[SectionAudio], work_dir: Path) -> Path | None
     return mix_events(events, work_dir / "sfx_track.wav", total_seconds)
 
 
+def load_bgm_ducks(edl_path: Path | None) -> list[tuple[float, float]]:
+    """Read ``bgm_ducks`` spans from an EDL JSON file as ``(start, end)`` seconds.
+
+    Uses the field names workflow_optimizer writes (``start_sec`` / ``end_sec``). Returns ``[]``
+    when the file is missing or unreadable, so the music bed keeps its current mix.
+    """
+    if edl_path is None or not Path(edl_path).is_file():
+        return []
+    try:
+        data = json.loads(Path(edl_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read EDL %s for bgm_ducks: %s", edl_path, exc)
+        return []
+    raw = data.get("bgm_ducks") if isinstance(data, dict) else None
+    spans: list[tuple[float, float]] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = float(item.get("start_sec", item.get("start", 0.0)))
+            end = float(item.get("end_sec", item.get("end", 0.0)))
+        except (TypeError, ValueError):
+            continue
+        if end > start >= 0:
+            spans.append((start, end))
+    return sorted(spans)
+
+
+def _duck_enable_expression(spans: Sequence[tuple[float, float]]) -> str:
+    """Build the ffmpeg ``enable`` expression that is true inside any of ``spans``.
+
+    Example: ``[(1, 2.5), (4, 5)]`` -> ``between(t,1.00,2.50)+between(t,4.00,5.00)``.
+    """
+    return "+".join(f"between(t,{start:.2f},{end:.2f})" for start, end in spans)
+
+
+def _loudness_normalise(audio: Path, work_dir: Path) -> Path:
+    """Two-pass EBU R128 normalise the final narration/music mix to ``LOUDNESS_TARGET_LUFS``.
+
+    Returns the normalised file, or the unnormalised input if normalisation fails. Never raises.
+    """
+    dst = Path(work_dir) / "narration_loudnorm.m4a"
+    try:
+        normalize_two_pass(Path(audio), dst, LOUDNESS_TARGET_LUFS)
+    except Exception as exc:  # loudness is polish; never break the render over it
+        logger.warning(
+            "Two-pass loudness normalisation failed; keeping unnormalised audio: %s", exc
+        )
+        return Path(audio)
+    return dst if dst.is_file() and dst.stat().st_size > 0 else Path(audio)
+
+
 def _concat_audio(
     sections: list[SectionAudio],
     work_dir: Path,
     music_bed: Path | None = None,
     sfx_track: Path | None = None,
+    bgm_ducks: Sequence[tuple[float, float]] | None = None,
 ) -> Path:
     """Join section audio with the concat *filter*, optional SFX stem and optional ducked music bed.
 
@@ -214,6 +276,9 @@ def _concat_audio(
     if music_bed is not None and Path(music_bed).is_file():
         mixed_out = work_dir / "narration_master.m4a"
         total_dur = max(0.5, sum(sa.duration for sa in sections))
+        duck_chain = ""
+        if bgm_ducks:
+            duck_chain = f",volume={BGM_DUCK_GAIN}:enable='{_duck_enable_expression(bgm_ducks)}'"
         mix_cmd = [
             get_ffmpeg_path(),
             "-y",
@@ -231,7 +296,7 @@ def _concat_audio(
             (
                 f"[0:a]asplit=2[vo][sc];"
                 f"[1:a]atrim=0:{total_dur:.2f},aresample=48000,"
-                f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.14[bg];"
+                f"aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.14{duck_chain}[bg];"
                 f"[bg][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=250[ducked];"
                 f"[vo][ducked]amix=inputs=2:duration=first:dropout_transition=2[master]"
             ),
@@ -336,7 +401,11 @@ def render_script(
     except Exception:  # SFX are optional polish; never fail the render over them.
         logger.warning("SFX track build failed; rendering without effects.", exc_info=True)
         sfx_track = None
-    audio = _concat_audio(sections, work_dir, music_bed=music_bed, sfx_track=sfx_track)
+    bgm_ducks = load_bgm_ducks(work_dir / EDL_FILENAME)
+    audio = _concat_audio(
+        sections, work_dir, music_bed=music_bed, sfx_track=sfx_track, bgm_ducks=bgm_ducks
+    )
+    audio = _loudness_normalise(audio, work_dir)
     scene_key = script.genre or topic
     _encode(sections, script.title, audio, video_path, scenes_for_topic(scene_key))
     logger.info("Rendered long-form video %s (%.1fs)", video_path, duration)

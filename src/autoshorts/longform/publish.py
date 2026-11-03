@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -15,11 +16,20 @@ from zoneinfo import ZoneInfo
 
 from autoshorts.core.paths import atomic_write, get_data_dir
 from autoshorts.longform.types import LongformResult
+from autoshorts.uploader.description_builder import (
+    MAX_DESCRIPTION_BYTES,
+    MAX_TAGS_LONGFORM,
+    MAX_TITLE_LENGTH,
+    build_longform_description,
+    dedupe_tags,
+    truncate_on_word,
+)
 
 logger = logging.getLogger(__name__)
 
 # Fallback only: matches the UploadConfig.longform_daily_cap default. The live cap is read from config.
 LONGFORM_DAILY_CAP = 20
+MIN_LONGFORM_TAGS = 3
 _PT = ZoneInfo("America/Los_Angeles")
 _LOCK = threading.Lock()
 
@@ -101,6 +111,74 @@ def _record_upload() -> None:
         _write_counts(counts)
 
 
+def _topic_safety_note(topic: str) -> str:
+    """Safety note of the topic spec, used as the protected sources/disclaimer footer."""
+    try:
+        from autoshorts.longform.topics import resolve_topic_spec
+
+        return str(resolve_topic_spec(topic, allow_custom=True).safety_note or "")
+    except Exception:  # metadata enrichment must never block an upload
+        logger.debug("No topic safety note for %r", topic, exc_info=True)
+        return ""
+
+
+def validate_longform_upload(
+    result: LongformResult, title: str, description: str, tags: list[str]
+) -> tuple[str, str, list[str]]:
+    """Check and fix title, description and tags before a longform upload.
+
+    - title: never empty (falls back to the topic name); trimmed to 100 characters.
+    - description: at most 5000 UTF-8 bytes; the chapters block is cut first and the
+      sources/disclaimer footer is kept.
+    - tags: deduplicated case-insensitively and capped at 15; topic words fill the list
+      up to 3 when it is short. A still-short list is logged, not blocked.
+    """
+    clean_title = (title or "").strip()
+    if not clean_title:
+        clean_title = (str(result.topic or "").replace("_", " ").strip().title()) or (
+            "Long-form Video"
+        )
+        logger.warning("Longform upload title is empty; using fallback title %r.", clean_title)
+    if len(clean_title) > MAX_TITLE_LENGTH:
+        head = truncate_on_word(clean_title, MAX_TITLE_LENGTH - 3).rstrip(" -|:,.!?")
+        clean_title = f"{head or clean_title[: MAX_TITLE_LENGTH - 3]}..."[:MAX_TITLE_LENGTH]
+        logger.warning(
+            "Longform title (field: title) exceeded %d chars; truncated.", MAX_TITLE_LENGTH
+        )
+
+    original_desc = description or ""
+    if not original_desc.strip():
+        logger.warning("Longform description (field: description) is empty.")
+    fixed_desc = build_longform_description(
+        original_desc,
+        sections=getattr(result, "chapter_sections", None),
+        safety_note=_topic_safety_note(getattr(result, "topic", "")),
+        max_bytes=MAX_DESCRIPTION_BYTES,
+    )
+    if fixed_desc != original_desc.strip() and original_desc.strip():
+        logger.warning(
+            "Longform description (field: description) changed to fit %d bytes (chapters cut first).",
+            MAX_DESCRIPTION_BYTES,
+        )
+
+    clean_tags = dedupe_tags(tags, MAX_TAGS_LONGFORM)
+    if len(clean_tags) < MIN_LONGFORM_TAGS:
+        seen = {t.casefold() for t in clean_tags}
+        for word in re.findall(r"[A-Za-z]{4,}", clean_title):
+            if len(clean_tags) >= MIN_LONGFORM_TAGS:
+                break
+            if word.casefold() not in seen:
+                seen.add(word.casefold())
+                clean_tags.append(word.lower())
+    if len(clean_tags) < MIN_LONGFORM_TAGS:
+        logger.warning(
+            "Longform tags (field: tags) have %d entries after dedupe; YouTube needs at least %d.",
+            len(clean_tags),
+            MIN_LONGFORM_TAGS,
+        )
+    return clean_title, fixed_desc, clean_tags
+
+
 def publish_longform(result: LongformResult, config=None, state_manager=None) -> str:
     """Upload one rendered long-form video and return its YouTube/export URL.
 
@@ -122,6 +200,16 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
     eff_cap = int(cap) if cap is not None else LONGFORM_DAILY_CAP
     upload_mode = str(getattr(upload_cfg, "mode", "api") or "api").strip().lower()
 
+    title, description, tags = validate_longform_upload(
+        result, result.title, result.description, list(result.hashtags)
+    )
+
+    # Scheduled publish: the uploader sets publishAt and YouTube requires private until then.
+    publish_at = getattr(upload_cfg, "publish_at", None)
+    scheduled = bool(publish_at) and upload_mode in ("api", "studio")
+    privacy = "private" if scheduled else getattr(upload_cfg, "default_privacy_status", "unlisted")
+    schedule_kwargs = {"publish_at": str(publish_at)} if scheduled else {}
+
     _reserve_slot(eff_cap)
     try:
         if upload_mode == "studio":
@@ -136,13 +224,14 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
 
         upload_result = uploader.upload(
             video_path=result.video_path,
-            title=result.title,
-            description=result.description,
-            tags=list(result.hashtags),
-            privacy_status=getattr(upload_cfg, "default_privacy_status", "unlisted"),
+            title=title,
+            description=description,
+            tags=tags,
+            privacy_status=privacy,
             category_id=getattr(upload_cfg, "category_id", "27"),
             is_short=False,
             thumbnail_path=getattr(result, "thumbnail_path", None),
+            **schedule_kwargs,
         )
         if not getattr(upload_result, "url", None):
             raise RuntimeError("YouTube upload did not return a video URL.")

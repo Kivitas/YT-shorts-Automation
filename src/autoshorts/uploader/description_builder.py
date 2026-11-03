@@ -10,6 +10,7 @@ Renders YouTube video titles and descriptions adhering to platform constraints:
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Sequence
 
@@ -129,6 +130,190 @@ def normalize_hashtags(hashtags: str | Sequence[str] | None) -> str:
             deduped.append(t)
 
     return " ".join(deduped)
+
+
+# YouTube tag limits used by the upload layer: longform keeps up to 15, Shorts up to 10.
+MAX_TAGS_LONGFORM = 15
+MAX_TAGS_SHORTS = 10
+MAX_TAGS_TOTAL_CHARS = 500  # YouTube rejects tag lists whose combined length exceeds 500.
+MIN_CHAPTER_GAP_SECONDS = 10.0
+CHAPTERS_MARKER = "Chapters:"
+SOURCES_MARKER = "Sources and disclaimer:"
+
+
+def dedupe_tags(tags: Sequence[str] | None, limit: int) -> list[str]:
+    """Strip, deduplicate case-insensitively (first spelling wins), and cap a plain tag list."""
+    out: list[str] = []
+    seen: set[str] = set()
+    total = 0
+    for raw in tags or ():
+        tag = re.sub(r"\s+", " ", str(raw)).strip().lstrip("#").strip()
+        if not tag:
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        if len(out) >= limit or total + len(tag) + 1 > MAX_TAGS_TOTAL_CHARS:
+            break
+        seen.add(key)
+        out.append(tag)
+        total += len(tag) + 1
+    return out
+
+
+def _nbytes(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def build_chapter_lines(
+    sections: Sequence[tuple[float | str, str]] | None,
+    min_gap: float = MIN_CHAPTER_GAP_SECONDS,
+) -> list[str]:
+    """Turn (start_seconds, heading) pairs into sorted "MM:SS Heading" chapter lines.
+
+    The earliest section is always pinned to 00:00. A section that starts less than
+    ``min_gap`` seconds after the previously kept one is dropped.
+    """
+    points: list[tuple[float, str]] = []
+    for start, heading in sections or ():
+        try:
+            t = float(start)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(t):
+            continue
+        label = re.sub(r"\s+", " ", sanitize_youtube_text(str(heading))).strip()
+        if not label:
+            continue
+        points.append((max(0.0, t), truncate_on_word(label, 80)))
+    if not points:
+        return []
+    points.sort(key=lambda p: p[0])
+    points[0] = (0.0, points[0][1])
+
+    kept: list[tuple[float, str]] = []
+    for t, label in points:
+        if kept and t - kept[-1][0] < min_gap:
+            continue
+        kept.append((t, label))
+    return [f"{format_timestamp_display(t)} {label}" for t, label in kept]
+
+
+def build_chapters_block(
+    sections: Sequence[tuple[float | str, str]] | None,
+    min_gap: float = MIN_CHAPTER_GAP_SECONDS,
+) -> str:
+    """Return the chapters block ("Chapters:" plus lines), or "" when there are none."""
+    lines = build_chapter_lines(sections, min_gap)
+    if not lines:
+        return ""
+    return f"{CHAPTERS_MARKER}\n" + "\n".join(lines)
+
+
+def build_sources_disclaimer(safety_note: str | None) -> str:
+    """Return the "Sources and disclaimer" footer for a topic safety note, or ""."""
+    note = re.sub(r"\s+", " ", sanitize_youtube_text(safety_note or "")).strip()
+    if not note:
+        return ""
+    return f"{SOURCES_MARKER}\n{note}"
+
+
+def _compose(pre: str, chapter_lines: list[str], footer: str) -> str:
+    head = pre
+    if chapter_lines:
+        block = f"{CHAPTERS_MARKER}\n" + "\n".join(chapter_lines)
+        head = f"{pre}\n\n{block}" if pre else block
+    if head and footer:
+        return f"{head}\n\n{footer}"
+    return head or footer
+
+
+def _truncate_body(text: str, budget: int) -> str:
+    """Shorten body text to at most ``budget`` UTF-8 bytes, adding an ellipsis when cut."""
+    if budget <= 0:
+        return ""
+    if _nbytes(text) <= budget:
+        return text
+    room = budget - 3
+    if room <= 0:
+        return ""
+    cut = text.encode("utf-8")[:room].decode("utf-8", "ignore")
+    return f"{_cut_at_whitespace(cut).rstrip()}..."
+
+
+def fit_longform_description(
+    description: str,
+    max_bytes: int = MAX_DESCRIPTION_BYTES,
+    *,
+    protected: str = "",
+) -> str:
+    """Fit a longform description under ``max_bytes`` without touching the disclaimer.
+
+    The chapters block is trimmed first (last chapter lines removed). Only when no
+    chapters are left is the body above the footer shortened. The footer is the
+    "Sources and disclaimer" block, or the text starting at ``protected`` when that
+    substring is present, and it is never truncated.
+    """
+    text = (description or "").strip()
+    if _nbytes(text) <= max_bytes:
+        return text
+
+    footer_at = -1
+    marker_idx = f"\n{SOURCES_MARKER}\n"
+    found = text.find(marker_idx)
+    if found >= 0:
+        footer_at = found + 1
+    elif protected and protected in text:
+        footer_at = text.find(protected)
+    if footer_at < 0:
+        footer_at = len(text)
+    head = text[:footer_at].rstrip()
+    footer = text[footer_at:].strip()
+
+    pre = head
+    lines: list[str] = []
+    chapter_at = f"\n{CHAPTERS_MARKER}\n"
+    padded = f"\n{head}"
+    cidx = padded.find(chapter_at)
+    if cidx >= 0:
+        pre = padded[1:cidx].rstrip()
+        lines = [ln for ln in padded[cidx + len(chapter_at) :].split("\n") if ln.strip()]
+
+    while lines and _nbytes(_compose(pre, lines, footer)) > max_bytes:
+        lines.pop()
+    out = _compose(pre, lines, footer)
+    if _nbytes(out) <= max_bytes:
+        return out
+
+    sep = 2 if pre and footer else 0
+    budget = max_bytes - _nbytes(footer) - sep
+    return _compose(_truncate_body(pre, budget), [], footer)
+
+
+def build_longform_description(
+    body: str,
+    *,
+    sections: Sequence[tuple[float | str, str]] | None = None,
+    safety_note: str | None = None,
+    max_bytes: int = MAX_DESCRIPTION_BYTES,
+) -> str:
+    """Assemble a longform description: body, optional chapters, optional sources footer.
+
+    The footer is added only when ``safety_note`` is given and not already in ``body``.
+    The result always respects ``max_bytes`` (chapters are cut first).
+    """
+    clean_body = sanitize_youtube_text(body or "")
+    chapters = build_chapters_block(sections)
+    footer = ""
+    note = (safety_note or "").strip()
+    if note and note not in clean_body:
+        footer = build_sources_disclaimer(note)
+
+    head = clean_body
+    if chapters:
+        head = f"{head}\n\n{chapters}" if head else chapters
+    full = f"{head}\n\n{footer}" if head and footer else (head or footer)
+    return fit_longform_description(full, max_bytes, protected=note)
 
 
 class DescriptionBuilder:
@@ -411,8 +596,15 @@ __all__ = [
     "MAX_TITLE_LENGTH",
     "DescriptionBuilder",
     "build_short_description",
+    "build_chapters_block",
+    "build_longform_description",
     "build_short_title",
+    "build_sources_disclaimer",
+    "dedupe_tags",
+    "fit_longform_description",
     "format_timestamp_display",
     "normalize_hashtags",
     "sanitize_youtube_text",
+    "MAX_TAGS_LONGFORM",
+    "MAX_TAGS_SHORTS",
 ]

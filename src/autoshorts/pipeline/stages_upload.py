@@ -20,6 +20,7 @@ from autoshorts.core.models import (
 from autoshorts.media.ffmpeg_tools import check_delivery
 from autoshorts.pipeline.common import _upload_succeeded
 from autoshorts.uploader.description_builder import (
+    MAX_TAGS_SHORTS,
     build_short_description,
     build_short_title,
     build_viral_hashtags,
@@ -102,7 +103,11 @@ class UploadMixin:
             hook=sel.hook_text or sel.title or "Watch this high retention excerpt!",
             start=sel.candidate.start,
             end=sel.candidate.end,
-            hashtags=build_viral_hashtags(meta.title, sel.hook_text or sel.title or ""),
+            hashtags=build_viral_hashtags(
+                meta.title,
+                sel.hook_text or sel.title or "",
+                max_tags=MAX_TAGS_SHORTS,
+            ),
             template=self.config.upload.description_template,
         )
 

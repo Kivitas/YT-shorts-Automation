@@ -16,6 +16,18 @@ TOPIC_KEYS = (
     "comparison",
     "finance",
     "motivation",
+    "office_meeting_parody",
+    "roman_roads",
+    "printing_press",
+    "black_holes",
+    "periodic_table_story",
+    "memory_science",
+    "ev_vs_gas_cars",
+    "tier_list_languages",
+    "inflation_explained",
+    "emergency_fund_basics",
+    "deep_work_focus",
+    "stoic_routines",
 )
 
 GENRE_KEYS = (
@@ -794,6 +806,751 @@ _MOTIVATION = TopicSpec(
     ),
 )
 
+_OFFICE_MEETING_PARODY = TopicSpec(
+    key="office_meeting_parody",
+    label="Office Meeting Parody",
+    genre="parody",
+    sub_domain="banter",
+    visual_mode="parody_duet",
+    title_keywords=(
+        "Meeting Satire",
+        "Office Comedy",
+        "Explained Badly",
+        "Workplace Parody",
+        "Everyday Absurd",
+    ),
+    hashtags=(
+        "#parody",
+        "#officehumor",
+        "#comedy",
+        "#satire",
+        "#worklife",
+        "#meetings",
+    ),
+    safety_note=(
+        "Comedic satire for entertainment only. Characters and scenarios are fictional and "
+        "exaggerated, and do not describe any real person or company."
+    ),
+    curated_hook="A meeting that could have been an email just scheduled its own follow-up meeting.",
+    curated_points=(
+        (
+            "The Agenda Nobody Read",
+            (
+                "Every meeting starts with a slide titled agenda, and nobody has opened it since "
+                "the invite arrived. Three people ask what the goal is, and the goal is a meeting "
+                "about the next meeting. The absurdity is that everyone nods like they already knew."
+            ),
+        ),
+        (
+            "The Camera Off Ritual",
+            (
+                "Half the room has cameras off, one person is clearly on a walk, and somebody "
+                "says you are on mute for the fourth time. Everyone pretends they were listening. "
+                "This is the modern office ritual, and it has its own unspoken rules."
+            ),
+        ),
+        (
+            "Action Items Vanish",
+            (
+                "At the end, five action items are announced with great energy. By Friday none of "
+                "them have an owner, and the notes document is titled draft final v7. Accountability "
+                "turns out to be a feeling that disappears the moment the call ends."
+            ),
+        ),
+        (
+            "The Email That Follows",
+            (
+                "Within ten minutes a summary email arrives, and it is four hundred words long. "
+                "It repeats the agenda, thanks everyone for their time, and schedules a review. "
+                "The meeting was not the work. The meeting was the proof that work was discussed."
+            ),
+        ),
+    ),
+)
+
+_ROMAN_ROADS = TopicSpec(
+    key="roman_roads",
+    label="Roman Roads",
+    genre="history",
+    sub_domain="timeline",
+    visual_mode="history_map",
+    title_keywords=(
+        "Roman Roads",
+        "Ancient Logistics",
+        "Empire Infrastructure",
+        "Lost Civilizations",
+        "History Explained",
+    ),
+    hashtags=(
+        "#history",
+        "#romanempire",
+        "#ancientrome",
+        "#infrastructure",
+        "#ancienthistory",
+        "#documentary",
+    ),
+    safety_note=(
+        "Historical educational overview only. Dates and accounts reflect mainstream consensus "
+        "and figures are approximate."
+    ),
+    curated_hook="Every straight road you drive on may still follow a plan drawn two thousand years ago.",
+    curated_points=(
+        (
+            "Straight Lines for Armies",
+            (
+                "Roman engineers preferred straight routes that cut through hills instead of "
+                "wrapping around them. Marching legions moved faster, and officials could send "
+                "messages across the empire quickly. The road was a military tool before it was "
+                "anything else."
+            ),
+        ),
+        (
+            "Layers Beneath Your Feet",
+            (
+                "A typical Roman road was built in layers, with a deep base of stone, a bed of "
+                "smaller material, and a paved surface on top. This layering helped drainage, "
+                "which is why some sections have lasted for centuries."
+            ),
+        ),
+        (
+            "Milestones and Stations",
+            (
+                "Milestones along the route told travelers how far they were from the next city. "
+                "Relay stations offered fresh horses, food and shelter. The network turned distance "
+                "into something that could be planned, measured and managed."
+            ),
+        ),
+        (
+            "When Roads Fell Silent",
+            (
+                "Roads needed constant maintenance, and when central authority weakened, repairs "
+                "slowed. Local communities kept some routes alive, while others were quarried for "
+                "stone. Infrastructure shows how much a civilization depends on shared upkeep."
+            ),
+        ),
+    ),
+)
+
+_PRINTING_PRESS = TopicSpec(
+    key="printing_press",
+    label="The Printing Press",
+    genre="history",
+    sub_domain="timeline",
+    visual_mode="history_timeline",
+    title_keywords=(
+        "Printing Press",
+        "Information Revolution",
+        "History",
+        "Medieval Europe",
+        "Timeline",
+    ),
+    hashtags=(
+        "#history",
+        "#printingpress",
+        "#gutenberg",
+        "#medievalhistory",
+        "#informationage",
+        "#historicalfacts",
+    ),
+    safety_note=(
+        "Historical educational overview only. Dates and attributions reflect mainstream "
+        "consensus and some details are debated by historians."
+    ),
+    curated_hook="Before movable type, a single book could take a scribe months, and then everything changed.",
+    curated_points=(
+        (
+            "Copying by Hand",
+            (
+                "For centuries, books were copied by hand in monasteries and workshops. A single "
+                "manuscript could take months, which made knowledge expensive and slow to spread. "
+                "Access to books was a privilege of wealth and church institutions."
+            ),
+        ),
+        (
+            "Metal Type and Presses",
+            (
+                "Johannes Gutenberg developed a practical system around the 1440s that combined "
+                "reusable metal letters, an oil based ink and a screw press. Standardized pages "
+                "could be produced in quantity, and the process spread quickly across Europe."
+            ),
+        ),
+        (
+            "Faster Ideas, Louder Arguments",
+            (
+                "Printed pamphlets and books carried new ideas much further than handwritten copies "
+                "ever could. Scholars, reformers and critics could respond to each other within "
+                "months. Debate became faster, wider and harder to control."
+            ),
+        ),
+        (
+            "Standard Knowledge",
+            (
+                "Identical printed pages made it easier to compare sources and fix errors. Maps, "
+                "scientific tables and dictionaries became more consistent. The press did not "
+                "create knowledge, but it changed how knowledge was checked and shared."
+            ),
+        ),
+    ),
+)
+
+_BLACK_HOLES = TopicSpec(
+    key="black_holes",
+    label="Black Holes",
+    genre="science",
+    sub_domain="astrophysics",
+    visual_mode="science_astrophysics",
+    title_keywords=(
+        "Black Holes",
+        "Astrophysics",
+        "Space Science",
+        "Gravity",
+        "Science Explained",
+    ),
+    hashtags=(
+        "#blackholes",
+        "#astrophysics",
+        "#space",
+        "#science",
+        "#gravity",
+        "#astronomy",
+        "#didyouknow",
+    ),
+    safety_note=(
+        "Simplified astrophysics for general interest. Ideas are simplified and open questions "
+        "in physics are noted as such."
+    ),
+    curated_hook="A black hole is not a cosmic vacuum cleaner, and the reason is stranger than you think.",
+    curated_points=(
+        (
+            "Gravity Without Limit",
+            (
+                "A black hole forms when enough mass is packed into a small enough space. Gravity "
+                "becomes so strong that nothing, not even light, can escape past a boundary called "
+                "the event horizon. From outside, it is defined by what it pulls on."
+            ),
+        ),
+        (
+            "Outside the Edge",
+            (
+                "A black hole does not suck up everything nearby. Objects orbit it just as planets "
+                "orbit a star, as long as they stay far enough away. Only matter that crosses the "
+                "boundary is trapped."
+            ),
+        ),
+        (
+            "Time Gets Strange",
+            (
+                "Close to a strong gravitational field, time passes more slowly compared with "
+                "distant observers. This effect comes from general relativity and is measured with "
+                "precise clocks. Near a black hole, the difference becomes dramatic."
+            ),
+        ),
+        (
+            "How We Know They Exist",
+            (
+                "We cannot see black holes directly, but we can see their effects. Stars orbiting "
+                "an invisible center, and glowing gas swirling before it falls in, reveal their "
+                "presence. Images from recent telescope networks show the shadow around one."
+            ),
+        ),
+    ),
+)
+
+_PERIODIC_TABLE = TopicSpec(
+    key="periodic_table_story",
+    label="The Periodic Table",
+    genre="science",
+    sub_domain="chemistry",
+    visual_mode="science_chemistry",
+    title_keywords=(
+        "Periodic Table",
+        "Chemistry",
+        "Atoms",
+        "Elements",
+        "Science Facts",
+    ),
+    hashtags=(
+        "#chemistry",
+        "#periodictable",
+        "#atoms",
+        "#science",
+        "#elements",
+        "#didyouknow",
+    ),
+    safety_note=(
+        "Simplified chemistry for general interest. This is not safety or lab guidance; never "
+        "mix chemicals to test ideas."
+    ),
+    curated_hook="The periodic table was built from a pattern before anyone understood why it worked.",
+    curated_points=(
+        (
+            "A Pattern Before a Reason",
+            (
+                "In the 1860s, chemists noticed that elements sorted by atomic weight repeated "
+                "their properties in cycles. Dmitri Mendeleev arranged them in a table and even "
+                "left gaps for elements not yet discovered. Predictions later proved accurate."
+            ),
+        ),
+        (
+            "Why Columns Matter",
+            (
+                "Elements in the same column behave in similar ways because they share the same "
+                "number of outer electrons. This is the key idea behind chemical reactions. The "
+                "layout is a map of how atoms want to bond."
+            ),
+        ),
+        (
+            "Atomic Number Takes Over",
+            (
+                "Later, scientists realized the true organizing principle is atomic number, the "
+                "count of protons in the nucleus. Mendeleev's pattern survived because it was "
+                "approximately right, and the deeper rule explained the exceptions."
+            ),
+        ),
+        (
+            "New Rows Still Appear",
+            (
+                "Heavy synthetic elements are still being created in particle accelerators, and "
+                "they last only fractions of a second. The table keeps growing as physics pushes "
+                "the limits of how matter can be built."
+            ),
+        ),
+    ),
+)
+
+_MEMORY_SCIENCE = TopicSpec(
+    key="memory_science",
+    label="How Memory Works",
+    genre="science",
+    sub_domain="biology",
+    visual_mode="science_biology",
+    title_keywords=(
+        "Memory",
+        "Neuroscience",
+        "Learning",
+        "Brain Science",
+        "Psychology",
+    ),
+    hashtags=(
+        "#memory",
+        "#neuroscience",
+        "#learning",
+        "#brain",
+        "#psychology",
+        "#studytips",
+    ),
+    safety_note=(
+        "Simplified neuroscience for general interest. This is not medical advice; if you have "
+        "concerns about memory, speak to a qualified doctor."
+    ),
+    curated_hook="You do not store memories like files, you rebuild them every time you recall them.",
+    curated_points=(
+        (
+            "Encoding Is Selective",
+            (
+                "Your brain does not record everything with equal strength. Attention, emotion and "
+                "meaning decide what gets encoded well. That is why a lecture you care about "
+                "sticks, while a random ad disappears."
+            ),
+        ),
+        (
+            "The Hippocampus Hub",
+            (
+                "The hippocampus helps bind different details, like a place, a sound and a feeling, "
+                "into one episode. Other regions store the pieces over time. Memory is a network, "
+                "not a single drawer."
+            ),
+        ),
+        (
+            "Recall Changes the Memory",
+            (
+                "Each time you remember something, the memory is reactivated and can be updated. "
+                "This makes memory flexible, and also means details can drift. Recalling it "
+                "accurately takes effort, which is why practice helps."
+            ),
+        ),
+        (
+            "Spacing and Retrieval",
+            (
+                "Two of the most researched study ideas are spacing practice across days and "
+                "retrieval practice, where you test yourself instead of rereading. Both strengthen "
+                "the pathways that let information come back later."
+            ),
+        ),
+    ),
+)
+
+_EV_VS_GAS = TopicSpec(
+    key="ev_vs_gas_cars",
+    label="Electric vs Gas Cars",
+    genre="comparison",
+    sub_domain="vs_battle",
+    visual_mode="comparison_vs",
+    title_keywords=(
+        "Electric vs Gas",
+        "Versus",
+        "Head to Head",
+        "Breakdown",
+        "Pros and Cons",
+    ),
+    hashtags=(
+        "#evvsgas",
+        "#electriccars",
+        "#cars",
+        "#versus",
+        "#breakdown",
+        "#comparison",
+    ),
+    safety_note=(
+        "Comparative analysis for educational and entertainment purposes. Costs and performance "
+        "vary by region, model and habit, so check current figures before deciding."
+    ),
+    curated_hook="The cheaper car on paper is not always the cheaper car after five years.",
+    curated_points=(
+        (
+            "Upfront Price Versus Running Cost",
+            (
+                "Electric cars often cost more to buy, but fuel and routine maintenance can be "
+                "lower. Gas cars are cheaper to purchase in many markets. The winner depends on how "
+                "many miles you drive and how long you keep the car."
+            ),
+        ),
+        (
+            "Charging Versus Refueling",
+            (
+                "Refueling a gas car takes minutes and works almost anywhere. Charging is best done "
+                "at home overnight, and public fast chargers vary in speed and reliability. Your "
+                "daily route matters more than the spec sheet."
+            ),
+        ),
+        (
+            "Range and Real Life",
+            (
+                "Official range figures are measured under set conditions. Cold weather, highway "
+                "speeds and heavy loads reduce real range. Gas cars tend to keep long trips simple, "
+                "while electric cars reward planning."
+            ),
+        ),
+        (
+            "The Scorecard",
+            (
+                "Score each car on purchase price, running cost, charging access, range, and resale "
+                "value. Give extra weight to the criteria you use every week. The better car is the "
+                "one that fits your life, not the one that wins a headline."
+            ),
+        ),
+    ),
+)
+
+_TIER_LIST_LANGUAGES = TopicSpec(
+    key="tier_list_languages",
+    label="Programming Languages Tier List",
+    genre="comparison",
+    sub_domain="tier_list",
+    visual_mode="comparison_tier",
+    title_keywords=(
+        "Tier List",
+        "Ranked",
+        "Programming",
+        "Coding Languages",
+        "Breakdown",
+    ),
+    hashtags=(
+        "#tierlist",
+        "#programming",
+        "#coding",
+        "#ranking",
+        "#developers",
+        "#learntocode",
+    ),
+    safety_note=(
+        "Opinion-style comparison for entertainment and education. Rankings depend on criteria "
+        "and are not a recommendation for any career or financial decision."
+    ),
+    curated_hook="Every programming language tier list starts a fight, and the criteria cause most of it.",
+    curated_points=(
+        (
+            "Pick the Criteria First",
+            (
+                "A tier list is only as useful as its categories. Ease of learning, speed, job "
+                "market, library support and fit for a task each tell a different story. Decide "
+                "what matters before placing anyone on the board."
+            ),
+        ),
+        (
+            "The Beginner Tier",
+            (
+                "Some languages read almost like plain English, which lowers the first barrier. "
+                "They are great for learning logic, though they may not be the right tool for every "
+                "job. Ease and suitability are different scores."
+            ),
+        ),
+        (
+            "The Specialist Tier",
+            (
+                "Certain languages dominate specific areas, such as web front ends, data analysis or "
+                "systems programming. A language can be weak in general and still excellent for one "
+                "task. Placing it in the right row matters more than the color of the tier."
+            ),
+        ),
+        (
+            "The Verdict Depends on the Goal",
+            (
+                "Building a quick prototype, shipping a mobile app and writing high performance code "
+                "each reward different choices. The best tier list says which goal it is ranking "
+                "for, and invites viewers to re-rank with their own priorities."
+            ),
+        ),
+    ),
+)
+
+_INFLATION = TopicSpec(
+    key="inflation_explained",
+    label="Inflation Explained",
+    genre="finance",
+    sub_domain="compounding",
+    visual_mode="finance_curve",
+    title_keywords=(
+        "Inflation",
+        "Purchasing Power",
+        "Economics",
+        "Money Basics",
+        "Financial Literacy",
+    ),
+    hashtags=(
+        "#inflation",
+        "#economics",
+        "#moneybasics",
+        "#financialliteracy",
+        "#purchasingpower",
+        "#money",
+    ),
+    safety_note=(
+        "General financial education only. This is not financial advice, and no specific "
+        "investment or outcome is recommended. Consider a qualified professional for your own situation."
+    ),
+    curated_hook="Your salary can rise every year and still buy less, and the reason is a single word.",
+    curated_points=(
+        (
+            "Prices Drift Upward",
+            (
+                "Inflation is a general rise in prices across an economy over time. A loaf of bread "
+                "today costs more than it did a decade ago, even if the recipe did not change. The "
+                "pace of that rise is what economists track."
+            ),
+        ),
+        (
+            "Purchasing Power",
+            (
+                "Purchasing power is what your money can actually buy. If prices rise faster than "
+                "your balance, the same cash covers less. That is why holding large amounts of idle "
+                "cash has a quiet cost."
+            ),
+        ),
+        (
+            "Why Prices Move",
+            (
+                "Inflation can come from strong demand, supply shortages, higher production costs, or "
+                "changes in how much money circulates. Central banks often respond with interest "
+                "rate changes. Each cause has different effects on households."
+            ),
+        ),
+        (
+            "Learning to Track It",
+            (
+                "Official inflation measures track a basket of goods, which may not match your own "
+                "spending. Tracking your own basket for a few months shows what inflation feels like "
+                "in practice. Understanding the number helps you plan with clearer eyes."
+            ),
+        ),
+    ),
+)
+
+_EMERGENCY_FUND = TopicSpec(
+    key="emergency_fund_basics",
+    label="Emergency Fund Basics",
+    genre="finance",
+    sub_domain="compounding",
+    visual_mode="finance_curve",
+    title_keywords=(
+        "Emergency Fund",
+        "Savings",
+        "Money Basics",
+        "Personal Finance",
+        "Budgeting",
+    ),
+    hashtags=(
+        "#emergencyfund",
+        "#savings",
+        "#personalfinance",
+        "#budgeting",
+        "#moneytips",
+        "#financialliteracy",
+    ),
+    safety_note=(
+        "General financial education only. This is not financial advice. Targets and products "
+        "vary by person, so consider speaking to a qualified professional about your own situation."
+    ),
+    curated_hook="An unexpected bill is not a financial disaster until you have nowhere to put it.",
+    curated_points=(
+        (
+            "What the Fund Is For",
+            (
+                "An emergency fund is cash set aside for unexpected costs, such as a medical bill, a "
+                "car repair or a sudden gap in income. Its job is to stop small surprises from "
+                "turning into high interest debt."
+            ),
+        ),
+        (
+            "Start Small",
+            (
+                "Many people begin with a modest starter amount and build from there. A common "
+                "reference point is several months of essential expenses, though the right size "
+                "depends on your job stability and responsibilities."
+            ),
+        ),
+        (
+            "Keep It Accessible",
+            (
+                "The fund should be easy to reach but separate from everyday spending. A basic savings "
+                "account is often used for this purpose. The goal is safety and access, not chasing "
+                "high returns."
+            ),
+        ),
+        (
+            "Refill After Use",
+            (
+                "When you use the fund, treat rebuilding it as a regular bill. A small automatic "
+                "transfer each month works better than waiting for leftover money. Consistency is "
+                "what keeps the buffer ready."
+            ),
+        ),
+    ),
+)
+
+_DEEP_WORK = TopicSpec(
+    key="deep_work_focus",
+    label="Deep Work and Focus",
+    genre="motivation",
+    sub_domain="value_equation",
+    visual_mode="motivation_value",
+    title_keywords=(
+        "Deep Work",
+        "Focus",
+        "Productivity",
+        "Concentration",
+        "Attention",
+    ),
+    hashtags=(
+        "#deepwork",
+        "#focus",
+        "#productivity",
+        "#concentration",
+        "#attention",
+        "#motivation",
+    ),
+    safety_note=(
+        "General productivity and mindset ideas only. This is not medical or mental health advice."
+    ),
+    curated_hook="The most valuable skill at work may be the ability to stay on one hard thing for an hour.",
+    curated_points=(
+        (
+            "Shallow Work Fills the Day",
+            (
+                "Emails, quick messages and small tasks can fill a whole day without moving anything "
+                "important. This shallow work feels productive, but it rarely creates lasting value. "
+                "Noticing the pattern is the first step to changing it."
+            ),
+        ),
+        (
+            "Block the Time",
+            (
+                "Schedule a fixed block for demanding work, even if it is only forty-five minutes. "
+                "Decide the task before you start, and keep the rest of the day from interrupting it. "
+                "A defined block makes focus a plan instead of a hope."
+            ),
+        ),
+        (
+            "Remove the Easy Exits",
+            (
+                "Close unneeded tabs, silence notifications and put your phone out of reach. Each "
+                "small switch removes a reason to drift. The aim is to make distraction slightly "
+                "harder than staying on the task."
+            ),
+        ),
+        (
+            "Rest Restores Focus",
+            (
+                "Concentration is a limited resource that recovers with breaks, sleep and time away "
+                "from screens. Plan short breaks between blocks and a real stop at the end of the day. "
+                "Focus grows through repeated practice and recovery."
+            ),
+        ),
+    ),
+)
+
+_STOIC_ROUTINES = TopicSpec(
+    key="stoic_routines",
+    label="Stoic Daily Routines",
+    genre="motivation",
+    sub_domain="habit_loop",
+    visual_mode="motivation_loop",
+    title_keywords=(
+        "Stoicism",
+        "Daily Routine",
+        "Mindset",
+        "Philosophy",
+        "Self Control",
+    ),
+    hashtags=(
+        "#stoicism",
+        "#stoic",
+        "#philosophy",
+        "#mindset",
+        "#dailyroutine",
+        "#selfcontrol",
+    ),
+    safety_note=(
+        "General philosophy and self-improvement ideas only. This is not medical or mental health "
+        "advice. Historical quotes are paraphrased."
+    ),
+    curated_hook="Ancient Romans kept a private journal, and their evening review is still a powerful habit.",
+    curated_points=(
+        (
+            "Separate Control From Concern",
+            (
+                "Stoic teachers distinguished what you control, such as your choices and effort, from "
+                "what you do not, such as other people and outcomes. Focusing on the first category "
+                "reduces wasted worry and sharpens action."
+            ),
+        ),
+        (
+            "The Morning Preview",
+            (
+                "Some Stoics imagined the difficulties a day might bring, and planned their response "
+                "in advance. This is not pessimism. Rehearsing a calm reaction makes it easier to "
+                "choose it when frustration appears."
+            ),
+        ),
+        (
+            "The Evening Review",
+            (
+                "Ending the day by reviewing your actions, without self-punishment, builds awareness. "
+                "Ask what you did well, where you slipped and what you will do tomorrow. Short notes "
+                "work better than long, perfect entries."
+            ),
+        ),
+        (
+            "Practice Over Perfection",
+            (
+                "Stoic philosophy was meant to be practiced in ordinary moments, like a difficult "
+                "conversation or a delayed plan. Pick one small routine, repeat it for a month, and "
+                "adjust based on what actually helps."
+            ),
+        ),
+    ),
+)
+
 TOPICS: dict[str, TopicSpec] = {
     t.key: t
     for t in (
@@ -807,6 +1564,18 @@ TOPICS: dict[str, TopicSpec] = {
         _COMPARISON,
         _FINANCE,
         _MOTIVATION,
+        _OFFICE_MEETING_PARODY,
+        _ROMAN_ROADS,
+        _PRINTING_PRESS,
+        _BLACK_HOLES,
+        _PERIODIC_TABLE,
+        _MEMORY_SCIENCE,
+        _EV_VS_GAS,
+        _TIER_LIST_LANGUAGES,
+        _INFLATION,
+        _EMERGENCY_FUND,
+        _DEEP_WORK,
+        _STOIC_ROUTINES,
     )
 }
 

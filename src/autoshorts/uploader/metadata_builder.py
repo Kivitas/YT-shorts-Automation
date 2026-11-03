@@ -16,10 +16,13 @@ from autoshorts.uploader.description_builder import (
     DEFAULT_DESCRIPTION_TEMPLATE,
     DEFAULT_TITLE_TEMPLATE,
     MAX_DESCRIPTION_BYTES,
+    MAX_TAGS_LONGFORM,
+    MAX_TAGS_SHORTS,
     MAX_TITLE_LENGTH,
     DescriptionBuilder,
     build_short_description,
     build_short_title,
+    dedupe_tags,
     format_timestamp_display,
     normalize_hashtags,
     sanitize_youtube_text,
@@ -27,9 +30,17 @@ from autoshorts.uploader.description_builder import (
 )
 
 
+def cap_tags(tags, *, longform: bool) -> list[str]:
+    """Deduplicate case-insensitively and cap a tag list: 15 for longform, 10 for Shorts."""
+    return dedupe_tags(tags, MAX_TAGS_LONGFORM if longform else MAX_TAGS_SHORTS)
+
+
 def _format_bounded_shorts_title(core_text: str, max_len: int = 99) -> str:
     """Ensure title is sanitized, includes #Shorts, and is strictly < 100 characters."""
     cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", sanitize_youtube_text(core_text)).strip()
+    # Hashtags other than #Shorts belong in the description, never in the title.
+    cleaned = re.sub(r"#(?!shorts\b)[A-Za-z]\w*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     # Remove any trailing #shorts to avoid duplication before re-appending
     if cleaned.lower().endswith("#shorts"):
         cleaned = cleaned[: -len("#shorts")].rstrip()
@@ -126,8 +137,12 @@ __all__ = [
     "DescriptionBuilder",
     "build_short_description",
     "build_short_title",
+    "cap_tags",
+    "dedupe_tags",
     "format_timestamp_display",
     "generate_title_variants",
     "normalize_hashtags",
     "sanitize_youtube_text",
+    "MAX_TAGS_LONGFORM",
+    "MAX_TAGS_SHORTS",
 ]

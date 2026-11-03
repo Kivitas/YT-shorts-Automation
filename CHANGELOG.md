@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Launchers**: `start.bat` and `start.sh` install the Remotion packages (including satori) and build the sprites when missing; `--build-assets` forces a rebuild.
 - **GSAP skills** installed in `.claude/skills/` for AI agents working in this repo (MIT, see `LICENSE-gsap-skills.txt`).
 - **Decisions**: `decider/records.py` records each decision with its job ID and reason; silent fallbacks now log.
+- **TimesFM 2.5 tier** (`analytics/forecasting.py`, optional `forecast` extra): real forecasts when the package is installed, logged fallback otherwise. Forecast retention cliffs become pattern interrupts (`edit_planner/workflow_optimizer.py`, `brain/specialists/retention_editor.py`).
+- **Longform ideas**: 12 new curated topics and a ranked `generate_ideas` list (`longform/ideas.py`).
+- **Editing**: longform audio is loudness-normalised (-14 LUFS) with a fallback; background-music ducks apply when an EDL is present; `edit_planner/pacing.py` merges cuts and punches for Shorts.
+- **Upload**: longform descriptions get chapters and a sources footer; tags are de-duplicated and capped (15 longform, 10 Shorts); longform titles and descriptions are validated before upload.
 - **Satori figure**: `longform/sprite_rig.py` draws the character from the satori parts with joint rotation. Limbs are padded before rotating so nothing is clipped; the raised-hand pose is lowered so it stays in frame.
 - **Style decider**: `decider/style.py` chooses layout and caption (short clips get the `kurz` preset), respecting an explicit user choice first.
 - **GSAP in Remotion**: the title card, lower third, stat card and caption pop run on GSAP timelines keyed to the frame.
