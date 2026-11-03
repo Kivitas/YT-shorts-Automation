@@ -40,6 +40,7 @@ dependencies = [
 local-llm = [
     "llama-cpp-python>=0.3.1",
 ]
+forecast = ["timesfm[torch]>=2.5"]
 # Core dependencies already include faster-whisper and playwright; extras kept empty to prevent conflicts
 whisper = []
 browser = []

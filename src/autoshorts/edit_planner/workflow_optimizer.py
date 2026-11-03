@@ -23,6 +23,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from autoshorts.analytics.forecasting import TimeSeriesForecastingEngine
+from autoshorts.brain.specialists.retention_editor import cliffs_to_interrupts
 from autoshorts.core.models import EditDecisionList, JumpCut, ZoomPunchIn
 from autoshorts.edit_planner.edl_schema import clamp_edl
 from autoshorts.edit_planner.planner import (
@@ -486,6 +488,8 @@ def optimize_edl_for_retention(
     clip_duration: float,
     min_silence_gap: float = 0.45,
     target_zooms_per_15s: int = 2,
+    retention_curve: Sequence[Any] | None = None,
+    clip_start: float = 0.0,
 ) -> tuple[EditDecisionList, PacingAuditReport]:
     """Automatically optimize an EditDecisionList for maximum audience retention in one pass.
 
@@ -495,7 +499,14 @@ def optimize_edl_for_retention(
        uppercase/exclamation words, or longest words in each 7-10s bucket) so video never
        stays static for > 8 seconds.
     3. Generates corresponding BgmDuck segments during rapid speech bursts.
-    4. Re-audits the optimized timeline and returns (optimized_edl, updated_pacing_report).
+    4. When ``retention_curve`` is given, detects forecast retention cliffs and adds them as
+       pattern-interrupt zoom punches (clip-relative, rate-limited, refractory-checked),
+       skipping any that fall within 4.5 s of an existing punch. Without a curve this step
+       is skipped entirely.
+    5. Re-audits the optimized timeline and returns (optimized_edl, updated_pacing_report).
+
+    ``retention_curve`` uses the forms accepted by ``TimeSeriesForecastingEngine``. ``clip_start``
+    is the clip's offset in source-video seconds, so cliffs are mapped into clip time.
     """
     total_dur = max(5.0, float(clip_duration))
     norm_words = _normalize_words(words)
@@ -647,7 +658,37 @@ def optimize_edl_for_retention(
                     )
                 )
 
+    # 2b. Merge forecast retention-cliff interrupts (only when a curve is supplied)
+    forecast_ts: set[float] = set()
+    if retention_curve is not None:
+        engine = TimeSeriesForecastingEngine(max_interrupts_per_short=10**6)
+        cliffs = engine.detect_retention_cliffs(
+            retention_curve, duration=float(clip_start) + total_dur
+        )
+        forecast_times = cliffs_to_interrupts(
+            cliffs,
+            clip_start=float(clip_start),
+            clip_end=float(clip_start) + total_dur,
+            max_per_minute=4,
+            refractory=4.5,
+        )
+        for t_rel in forecast_times:
+            if is_inside_cut(t_rel):
+                continue
+            if any(abs(t_rel - float(p.timestamp)) < 4.5 for p in current_punches):
+                logger.info(
+                    "Dropped forecast interrupt at %.2fs (within refractory of punch)", t_rel
+                )
+                continue
+            current_punches.append(
+                ZoomPunchIn(timestamp=round(t_rel, 2), scale=1.15, duration=0.6, emphasis_word="")
+            )
+            forecast_ts.add(round(t_rel, 2))
+
     current_punches.sort(key=lambda p: float(p.timestamp))
+    for p in current_punches:
+        source = "forecast" if round(float(p.timestamp), 2) in forecast_ts else "heuristic"
+        logger.info("Zoom interrupt at %.2fs source=%s", float(p.timestamp), source)
 
     # 3. Generate BgmDuck segments during rapid speech bursts
     duck_segments = detect_rapid_speech_bursts(

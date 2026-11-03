@@ -11,6 +11,7 @@ Provides:
 
 from __future__ import annotations
 
+import bisect
 import importlib.util
 import logging
 import math
@@ -23,10 +24,90 @@ from typing import Any, Literal
 logger = logging.getLogger(__name__)
 
 # Check tier availability safely without hard crashes
-_HAS_TIMESFM = importlib.util.find_spec("timesfm") is not None
 _HAS_NUMPY_SCIPY = (
     importlib.util.find_spec("numpy") is not None and importlib.util.find_spec("scipy") is not None
 )
+
+# TimesFM 2.5 (200M params) settings. The package is optional (extra: autoshorts[forecast]);
+# it is imported lazily and never at module import time.
+_TIMESFM_MODEL_ID = "google/timesfm-2.5-200m-pytorch"
+_TIMESFM_MIN_POINTS = 8  # shorter histories stay on the pure-Python tier
+_TIMESFM_HORIZON = 48  # the 48-hour view horizon
+_TIMESFM_MAX_CONTEXT = 1024
+_timesfm_model_cache: Any | None = None
+_timesfm_load_error: str | None = None  # cached so a failed load is not retried per call
+_timesfm_warned = False  # the fallback warning is logged once per process
+
+
+def _load_timesfm_model() -> Any:
+    """Return the cached TimesFM 2.5 model, loading it on first use.
+
+    Raises RuntimeError with the reason when timesfm is absent or the model cannot load.
+    """
+    global _timesfm_model_cache, _timesfm_load_error
+    if _timesfm_model_cache is not None:
+        return _timesfm_model_cache
+    if _timesfm_load_error is not None:
+        raise RuntimeError(_timesfm_load_error)
+    try:
+        import timesfm
+    except ImportError as e:
+        _timesfm_load_error = f"timesfm package not installed ({e})"
+        raise RuntimeError(_timesfm_load_error) from e
+    try:
+        model_cls = getattr(timesfm, "TimesFM_2p5_200M_torch", None)
+        config_cls = getattr(timesfm, "ForecastConfig", None)
+        if model_cls is None or config_cls is None:
+            raise AttributeError("installed timesfm lacks TimesFM_2p5_200M_torch/ForecastConfig")
+        model = model_cls.from_pretrained(_TIMESFM_MODEL_ID)
+        model.compile(
+            config_cls(
+                max_context=_TIMESFM_MAX_CONTEXT,
+                max_horizon=_TIMESFM_HORIZON,
+                normalize_inputs=True,
+                use_continuous_quantile_head=True,
+            )
+        )
+    except Exception as e:
+        _timesfm_load_error = f"TimesFM model load failed ({type(e).__name__}: {e})"
+        raise RuntimeError(_timesfm_load_error) from e
+    _timesfm_model_cache = model
+    return model
+
+
+def _warn_timesfm_fallback(reason: str) -> None:
+    """Log one warning naming the reason TimesFM was skipped; later calls log at debug."""
+    global _timesfm_warned
+    if _timesfm_warned:
+        logger.debug("TimesFM unavailable again (%s); using fallback tier.", reason)
+        return
+    _timesfm_warned = True
+    logger.warning(
+        "TimesFM tier unavailable (%s); falling back to NumPy/SciPy or pure Python.", reason
+    )
+
+
+def _interpolate_cumulative(ts: Sequence[float], ys: Sequence[float], x: float) -> float:
+    """Linear interpolation over sorted timestamps, clamped at both ends."""
+    if x <= ts[0]:
+        return ys[0]
+    if x >= ts[-1]:
+        return ys[-1]
+    i = bisect.bisect_right(ts, x)
+    t_lo, t_hi = ts[i - 1], ts[i]
+    if t_hi == t_lo:
+        return ys[i]
+    w = (x - t_lo) / (t_hi - t_lo)
+    return ys[i - 1] + w * (ys[i] - ys[i - 1])
+
+
+def _hourly_series(points: Sequence[tuple[float, float]]) -> list[float]:
+    """Resample (hour, cumulative_views) points onto whole-hour grid points."""
+    pts = sorted(points, key=lambda p: p[0])
+    ts = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    first, last = math.ceil(ts[0]), math.floor(ts[-1])
+    return [_interpolate_cumulative(ts, ys, float(h)) for h in range(first, last + 1)]
 
 
 @dataclass
@@ -61,22 +142,27 @@ class TimeSeriesForecastingEngine:
         cliff_cooldown_sec: float = 4.5,  # >= 4.5s between interrupts
         max_interrupts_per_short: int = 4,  # <= 4 pattern interrupts per 60s Short
         force_tier: Literal["timesfm", "numpy_scipy", "pure_python"] | None = None,
+        *,
+        timesfm_model: Any | None = None,
     ) -> None:
         self.cliff_threshold = float(cliff_threshold)
         self.cliff_cooldown_sec = float(cliff_cooldown_sec)
         self.max_interrupts = int(max_interrupts_per_short)
         self.force_tier = force_tier
+        # Optional injected model (anything with forecast(horizon=, inputs=)); bypasses lazy loading.
+        self._timesfm_model = timesfm_model
 
     @property
     def active_tier(self) -> Literal["timesfm", "numpy_scipy", "pure_python"]:
-        """Resolve current active forecasting tier based on environment & overrides."""
+        """Top forecasting tier to attempt.
+
+        TimesFM is always attempted first unless force_tier overrides it. If it is unavailable,
+        forecast_trajectory logs one warning and falls back to NumPy/SciPy, then pure Python.
+        The tier actually used is reported in ForecastResult.tier_used.
+        """
         if self.force_tier:
             return self.force_tier
-        if _HAS_TIMESFM:
-            return "timesfm"
-        if _HAS_NUMPY_SCIPY:
-            return "numpy_scipy"
-        return "pure_python"
+        return "timesfm"
 
     def get_active_tier(self) -> Literal["timesfm", "numpy_scipy", "pure_python"]:
         """Getter for active forecasting tier."""
@@ -186,11 +272,11 @@ class TimeSeriesForecastingEngine:
         # Extract normalized history: list of (hour, cumulative_views)
         points = self._normalize_telemetry(telemetry, elapsed_hours=elapsed_hours)
 
-        if tier == "timesfm" and _HAS_TIMESFM:
+        if tier == "timesfm":
             try:
                 return self._forecast_timesfm(points)
             except Exception as e:
-                logger.warning("TimesFM tier failed (%s); falling back to Tier 2/3.", e)
+                _warn_timesfm_fallback(str(e))
 
         if (tier in ("timesfm", "numpy_scipy")) and _HAS_NUMPY_SCIPY:
             try:
@@ -388,11 +474,58 @@ class TimeSeriesForecastingEngine:
         self,
         points: list[tuple[float, float]],
     ) -> ForecastResult:
-        """TimesFM foundation zero-shot time-series forecaster (Tier 1)."""
-        # When timesfm is loaded, route through its forecast API
-        # Falls back cleanly to Tier 2/3 if context is too short
-        if len(points) < 8:
+        """TimesFM 2.5 zero-shot time-series forecaster (Tier 1).
+
+        Raises when the model is unavailable or the call fails; forecast_trajectory catches that
+        and falls back to Tier 2/3.
+        """
+        # Short-context path: fewer than 8 points stays on the pure-Python tier and never
+        # loads or calls the model.
+        if len(points) < _TIMESFM_MIN_POINTS:
             return self._forecast_pure_python(points)
 
-        # Placeholder interface for TimesFM inference
-        return self._forecast_pure_python(points)
+        series = _hourly_series(points)
+        if len(series) < _TIMESFM_MIN_POINTS:
+            # Points span too little whole-hour coverage to form a usable context.
+            return self._forecast_pure_python(points)
+        series = series[-_TIMESFM_MAX_CONTEXT:]
+
+        model = self._timesfm_model if self._timesfm_model is not None else _load_timesfm_model()
+        point_fc, quant_fc = model.forecast(horizon=_TIMESFM_HORIZON, inputs=[series])
+
+        point = [float(v) for v in point_fc[0][:_TIMESFM_HORIZON]]
+        if len(point) < _TIMESFM_HORIZON:
+            raise ValueError(f"TimesFM returned {len(point)} points, need {_TIMESFM_HORIZON}")
+        hourly = [round(v, 1) for v in point]
+        pred_48 = hourly[-1]
+
+        # Confidence from the 10th-90th percentile spread. Quantile channel 0 is the mean,
+        # channels 1..9 are the 0.1..0.9 quantiles. Keep 0.9 if the quantiles are unusable.
+        confidence = 0.9
+        if quant_fc is not None:
+            try:
+                spreads: list[float] = []
+                for h in range(_TIMESFM_HORIZON):
+                    row = quant_fc[0][h]
+                    if len(row) < 10:
+                        raise ValueError("quantile head has fewer than 10 channels")
+                    lo, hi = float(row[1]), float(row[9])
+                    spreads.append(max(0.0, hi - lo) / max(abs(point[h]), 1.0))
+                confidence = 1.0 / (1.0 + sum(spreads) / len(spreads))
+            except (IndexError, TypeError, ValueError) as e:
+                logger.debug("TimesFM quantile spread unusable (%s); keeping confidence 0.9.", e)
+        confidence = max(0.0, min(1.0, confidence))
+
+        return ForecastResult(
+            predicted_views_48h=round(pred_48, 1),
+            is_viral_breakout=pred_48 >= 10000.0,
+            hourly_forecast=hourly,
+            confidence_score=round(confidence, 4),
+            tier_used="timesfm",
+            metrics={
+                "model": _TIMESFM_MODEL_ID,
+                "context_hours": len(series),
+                "horizon_hours": _TIMESFM_HORIZON,
+                "injected_model": self._timesfm_model is not None,
+            },
+        )

@@ -8,11 +8,57 @@ pattern interrupt parameters.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from collections.abc import Iterable
+from typing import Any, Literal
 
 from autoshorts.brain.schemas import RetentionPlan
 
 logger = logging.getLogger("autoshorts.brain.retention_editor")
+
+
+def cliffs_to_interrupts(
+    cliffs: Iterable[Any],
+    clip_start: float,
+    clip_end: float,
+    max_per_minute: int = 4,
+    refractory: float = 4.5,
+) -> list[float]:
+    """Turn forecast retention cliffs into pattern-interrupt times for one clip.
+
+    Args:
+        cliffs: ``RetentionCliff`` objects (anything with a ``timestamp`` attribute)
+            or plain numbers, in source-video seconds.
+        clip_start: Clip window start in source-video seconds.
+        clip_end: Clip window end in source-video seconds.
+        max_per_minute: Maximum interrupts in any rolling 60 s window of the clip.
+        refractory: Minimum spacing in seconds between consecutive interrupts.
+
+    Returns:
+        Interrupt times relative to ``clip_start``, sorted ascending. Cliffs outside
+        the window are dropped; cliffs violating the refractory or the rate cap are
+        dropped in time order (earliest cliff wins).
+    """
+    if clip_end <= clip_start or max_per_minute <= 0:
+        return []
+
+    times = sorted(
+        float(c.timestamp) if hasattr(c, "timestamp") else float(c)  # type: ignore[arg-type]
+        for c in cliffs
+    )
+
+    accepted: list[float] = []
+    for t in times:
+        if t < clip_start or t > clip_end:
+            continue
+        rel = t - clip_start
+        if accepted and (rel - accepted[-1]) < refractory:
+            continue
+        in_window = sum(1 for a in accepted if (rel - a) < 60.0)
+        if in_window >= max_per_minute:
+            continue
+        accepted.append(rel)
+
+    return [round(a, 2) for a in accepted]
 
 
 class RetentionEditorAgent:
