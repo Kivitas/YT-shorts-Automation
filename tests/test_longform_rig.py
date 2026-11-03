@@ -15,8 +15,11 @@ BG = (40, 52, 70)
 THIGH_UNITS = 56.0
 SHIN_UNITS = 52.0
 
-NEW_POSES = {"sit_chair", "lean_wall", "hug_knees", "fist_up", "reach_up", "fall_back"}
-NEW_EXPRESSIONS = {"happy", "worried", "determined", "tired_smile"}
+NEW_POSES = {
+    "sit_chair", "sit_desk_focus", "phone_hold", "lie_bed_prone", "slump", "lean_wall",
+    "hug_knees", "fist_up", "reach_up", "fall_back",
+}  # fmt: skip
+NEW_EXPRESSIONS = {"happy", "worried", "determined", "tired_smile", "tired", "focus"}
 
 
 def _canvas(mode: str = "RGB") -> Image.Image:
@@ -42,6 +45,23 @@ def test_every_expression_draws_without_error() -> None:
 def test_new_poses_and_expressions_are_registered() -> None:
     assert NEW_POSES <= set(POSES)
     assert NEW_EXPRESSIONS <= set(EXPRESSIONS)
+
+
+def test_body_positions_match_their_names() -> None:
+    # Lying flat: torso horizontal, legs straight out (thighs and shins at +/-90).
+    for name in ("sleep_bed", "lie_bed_prone"):
+        pose = POSES[name]
+        assert abs(abs(pose["torso"]) - 90) < 1
+        assert abs(abs(pose["l_thigh"]) - 90) < 1 and abs(abs(pose["r_shin"]) - 90) < 1
+    # Seated: thighs horizontal, shins hanging, hips lowered to seat height.
+    for name in ("sit_chair", "sit_desk_focus"):
+        pose = POSES[name]
+        assert pose["l_thigh"] == pose["r_thigh"] == 90
+        assert pose["l_shin"] == pose["r_shin"] == 0
+        assert pose["drop"] > 0
+    assert POSES["sit_desk_focus"]["torso"] == 15
+    assert POSES["slump"]["torso"] == 20
+    assert POSES["lean_wall"]["torso"] == 8
 
 
 def test_expressions_define_every_face_parameter() -> None:

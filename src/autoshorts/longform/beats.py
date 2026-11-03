@@ -36,9 +36,9 @@ from autoshorts.longform.background import draw_background
 from autoshorts.longform.kinetic_text import draw_inner_voice, draw_kinetic_line, draw_number_pop
 from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
-from autoshorts.longform.rig import HAND_LIFT_DEG, animate_pose, draw_rig
+from autoshorts.longform.rig import POSES, animate_pose, draw_rig
 from autoshorts.longform.sphere import draw_sphere, orbit_point
-from autoshorts.longform.sprite_rig import draw_sprite_rig
+from autoshorts.longform.sprite_rig import draw_sprite_rig, wrist_offset
 from autoshorts.longform.sprites import paste_sprite, sprite_size
 
 RGB = tuple[int, int, int]
@@ -57,8 +57,21 @@ NUMBER_ANCHOR = (1500, 520)
 
 REST_POSE = "stand"
 POSE_TRANSITION_S = 0.4  # the figure eases from REST_POSE into the planned pose after a shot start
-GESTURE_HAND_LIFT_S = 0.3  # the raised hand ramps from 0 to 1 over this long after a section start
 HEAD_TURN_MAGNITUDE = 0.5
+
+# Bed and lying figure. The bed is drawn at BED_SCALE from BED_XY; its pillow is at the left
+# end. LYING_HIP is the hip so the head rests on the pillow and the body lies on the mattress.
+BED_XY = (60, 480)
+BED_SCALE = 1.4
+LYING_HIP = (374, 570)
+LYING_POSES = frozenset({"sleep_bed", "lie_bed_prone"})
+# Poses that keep the figure's own side: a mirrored figure would leave the pillow or the desk.
+NO_MIRROR_POSES = LYING_POSES | {"sit_desk_focus"}
+# Poses whose body stands, so a narration gesture may replace the hand pose.
+GESTURE_POSES = frozenset({"stand", "lean_wall", "look_left", "look_right"})
+# Desk monitor, placed relative to the seated figure's near hand (figure origin + hand offset).
+DESK_MONITOR_SCALE = 0.6
+DESK_MONITOR_OFFSET = (10, -100)  # top-left corner, measured from the hand
 
 SPACE_WORDS = frozenset({"planet", "earth", "space", "moon", "orbit", "universe"})
 SPHERE_CENTRE = (1500, 380)
@@ -84,6 +97,8 @@ PROP_SPRITES: dict[str, str] = {
 FIGURE_SPRITE_SCALE = (
     0.65  # satori canvas px -> output px: hip to ankle matches rig leg length (162 px)
 )
+# Seated figure's near hand, relative to RIG_ORIGIN, from the sit_desk_focus pose.
+_HAND_OFFSET = wrist_offset(POSES["sit_desk_focus"], FIGURE_SPRITE_SCALE, "l")
 
 GESTURE_POINT_WORDS = frozenset({"look", "see", "watch", "first", "start"})
 GESTURE_OPEN_WORDS = frozenset({"you", "your"})
@@ -144,6 +159,11 @@ DESK_WORDS = frozenset({"desk", "work", "focus"})
 BAG_WORDS = frozenset({"bag", "punch", "fight", "hit"})
 MOUNTAIN_WORDS = frozenset({"mountain", "climb", "summit", "top"})
 SHADOW_WORDS = frozenset({"shadow", "excuse", "demon", "tomorrow", "later"})
+SLEEP_WORDS = frozenset({"bed", "sleep", "night", "tired"})
+PRONE_WORDS = frozenset({"stomach", "prone", "face"})
+CHAIR_WORDS = frozenset({"chair", "sit"})
+WIN_WORDS = frozenset({"better", "new", "win", "won", "success"})
+START_WORDS = frozenset({"start", "begin"})
 CALENDAR_WORDS = frozenset({"every", "day", "daily"})
 DAY_WORDS = frozenset({"day", "daily"})
 
@@ -245,8 +265,8 @@ def plan_beat(
     inner_voice: str | None = None
 
     if words & BED_WORDS:
-        props.append(PropSpec("bed", 60, 560, 1.0, {}))
-        props.append(PropSpec("alarm_clock_7seg", 330, 470, 1.0, {}))
+        props.append(PropSpec("bed", *BED_XY, BED_SCALE, {}))
+        props.append(PropSpec("alarm_clock_7seg", 600, 600, 0.5, {}))
     if words & PHONE_WORDS:
         props.append(PropSpec("phone", 1420, 560, 1.0, {}))
         light_sources.append(LightSource((1450, 600), 260.0, PALETTE.blue, 0.8))
@@ -254,7 +274,9 @@ def plan_beat(
         props.append(PropSpec("couch", 1380, 600, 1.0, {}))
         pose = pose or "slump_couch"
     if words & DESK_WORDS:
-        props.append(PropSpec("desk_monitor", 1380, 420, 1.0, {}))
+        desk_x = RIG_ORIGIN[0] + _HAND_OFFSET[0] + DESK_MONITOR_OFFSET[0]
+        desk_y = RIG_ORIGIN[1] + _HAND_OFFSET[1] + DESK_MONITOR_OFFSET[1]
+        props.append(PropSpec("desk_monitor", round(desk_x), round(desk_y), DESK_MONITOR_SCALE, {}))
     if words & BAG_WORDS:
         props.append(PropSpec("heavy_bag", 1460, 380, 1.0, {}))
         pose = pose or "box_punch"
@@ -275,26 +297,58 @@ def plan_beat(
     if not props:
         props.append(PropSpec("window", 80, 340, 1.0, {}))
 
+    # Body position and expression from the narration, first match wins. The props above
+    # (couch, bag, mountain) keep their own pose.
+    mood_pose: str | None = None
+    mood_expression: str | None = None
+    if words & SLEEP_WORDS:
+        mood_pose = "lie_bed_prone" if words & PRONE_WORDS else "sleep_bed"
+        mood_expression = "tired"
+    elif words & PHONE_WORDS:
+        mood_pose, mood_expression = "phone_hold", "tired"
+    elif words & DESK_WORDS:
+        mood_pose, mood_expression = "sit_desk_focus", "focus"
+    elif words & NEGATIVE_WORDS:
+        mood_pose, mood_expression = "slump", "worried"
+    elif words & WIN_WORDS:
+        mood_pose, mood_expression = "fist_up", "happy"
+    elif words & START_WORDS:
+        mood_pose, mood_expression = "stand", "determined"
+    elif words & CHAIR_WORDS:
+        mood_pose = "sit_chair"
+
+    if pose is None:
+        pose = mood_pose
+
     if pose is None and words & LOOK_WORDS:
         pose = "look_right" if section_index % 2 == 0 else "look_left"
 
     if pose is None:
         pose = POSE_CYCLE[section_index % len(POSE_CYCLE)]
 
-    expression = "determined" if is_last else ("exhausted" if section_index % 2 == 0 else "grit")
+    # A lying figure always has a bed under it, even when the narration never names one.
+    if pose in LYING_POSES and not any(prop.name == "bed" for prop in props):
+        props.insert(0, PropSpec("bed", *BED_XY, BED_SCALE, {}))
+
+    if mood_expression is not None:
+        expression = mood_expression
+    elif is_last:
+        expression = "determined"
+    else:
+        expression = "exhausted" if section_index % 2 == 0 else "grit"
 
     return BeatPlan(
         section_index=section_index,
         pose=pose,
         expression=expression,
-        mirror=section_index % 2 == 1,
+        mirror=section_index % 2 == 1 and pose not in NO_MIRROR_POSES,
         headband=is_last,
         props=props,
         inner_voice=inner_voice,
         number_values=_NUMBER_RE.findall(narration),
         mood=mood,
         light_sources=light_sources,
-        gesture=_choose_gesture(words, lowered),
+        gesture=_choose_gesture(words, lowered) if pose in GESTURE_POSES else None,
     )
 
 
@@ -339,11 +393,6 @@ def _head_turn(section_text: str) -> float:
     """Turn toward the window or bed when they are named, otherwise away from them."""
     words = set(_WORD_RE.findall(section_text.lower()))
     return HEAD_TURN_MAGNITUDE if words & HEAD_TURN_WORDS else -HEAD_TURN_MAGNITUDE
-
-
-def _hand_lift(t: float, start: float) -> float:
-    """Raised-hand amount in 0..1, ramping up over the first ``GESTURE_HAND_LIFT_S`` seconds."""
-    return min(1.0, max(0.0, (t - start) / GESTURE_HAND_LIFT_S))
 
 
 def _is_space_topic(section_text: str) -> bool:
@@ -419,13 +468,12 @@ def _draw_prop(
 def _figure_joints(
     plan: BeatPlan, shot_start: float, section_text: str, t: float
 ) -> dict[str, float]:
-    """Joint angles for the satori figure: the planned pose plus head turn and raised hand."""
+    """Joint angles for the satori figure: the planned pose plus the head turn.
+
+    The arms come only from the pose, so no shot raises a hand by default.
+    """
     joints = dict(_rig_pose(plan, shot_start, t))
     joints["head_turn"] = _head_turn(section_text)
-    lift = _hand_lift(t, shot_start)
-    if lift:
-        joints["r_upper"] += lift * HAND_LIFT_DEG
-        joints["r_lower"] += lift * HAND_LIFT_DEG
     return joints
 
 
@@ -484,10 +532,11 @@ def draw_beat(
     if _is_space_topic(section_text):
         _draw_space(img, t, pal.blue, pal.highlight)
 
+    origin = LYING_HIP if plan.pose in LYING_POSES else RIG_ORIGIN
     if not draw_sprite_rig(
         img,
         _figure_joints(plan, start, section_text, t),
-        RIG_ORIGIN,
+        origin,
         FIGURE_SPRITE_SCALE,
         expression=plan.expression,
         t=t,
@@ -496,14 +545,13 @@ def draw_beat(
         draw_rig(
             img,
             _rig_pose(plan, start, t),
-            RIG_ORIGIN,
+            origin,
             RIG_SCALE,
             expression=plan.expression,
             headband=plan.headband,
             t=t,
             mirror=plan.mirror,
             head_turn=_head_turn(section_text),
-            hand_lift=_hand_lift(t, start),
         )
 
     for src in plan.light_sources:

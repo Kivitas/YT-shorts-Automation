@@ -12,12 +12,14 @@ import autoshorts.longform.beats as beats
 import autoshorts.longform.sprites as sprites
 from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
 from autoshorts.longform.beats import (
+    LYING_POSES,
     PALETTE,
     POSE_CYCLE,
+    RIG_ORIGIN,
     SPHERE_CENTRE,
     BeatPlan,
+    _choose_gesture,
     _entrance_start,
-    _hand_lift,
     _head_turn,
     _split_sentences,
     draw_beat,
@@ -25,6 +27,7 @@ from autoshorts.longform.beats import (
 )
 from autoshorts.longform.props import PROP_NAMES
 from autoshorts.longform.rig import EXPRESSIONS, POSES
+from autoshorts.longform.sprite_rig import wrist_offset
 
 FRAME = (1920, 1080)
 
@@ -87,9 +90,36 @@ def test_phone_adds_blue_light_source() -> None:
     assert plan.light_sources[0].color == PALETTE.blue
 
 
+def test_mood_rules_pick_body_position_and_expression() -> None:
+    bed = plan_beat(0, "H", "I went to bed late.", "host", False)
+    assert bed.pose == "sleep_bed" and bed.expression == "tired"
+
+    prone = plan_beat(0, "H", "Sleep on your stomach.", "host", False)
+    assert prone.pose == "lie_bed_prone" and prone.expression == "tired"
+
+    phone = plan_beat(0, "H", "Stop the phone scroll.", "host", False)
+    assert phone.pose == "phone_hold" and phone.expression == "tired"
+
+    desk = plan_beat(0, "H", "Deep work at the desk.", "host", False)
+    assert desk.pose == "sit_desk_focus" and desk.expression == "focus"
+
+    chair = plan_beat(0, "H", "Sit down in the chair.", "host", False)
+    assert chair.pose == "sit_chair"
+
+    fail = plan_beat(0, "H", "You will fail again.", "host", False)
+    assert fail.pose == "slump" and fail.expression == "worried"
+
+    win = plan_beat(0, "H", "A better new habit wins.", "host", False)
+    assert win.pose == "fist_up" and win.expression == "happy"
+
+    start = plan_beat(0, "H", "Start today.", "host", False)
+    assert start.expression == "determined"
+
+
 def test_keyword_rules_pick_expected_props_and_poses() -> None:
     couch = plan_beat(0, "H", "I feel tired on the couch.", "host", False)
     assert "couch" in _names(couch) and couch.pose == "slump_couch"
+    assert couch.expression == "tired"
 
     bag = plan_beat(0, "H", "Time to punch the bag.", "host", False)
     assert "heavy_bag" in _names(bag) and bag.pose == "box_punch"
@@ -107,7 +137,7 @@ def test_planned_names_and_poses_exist_in_libraries() -> None:
 
     assert all(prop.name in PROP_NAMES for prop in plan.props)
     assert plan.pose in POSES
-    assert plan.gesture in POSES
+    assert plan.gesture is None or plan.gesture in POSES
     assert plan.expression in EXPRESSIONS
 
 
@@ -125,24 +155,67 @@ def test_look_narration_gets_point_up_gesture() -> None:
 
 
 def test_gesture_rules_follow_keywords_in_priority_order() -> None:
-    assert plan_beat(1, "H", "You can do this.", "host", False).gesture == "gesture_open_hands"
-    assert plan_beat(1, "H", "Maybe not today.", "host", False).gesture == "gesture_shrug"
-    assert plan_beat(1, "H", "I am not sure.", "host", False).gesture == "gesture_shrug"
+    # Index 0 is the stand pose, which takes gestures.
+    assert plan_beat(0, "H", "You can do this.", "host", False).gesture == "gesture_open_hands"
+    assert plan_beat(0, "H", "Maybe the rain stops.", "host", False).gesture == "gesture_shrug"
+    # "not" sets the slump mood, so these two sentences only reach the shrug rule directly.
+    assert _choose_gesture({"maybe"}, "maybe") == "gesture_shrug"
+    assert _choose_gesture({"i", "am", "not", "sure"}, "i am not sure.") == "gesture_shrug"
     # "look" outranks "you" because the point rule is checked first.
-    assert plan_beat(1, "H", "Look, you can see it.", "host", False).gesture == "gesture_point_up"
-    plain = plan_beat(1, "H", "Nothing special here.", "host", False)
-    assert plain.gesture is None and plain.pose == POSE_CYCLE[1]
+    assert plan_beat(0, "H", "Look, you can see it.", "host", False).gesture == "gesture_point_up"
+    plain = plan_beat(0, "H", "Nothing special here.", "host", False)
+    assert plain.gesture is None and plain.pose == POSE_CYCLE[0]
 
 
-def test_head_turn_and_hand_lift_helpers() -> None:
+def test_gesture_does_not_replace_seated_lying_or_desk_poses() -> None:
+    # Words that would pick a gesture must not stand a seated, lying or desk figure up.
+    bed = plan_beat(0, "H", "You will sleep in bed tonight.", "host", False)
+    assert bed.pose == "sleep_bed" and bed.gesture is None
+    chair = plan_beat(0, "H", "Look, you can sit in the chair.", "host", False)
+    assert chair.pose == "sit_chair" and chair.gesture is None
+    desk = plan_beat(0, "H", "You should focus at the desk.", "host", False)
+    assert desk.pose == "sit_desk_focus" and desk.gesture is None
+    phone = plan_beat(0, "H", "You scroll the phone.", "host", False)
+    assert phone.pose == "phone_hold" and phone.gesture is None
+
+
+def test_head_turn_helper() -> None:
     assert _head_turn("Light from the window.") == 0.5
     assert _head_turn("Still in bed.") == 0.5
     assert _head_turn("Nothing about that here.") == -0.5
 
-    assert _hand_lift(2.0, 2.0) == 0.0
-    assert abs(_hand_lift(2.15, 2.0) - 0.5) < 1e-9
-    assert abs(_hand_lift(2.3, 2.0) - 1.0) < 1e-9
-    assert _hand_lift(9.0, 2.0) == 1.0
+
+def test_figure_joints_raise_no_arm_by_default() -> None:
+    from autoshorts.longform.beats import _figure_joints
+
+    plan = plan_beat(0, "H", "Stand tall.", "host", False)
+    joints = _figure_joints(plan, 0.0, "Stand tall.", 5.0)
+    assert joints["r_upper"] == POSES["stand"]["r_upper"]
+    assert joints["r_lower"] == POSES["stand"]["r_lower"]
+
+
+def test_bed_lying_figure_is_over_the_bed_and_desk_monitor_is_at_the_hand() -> None:
+    from autoshorts.longform.beats import (
+        BED_SCALE,
+        BED_XY,
+        DESK_MONITOR_SCALE,
+        FIGURE_SPRITE_SCALE,
+        LYING_HIP,
+    )
+
+    plan = plan_beat(0, "H", "I went to bed late.", "host", False)
+    assert plan.pose in LYING_POSES and plan.mirror is False
+    bed = next(prop for prop in plan.props if prop.name == "bed")
+    assert (bed.x, bed.y, bed.scale) == (*BED_XY, BED_SCALE)
+    # The pillow is at the bed's left end; the lying hip sits to its right, so the head lands on it.
+    assert LYING_HIP[0] > BED_XY[0] + 100 and LYING_HIP[1] > BED_XY[1] + 80
+
+    desk = plan_beat(0, "H", "Deep work at the desk.", "host", False)
+    monitor = next(prop for prop in desk.props if prop.name == "desk_monitor")
+    hand_dx, hand_dy = wrist_offset(POSES["sit_desk_focus"], FIGURE_SPRITE_SCALE, "l")
+    hand = (RIG_ORIGIN[0] + hand_dx, RIG_ORIGIN[1] + hand_dy)
+    assert monitor.scale == DESK_MONITOR_SCALE
+    assert ((monitor.x - hand[0]) ** 2 + (monitor.y - hand[1]) ** 2) ** 0.5 <= 120.0
 
 
 def test_sentence_split_keeps_order() -> None:

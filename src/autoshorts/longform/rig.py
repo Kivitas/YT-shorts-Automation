@@ -86,17 +86,36 @@ POSES: dict[str, dict[str, float]] = {
         "r_upper": 105,
         "r_lower": 115,
     },
+    # Lying on the back: the torso is horizontal with the head on the pillow side (screen
+    # left, -90). Legs are straight and together toward screen right (+90). Both arms rest
+    # along the body, the near one on the lower edge and the far one on the upper edge.
     "sleep_bed": {
-        "torso": 90,
-        "head": 90,
-        "l_upper": 100,
-        "l_lower": 110,
-        "r_upper": 80,
-        "r_lower": 95,
-        "l_thigh": -88,
-        "l_shin": -92,
-        "r_thigh": -88,
-        "r_shin": -86,
+        "torso": -90,
+        "head": -90,
+        "l_upper": 80,
+        "l_lower": 90,
+        "r_upper": 100,
+        "r_lower": 90,
+        "l_thigh": 90,
+        "l_shin": 90,
+        "r_thigh": 90,
+        "r_shin": 90,
+    },
+    # Lying face down: same body line as sleep_bed, head on the pillow side with the back of
+    # the head showing (back_of_head hides the face). Both elbows are bent, the forearms come
+    # forward under the chin.
+    "lie_bed_prone": {
+        "torso": -90,
+        "head": -90,
+        "back_of_head": 1,
+        "l_upper": 0,
+        "l_lower": -100,
+        "r_upper": 15,
+        "r_lower": -105,
+        "l_thigh": 90,
+        "l_shin": 90,
+        "r_thigh": 90,
+        "r_shin": 90,
     },
     "slump_couch": {
         "torso": 18,
@@ -200,29 +219,75 @@ POSES: dict[str, dict[str, float]] = {
         "r_thigh": 12,
         "r_shin": 10,
     },
+    # Seated: upright torso, thighs horizontal, shins hanging, hands resting on the lap.
+    # drop lowers the hip to seat height so the feet reach the floor.
     "sit_chair": {
-        "torso": 6,
+        "torso": 0,
         "head": 2,
-        "l_upper": 50,
-        "l_lower": 105,
-        "r_upper": 40,
-        "r_lower": 100,
-        "l_thigh": 92,
-        "l_shin": 2,
-        "r_thigh": 88,
+        "l_upper": 5,
+        "l_lower": 25,
+        "r_upper": -5,
+        "r_lower": -25,
+        "l_thigh": 90,
+        "l_shin": 0,
+        "r_thigh": 90,
         "r_shin": 0,
+        "drop": 50,
     },
-    "lean_wall": {
-        "torso": 16,
-        "head": 8,
-        "l_upper": 95,
-        "l_lower": 150,
-        "r_upper": -20,
-        "r_lower": -40,
-        "l_thigh": 18,
+    # Seated at a desk: torso leans forward about 15 degrees, the near forearm reaches
+    # forward to the desk top, the far forearm rests lower.
+    "sit_desk_focus": {
+        "torso": 15,
+        "head": 12,
+        "l_upper": 20,
+        "l_lower": 90,
+        "r_upper": 15,
+        "r_lower": 70,
+        "l_thigh": 90,
+        "l_shin": 0,
+        "r_thigh": 90,
+        "r_shin": 0,
+        "drop": 50,
+    },
+    # Standing, near arm bent with the elbow out and the phone hand at the side of the face.
+    "phone_hold": {
+        "torso": 0,
+        "head": -4,
+        "l_upper": -120,
+        "l_lower": 120,
+        "r_upper": 6,
+        "r_lower": 2,
+        "l_thigh": -8,
         "l_shin": -6,
-        "r_thigh": 6,
-        "r_shin": 8,
+        "r_thigh": 8,
+        "r_shin": 6,
+    },
+    # Standing with the shoulders rolled forward: torso 20 degrees, head dropped, arms hanging.
+    "slump": {
+        "torso": 20,
+        "head": 40,
+        "l_upper": 10,
+        "l_lower": 6,
+        "r_upper": 4,
+        "r_lower": 2,
+        "l_thigh": -8,
+        "l_shin": -6,
+        "r_thigh": 8,
+        "r_shin": 6,
+    },
+    # Standing with the right shoulder against a wall on screen right: torso leans 8 degrees,
+    # the right leg is crossed in front of the planted left leg.
+    "lean_wall": {
+        "torso": 8,
+        "head": 6,
+        "l_upper": -15,
+        "l_lower": -30,
+        "r_upper": 4,
+        "r_lower": 2,
+        "l_thigh": -4,
+        "l_shin": -2,
+        "r_thigh": 14,
+        "r_shin": -18,
     },
     "hug_knees": {
         "torso": 25,
@@ -284,13 +349,14 @@ POSES: dict[str, dict[str, float]] = {
         "r_upper": 65,
         "r_lower": 95,
     },
+    # Shrug: elbows bent out and slightly up, palms turned up beside the body.
     "gesture_shrug": {
         "torso": 0,
         "head": 6,
-        "l_upper": -40,
-        "l_lower": -100,
-        "r_upper": 40,
-        "r_lower": 100,
+        "l_upper": -55,
+        "l_lower": -115,
+        "r_upper": 55,
+        "r_lower": 115,
     },
 }
 
@@ -318,6 +384,8 @@ def _expr(**overrides: float) -> dict[str, float]:
 EXPRESSIONS: dict[str, dict[str, float]] = {
     "neutral": _expr(curve=0.0),
     "exhausted": _expr(lid=0.55, brow=-10.0, curve=-0.6, bags=1, look=-0.3),
+    "tired": _expr(lid=0.5, brow=-6.0, curve=0.0, bags=1, look=-0.2),
+    "focus": _expr(lid=0.08, brow=0.0, curve=0.0, look=0.3),
     "grit": _expr(brow=28.0, teeth=1, vein=1),
     "shadow_smirk": _expr(lid=0.35, brow=14.0, glow=1, smirk=1, look=0.4),
     "happy": _expr(squint=1, curve=1.0, open=1.0, blush=1, brow=-8.0),
@@ -339,6 +407,7 @@ def _resolve_pose(name: str | dict[str, float]) -> dict[str, float]:
     """Merge a named pose (or a joint dict) over the stand defaults so every joint has a value."""
     joints = {k: 0.0 for k in _STAND_KEYS}
     joints["head_turn"] = 0.0
+    joints["back_of_head"] = 0.0
     joints.update({k: float(v) for k, v in POSES["stand"].items()})
     source = POSES[name] if isinstance(name, str) else name
     joints.update({k: float(v) for k, v in source.items()})
@@ -356,7 +425,7 @@ def animate_pose(pose_name_a: str, pose_name_b: str, p: float, t: float = 0.0) -
     a = _resolve_pose(pose_name_a if pose_name_a in POSES else "stand")
     b = _resolve_pose(pose_name_b if pose_name_b in POSES else "stand")
     e = ease_in_out_sine(p)
-    joints = {k: a[k] + (b[k] - a[k]) * e for k in (*_STAND_KEYS, "head_turn")}
+    joints = {k: a[k] + (b[k] - a[k]) * e for k in (*_STAND_KEYS, "head_turn", "back_of_head")}
     joints["head"] += 1.5 * math.sin(2.0 * math.pi * t / 3.1)
     return joints
 
@@ -615,7 +684,9 @@ def _render(
         band = [hp(-0.69, -0.72), hp(0.69, -0.72), hp(0.86, -0.5), hp(-0.86, -0.5)]
         _outlined_poly(draw, band, HEADBAND, ow * 0.7)
 
-    _draw_face(draw, layer, hp, R, expr)
+    # A back_of_head pose turns the head away from the viewer, so no face is drawn.
+    if float(joints.get("back_of_head", 0.0)) < 0.5:
+        _draw_face(draw, layer, hp, R, expr)
 
     # Near arm and hand sit over the torso and head.
     _limb(draw, arm_l, ARM_W * s, CREAM, ow)

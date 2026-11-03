@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 import autoshorts.longform.sprites as sprites
-from autoshorts.longform.sprite_rig import CANVAS_SIZE, PART_NAMES, draw_sprite_rig
+from autoshorts.longform.sprite_rig import CANVAS_SIZE, PART_NAMES, draw_sprite_rig, wrist_offset
 
 # Solid boxes (x0, y0, x1, y1) per part, on the left side of the figure so that the
 # midline split keeps them whole.
@@ -94,22 +94,57 @@ def test_rotated_arm_changes_pixels(tmp_path: Path, use_sprite_dir) -> None:
     assert raised.tobytes() != rest.tobytes()
 
 
-def test_missing_expression_variant_falls_back_to_neutral(tmp_path: Path, use_sprite_dir) -> None:
+def test_expressions_show_procedurally_without_variant_files(
+    tmp_path: Path, use_sprite_dir
+) -> None:
     use_sprite_dir(_write_parts(tmp_path / "full"))
     neutral = _draw({}, expression="neutral")
     grit = _draw({}, expression="grit")
-    assert grit.tobytes() == neutral.tobytes()
+    happy = _draw({}, expression="happy")
+    assert grit.tobytes() != neutral.tobytes()
+    assert happy.tobytes() != grit.tobytes()
 
 
-def test_expression_variant_replaces_neutral_face_part(tmp_path: Path, use_sprite_dir) -> None:
+def test_complete_variant_set_replaces_procedural_face(tmp_path: Path, use_sprite_dir) -> None:
     folder = _write_parts(tmp_path / "full")
     use_sprite_dir(folder)
-    neutral = _draw({}, expression="happy")
+    procedural = _draw({}, expression="happy")
+    for name in ("eyes", "eyebrows", "mouth"):
+        variant = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+        variant.paste((255, 255, 255, 255), (300, 300, 330, 330))
+        variant.save(folder / f"{name}_happy.png")
+    use_sprite_dir(folder)  # reset the loader cache so the new variants are read
+    assert _draw({}, expression="happy").tobytes() != procedural.tobytes()
+
+
+def test_partial_variant_set_is_ignored(tmp_path: Path, use_sprite_dir) -> None:
+    folder = _write_parts(tmp_path / "full")
+    use_sprite_dir(folder)
+    procedural = _draw({}, expression="happy")
     variant = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
     variant.paste((255, 255, 255, 255), (300, 300, 330, 330))
     variant.save(folder / "mouth_happy.png")
-    use_sprite_dir(folder)  # reset the loader cache so the new variant is read
-    assert _draw({}, expression="happy").tobytes() != neutral.tobytes()
+    use_sprite_dir(folder)
+    assert _draw({}, expression="happy").tobytes() == procedural.tobytes()
+
+
+def test_back_of_head_hides_the_face(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    faced = _draw({}, expression="happy")
+    back = _draw({"back_of_head": 1.0}, expression="happy")
+    assert back.tobytes() != faced.tobytes()
+    # With the face hidden, the expression no longer changes the picture.
+    assert _draw({"back_of_head": 1.0}, expression="grit").tobytes() == back.tobytes()
+
+
+def test_wrist_offset_follows_the_arm_drop_and_scale() -> None:
+    hanging = wrist_offset({}, 1.0, "l")
+    dropped = wrist_offset({"drop": 10.0}, 1.0, "l")
+    assert abs((dropped[1] - hanging[1]) - 10.0 * 2.4) < 1e-6
+    raised = wrist_offset({"l_upper": -90.0, "l_lower": -90.0}, 1.0, "l")
+    assert raised[0] < hanging[0]
+    half = wrist_offset({"l_upper": -90.0, "l_lower": -90.0}, 0.5, "l")
+    assert abs(half[0] - raised[0] / 2) < 1e-6
 
 
 def test_mirror_flips_the_figure(tmp_path: Path, use_sprite_dir) -> None:
