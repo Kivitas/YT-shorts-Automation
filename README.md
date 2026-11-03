@@ -327,6 +327,17 @@ Long-Form YouTube URL / Topic Prompt
 
 ---
 
+## Longform Visual Pipeline (Satori Sprites + GSAP)
+
+Longform 16:9 videos are drawn frame by frame in Python (PIL) and use two assets pipelines:
+
+- **Satori sprites:** `remotion/scripts/build-assets.mjs` renders SVG character parts, props and the navy background (`remotion/assets-src/`) to PNG in `assets/longform/sprites/`. The scene composer uses these when present and falls back to PIL drawing when they are missing. Rebuild with `./start.sh --build-assets` or `start.bat --build-assets`, or run `npm run build:assets` inside `remotion/`.
+- **GSAP:** the `gsap` package (pinned in `remotion/package.json`) drives the Remotion scenes (title card, lower third, stat card, caption pop) from the frame number. The Python renderer samples GSAP timelines through Node (`remotion/scripts/gsap-sample.mjs`, `src/autoshorts/longform/gsap_bridge.py`); if Node is missing it logs a warning and uses the built-in formula.
+- **Decisions:** clip, format, layout and caption choices are recorded with their job ID, source and reason (`src/autoshorts/decider/records.py`). Layout and caption come from `src/autoshorts/decider/style.py`, which respects an explicit user choice first.
+- **Claude Code skills:** GSAP's official AI skills are in `.claude/skills/` (MIT, see `LICENSE-gsap-skills.txt`), so Claude Code agents in this repo use correct GSAP patterns.
+
+The launchers install the Remotion packages and build the sprites on first run.
+
 ## Quick Start (Windows One-Click Launcher)
 
 > [!NOTE]

@@ -273,8 +273,8 @@ POSES: dict[str, dict[str, float]] = {
     "gesture_point_up": {
         "torso": 2,
         "head": 4,
-        "r_upper": 150,
-        "r_lower": 176,
+        "r_upper": 120,
+        "r_lower": 150,
     },
     "gesture_open_hands": {
         "torso": 0,

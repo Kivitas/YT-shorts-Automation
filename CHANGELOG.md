@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Launchers**: `start.bat` and `start.sh` install the Remotion packages (including satori) and build the sprites when missing; `--build-assets` forces a rebuild.
 - **GSAP skills** installed in `.claude/skills/` for AI agents working in this repo (MIT, see `LICENSE-gsap-skills.txt`).
 - **Decisions**: `decider/records.py` records each decision with its job ID and reason; silent fallbacks now log.
+- **Satori figure**: `longform/sprite_rig.py` draws the character from the satori parts with joint rotation. Limbs are padded before rotating so nothing is clipped; the raised-hand pose is lowered so it stays in frame.
+- **Style decider**: `decider/style.py` chooses layout and caption (short clips get the `kurz` preset), respecting an explicit user choice first.
+- **GSAP in Remotion**: the title card, lower third, stat card and caption pop run on GSAP timelines keyed to the frame.
+- **GSAP from Python**: `longform/gsap_bridge.py` samples GSAP timelines through Node for the camera push-in.
 
 ### Fixed
 

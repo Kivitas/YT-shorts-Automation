@@ -117,3 +117,30 @@ def test_mirror_flips_the_figure(tmp_path: Path, use_sprite_dir) -> None:
     plain = _draw({"l_upper": -60.0})
     mirrored = _draw({"l_upper": -60.0}, mirror=True)
     assert mirrored.tobytes() != plain.tobytes()
+
+
+def test_angle_zero_keeps_placement_and_scale(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    img = _draw({})
+    # The torso (index 3) is solid colour (100, 200, 120); its centre maps to output (150, 240).
+    assert img.getpixel((150, 240)) == (100, 200, 120)
+
+
+def test_rotated_limb_tip_is_not_clipped_to_the_art_box(tmp_path: Path, use_sprite_dir) -> None:
+    use_sprite_dir(_write_parts(tmp_path / "full"))
+    size = (800, 1200)
+    origin = (400.0, 700.0)
+    # At scale 1 the 400x800 figure box sits at x 200..600 and y 230..1030 in this output.
+    box = (200, 230, 600, 1030)
+
+    def pixels_outside_box(joints: dict[str, float]) -> int:
+        img = Image.new("RGB", size, (0, 0, 0))
+        assert draw_sprite_rig(img, joints, origin, 1.0) is True
+        outside = img.copy()
+        outside.paste((0, 0, 0), box)
+        mask = outside.convert("L").point(lambda v: 255 if v else 0)
+        return mask.histogram()[255]
+
+    assert pixels_outside_box({}) == 0
+    # The raised left forearm reaches past the figure's left edge (x < 200 in this output).
+    assert pixels_outside_box({"l_upper": -90.0, "l_lower": -90.0}) > 0

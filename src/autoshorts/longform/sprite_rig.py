@@ -33,6 +33,8 @@ from autoshorts.longform.sprites import load_sprite
 
 CANVAS_SIZE = (400, 800)
 MIDLINE_X = 200.0
+# Transparent margin around the figure canvas, so limbs rotated past the 400x800 art box stay whole.
+FIGURE_MARGIN = 400
 
 # Every part must exist; a missing one makes draw_sprite_rig return False.
 PART_NAMES = (
@@ -80,26 +82,48 @@ def _to_world(point: _Point, pivot: _Point, world: _Point, phi: float) -> _Point
     return (world[0] + c * vx - s * vy, world[1] + s * vx + c * vy)
 
 
-def _place(part: Image.Image, pivot: _Point, world: _Point, phi: float) -> Image.Image:
-    """Return ``part`` rotated by ``phi`` about ``pivot`` and moved so the pivot lands on ``world``.
+def _rotation_radius(part: Image.Image, pivot: _Point) -> int:
+    """Smallest radius about ``pivot`` that holds every opaque pixel of ``part`` at any rotation."""
+    box = part.getbbox()
+    if box is None:
+        return 0
+    x0, y0, x1, y1 = box
+    far_x = max(abs(x0 - pivot[0]), abs(x1 - pivot[0]))
+    far_y = max(abs(y0 - pivot[1]), abs(y1 - pivot[1]))
+    return math.ceil(math.hypot(far_x, far_y))
 
-    Done as a single inverse AFFINE transform, so each part is resampled once.
+
+def _place(
+    part: Image.Image, pivot: _Point, world: _Point, phi: float
+) -> tuple[Image.Image, tuple[int, int]]:
+    """Return ``part`` rotated by ``phi`` about ``pivot``, with the pivot moved onto ``world``.
+
+    The rotation runs on a square layer padded around the pivot, so no rotated pixel is
+    clipped. Returns the layer and its top-left corner in figure coordinates. Each part is
+    still resampled once, by a single inverse AFFINE transform.
     """
     if phi == 0.0 and pivot == world:
-        return part
+        return part, (0, 0)
+    radius = _rotation_radius(part, pivot)
+    # Integer top-left of the layer; the fractional part of ``world`` stays in the coefficients.
+    ox = math.floor(world[0]) - radius
+    oy = math.floor(world[1]) - radius
+    size = 2 * radius + 1
     a = math.radians(phi)
     c, s = math.cos(a), math.sin(a)
+    # Layer pixel (X, Y) is figure pixel (X + ox, Y + oy), so the inverse map is shifted by (ox, oy).
     coeffs = (
         c,
         s,
-        pivot[0] - c * world[0] - s * world[1],
+        pivot[0] - c * world[0] - s * world[1] + c * ox + s * oy,
         -s,
         c,
-        pivot[1] + s * world[0] - c * world[1],
+        pivot[1] + s * world[0] - c * world[1] - s * ox + c * oy,
     )
-    return part.transform(
-        part.size, Image.Transform.AFFINE, coeffs, resample=Image.Resampling.BICUBIC
+    layer = part.transform(
+        (size, size), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.BICUBIC
     )
+    return layer, (ox, oy)
 
 
 def _half(part: Image.Image, side: str) -> Image.Image:
@@ -137,6 +161,15 @@ def _load_parts(expression: str) -> dict[str, Image.Image] | None:
     for name in EXPRESSION_PARTS:
         parts[name] = _face_part(name, expression, parts[name])
     return parts
+
+
+def _composite_at(dest: Image.Image, layer: Image.Image, left: int, top: int) -> None:
+    """Alpha-composite ``layer`` onto ``dest`` with its top-left at (``left``, ``top``), clipping to ``dest``."""
+    x0, y0 = max(0, -left), max(0, -top)
+    x1, y1 = min(layer.width, dest.width - left), min(layer.height, dest.height - top)
+    if x1 <= x0 or y1 <= y0:
+        return
+    dest.alpha_composite(layer.crop((x0, y0, x1, y1)), (left + x0, top + y0))
 
 
 def _composite(img: Image.Image, layer: Image.Image) -> None:
@@ -185,10 +218,15 @@ def draw_sprite_rig(
     turn = max(-1.0, min(1.0, joint("head_turn")))
     drop_px = joint("drop") * CANVAS_PX_PER_RIG_UNIT * scale
 
-    canvas = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
+    # The figure is drawn on a canvas padded by FIGURE_MARGIN on each side; figure coordinates
+    # are shifted by that margin.
+    canvas_w = CANVAS_SIZE[0] + 2 * FIGURE_MARGIN
+    canvas_h = CANVAS_SIZE[1] + 2 * FIGURE_MARGIN
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
     def paint(part: Image.Image, pivot: _Point, world: _Point, phi: float) -> None:
-        canvas.alpha_composite(_place(part, pivot, world, phi))
+        layer, (left, top) = _place(part, pivot, world, phi)
+        _composite_at(canvas, layer, left + FIGURE_MARGIN, top + FIGURE_MARGIN)
 
     # Legs: the joint dict holds absolute angles, so a part's rotation is -(joint - rest),
     # because the limb rest direction is measured from straight down.
@@ -226,12 +264,12 @@ def draw_sprite_rig(
 
     # Scale the whole figure once, anchoring the canvas hip on the output origin.
     ox, oy = origin
-    width = max(1, round(CANVAS_SIZE[0] * scale))
-    height = max(1, round(CANVAS_SIZE[1] * scale))
+    width = max(1, round(canvas_w * scale))
+    height = max(1, round(canvas_h * scale))
     scaled = canvas.resize((width, height), Image.Resampling.LANCZOS)
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    left = round(ox - HIP[0] * scale)
-    top = round(oy + drop_px - HIP[1] * scale)
+    left = round(ox - (HIP[0] + FIGURE_MARGIN) * scale)
+    top = round(oy + drop_px - (HIP[1] + FIGURE_MARGIN) * scale)
     layer.paste(scaled, (left, top))
     if mirror:
         layer = layer.transform(
