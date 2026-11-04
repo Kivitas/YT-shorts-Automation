@@ -48,6 +48,12 @@ scheduler:
   quota_reset_timezone: "America/Los_Angeles" # YouTube quota resets midnight Pacific Time
   prevent_sleep: true              # Win32 SetThreadExecutionState while slots are pending
   catch_up_policy: "reschedule_respect_rate_limit" # Skip missed slots on PC wake; do not burst
+  originality:                     # Guardrails vs YouTube "inauthentic content" enforcement
+    enabled: true
+    max_daily_uploads: 12          # Stricter than daily_upload_cap; the lower of the two applies
+    max_title_similarity: 0.7      # Flag titles this similar (word overlap) to recent uploads
+    similarity_lookback: 30        # How many recent uploads to compare against
+    block_similar: false           # true = push near-duplicates back ~4h instead of only flagging
 
 quota:
   upload_bucket_daily: 100         # Dedicated videos.insert daily quota bucket (calls/day)
@@ -151,6 +157,13 @@ retention:
   work_max_total_gb: 20            # Max total disk size (GB) allowed for work/ before pruning oldest
   keep_last_n: 10                  # Always retain the N most recent run folders regardless of age
   dry_run: true                    # Safe default: simulate cleanup. Set dry_run: false to enable live deletion.
+  # Retention for rendered files in output/ (*_master.mp4, *_preview.mp4). Off by default.
+  # Files are moved to the Recycle Bin, never permanently deleted. Jobs not yet
+  # uploaded/verified are always kept. Only the expiry helper reads these fields;
+  # nothing runs it automatically.
+  output_enabled: false
+  output_max_age_days: 14          # Select output files older than this many days
+  output_max_total_gb: 20          # Then delete oldest remaining files until output/ is at or under this size (GB)
 
 pipeline:
   concurrency: 3                   # Max concurrent rendering and processing workers

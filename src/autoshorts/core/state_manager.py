@@ -641,6 +641,23 @@ class StateManager:
             finally:
                 conn.close()
 
+    def get_recent_slot_titles(self, limit: int = 30, exclude_job_id: str | None = None) -> list[str]:
+        """Return titles of the most recently queued/uploaded slots (newest first)."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT title FROM scheduler_queue
+                    WHERE job_id != ? AND status IN ('SCHEDULED', 'UPLOADING', 'COMPLETED')
+                    ORDER BY created_at DESC LIMIT ?;
+                    """,
+                    (exclude_job_id or "", limit),
+                ).fetchall()
+                return [str(r[0]) for r in rows if r[0]]
+            finally:
+                conn.close()
+
     def get_slot_video_id(self, job_id: str) -> str | None:
         """Return the YouTube video ID recorded for a job's scheduler slot, if any."""
         with self._lock:

@@ -26,9 +26,12 @@ credentials*.json
 
 # Runtime Data & Storage
 state.db
+state.db-wal
+state.db-shm
 data/
 work/
 output/
+scratch/
 inbox/
 logs/
 *.log

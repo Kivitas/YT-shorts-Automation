@@ -20,6 +20,7 @@ from autoshorts.core.exceptions import AutoShortsError, QuotaExhaustedError
 from autoshorts.core.models import JobStatus, UploadResult, resolve_verification
 from autoshorts.core.state_manager import StateManager
 from autoshorts.quota.quota_tracker import QuotaTracker
+from autoshorts.scheduler.originality import find_similar_title, resolve_altered_content
 from autoshorts.scheduler.power_management import allow_system_sleep, prevent_system_sleep
 from autoshorts.scheduler.slot_generator import SlotGenerator
 from autoshorts.uploader.errors import QuotaExceededError
@@ -152,7 +153,15 @@ class SpreadScheduler:
     def check_daily_cap(self, date_pt: str | None = None) -> bool:
         """Return True if uploads on current Pacific Time date are < daily_upload_cap (50)."""
         completed = self.quota_tracker.get_completed_uploads_today(date_pt)
-        return completed < self.config.daily_upload_cap
+        return completed < self.effective_daily_cap()
+
+    def effective_daily_cap(self) -> int:
+        """Daily cap after applying the originality budget (the stricter limit wins)."""
+        cap = self.config.daily_upload_cap
+        orig = getattr(self.config, "originality", None)
+        if orig is not None and orig.enabled:
+            cap = min(cap, orig.max_daily_uploads)
+        return cap
 
     def is_within_active_window(self, dt: datetime | None = None) -> bool:
         """Return True if given timestamp falls within active daytime window."""
@@ -179,6 +188,7 @@ class SpreadScheduler:
         Returns the assigned scheduled_time.
         """
         now = self.clock()
+        similar_delay = self._originality_delay(job_id, title)
         if target_time is None:
             pending = self.state_manager.get_pending_scheduled_slots()
             if pending:
@@ -198,6 +208,8 @@ class SpreadScheduler:
                 scheduled_time = self.slot_generator.next_slot_after(now)
         else:
             scheduled_time = target_time
+        if similar_delay:
+            scheduled_time = scheduled_time + similar_delay
 
         jitter_min = int((self.config.max_gap_minutes + self.config.min_gap_minutes) / 2)
         self.state_manager.enqueue_for_upload(
@@ -212,6 +224,31 @@ class SpreadScheduler:
         )
         logger.info(f"Enqueued job {job_id} for upload at {scheduled_time.isoformat()}.")
         return scheduled_time
+
+    def _originality_delay(self, job_id: str, title: str) -> timedelta | None:
+        """Flag a near-duplicate title; return a delay when ``block_similar`` is enabled."""
+        orig = getattr(self.config, "originality", None)
+        if orig is None or not orig.enabled:
+            return None
+        recent = self.state_manager.get_recent_slot_titles(
+            limit=orig.similarity_lookback, exclude_job_id=job_id
+        )
+        match = find_similar_title(title, recent, orig.max_title_similarity)
+        if match is None:
+            return None
+        logger.warning(
+            "Job %s title %r is %.0f%% similar to recent upload %r (repetitive-content risk).",
+            job_id, title, match[1] * 100, match[0],
+        )
+        job = self.state_manager.get_job(job_id)
+        if job is not None:
+            job.diagnostics["originality_flag"] = {
+                "similar_to": match[0],
+                "score": round(match[1], 3),
+            }
+            self.state_manager.save_job(job)
+        # Push the duplicate a few hours back so similar posts are not published back-to-back.
+        return timedelta(hours=4) if orig.block_similar else None
 
     # -------------------------------------------------------------------------
     # Controls (Pause, Resume, Upload Now)
@@ -469,9 +506,7 @@ class SpreadScheduler:
         category_id = getattr(job_obj, "category_id", None) or getattr(
             upload_cfg, "category_id", "24"
         )
-        altered_content = getattr(job_obj, "altered_content", None)
-        if altered_content is None:
-            altered_content = getattr(upload_cfg, "altered_content", False)
+        altered_content = resolve_altered_content(job_obj, upload_cfg)
         publish_at = getattr(job_obj, "publish_at", None) or getattr(upload_cfg, "publish_at", None)
         playlist_id = getattr(job_obj, "playlist_id", None) or getattr(
             upload_cfg, "playlist_id", None

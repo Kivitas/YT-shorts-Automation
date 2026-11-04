@@ -19,6 +19,7 @@ from autoshorts.core.models import (
 )
 from autoshorts.media.ffmpeg_tools import check_delivery
 from autoshorts.pipeline.common import _upload_succeeded
+from autoshorts.scheduler.originality import resolve_altered_content
 from autoshorts.uploader.description_builder import (
     MAX_TAGS_SHORTS,
     build_short_description,
@@ -167,9 +168,7 @@ class UploadMixin:
         default_language = getattr(job, "default_language", None) or getattr(
             upload_cfg, "default_language", "en"
         )
-        altered_content = getattr(job, "altered_content", None)
-        if altered_content is None:
-            altered_content = getattr(upload_cfg, "altered_content", False)
+        altered_content = resolve_altered_content(job, upload_cfg)
         custom_tags = getattr(job, "custom_tags", None) or getattr(upload_cfg, "custom_tags", [])
         auto_pin_comment = getattr(job, "auto_pin_comment", None)
         if auto_pin_comment is None:
@@ -402,9 +401,7 @@ class UploadMixin:
 
         upload_cfg = getattr(self.config, "upload", None)
         category_id = getattr(job, "category_id", None) or getattr(upload_cfg, "category_id", "24")
-        altered_content = getattr(job, "altered_content", None)
-        if altered_content is None:
-            altered_content = getattr(upload_cfg, "altered_content", False)
+        altered_content = resolve_altered_content(job, upload_cfg)
         playlist_id = getattr(job, "playlist_id", None) or getattr(upload_cfg, "playlist_id", None)
         auto_pin_comment = getattr(job, "auto_pin_comment", None)
         if auto_pin_comment is None:

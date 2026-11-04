@@ -107,6 +107,8 @@ class UploadConfig(BaseModel):
     category_id: str = "24"
     default_language: str = "en"
     altered_content: bool = False
+    # "auto" discloses when the job records realistic synthetic media; see scheduler/originality.py
+    synthetic_disclosure: Literal["auto", "always", "never"] = "auto"
     custom_tags: list[str] = Field(default_factory=list)
     auto_pin_comment: bool = False
     pin_comment_template: str = "📌 Watch the full video by {channel}: {video_url}"
@@ -141,6 +143,21 @@ class UploadConfig(BaseModel):
         return data
 
 
+class OriginalityConfig(BaseModel):
+    """Channel-level guardrails against mass-produced / repetitive output."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    # Effective daily cap is min(scheduler.daily_upload_cap, max_daily_uploads).
+    max_daily_uploads: int = Field(default=12, ge=1, le=100)
+    # Titles with content-word overlap at/above this score are flagged as repetitive.
+    max_title_similarity: float = Field(default=0.7, ge=0.1, le=1.0)
+    similarity_lookback: int = Field(default=30, ge=1, le=500)
+    # True: delay near-duplicate titles out of the queue; False: only log and record a flag.
+    block_similar: bool = False
+
+
 class SchedulerConfig(BaseModel):
     """Daily Cap and Persistent Spread Scheduler configuration."""
 
@@ -158,6 +175,7 @@ class SchedulerConfig(BaseModel):
         "reschedule_respect_rate_limit"
     )
     upload: UploadConfig = Field(default_factory=UploadConfig)
+    originality: OriginalityConfig = Field(default_factory=OriginalityConfig)
 
 
 class QuotaConfig(BaseModel):
@@ -272,6 +290,9 @@ class RetentionConfig(BaseModel):
     work_max_total_gb: float = Field(default=20.0, ge=0.0)
     keep_last_n: int = Field(default=10, ge=0)
     dry_run: bool = True
+    output_enabled: bool = False
+    output_max_age_days: int = Field(default=14, ge=0)
+    output_max_total_gb: float = Field(default=20.0, ge=0.0)
 
 
 class CleanupConfig(BaseModel):
