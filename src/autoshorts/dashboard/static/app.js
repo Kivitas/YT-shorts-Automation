@@ -504,6 +504,9 @@ function renderJobs(jobs) {
   const container = document.getElementById("jobs-container");
   if (!container) return;
 
+  // Filter out any jobs that have already been uploaded to YouTube
+  jobs = (jobs || []).filter(j => !(j.youtube_video_id || (j.upload_result && j.upload_result.video_id)));
+
   // Compute category counts
   let countAll = jobs.length;
   let countActive = 0;

@@ -1282,9 +1282,23 @@ def create_app(
         }
 
     @app.get("/api/jobs")
-    async def list_jobs(limit: int = 50) -> dict[str, Any]:
-        """Return list of most recent clipping jobs enriched with SEO copy metadata."""
-        jobs = state_mgr.list_jobs(limit=limit)
+    async def list_jobs(limit: int = 50, include_uploaded: bool = False) -> dict[str, Any]:
+        """Return list of most recent clipping jobs, excluding already-uploaded jobs by default."""
+        all_jobs = state_mgr.list_jobs(limit=limit if include_uploaded else 250)
+        jobs: list[Job] = []
+        for j in all_jobs:
+            yt_id = (
+                j.upload_result.video_id
+                if (j.upload_result and j.upload_result.video_id)
+                else getattr(j, "youtube_video_id", None)
+            )
+            if not yt_id and hasattr(state_mgr, "get_slot_video_id"):
+                yt_id = state_mgr.get_slot_video_id(j.id)
+            if not include_uploaded and yt_id:
+                continue
+            jobs.append(j)
+            if len(jobs) >= limit:
+                break
         return {
             "jobs": [enrich_job_dict(j, cfg) for j in jobs],
         }

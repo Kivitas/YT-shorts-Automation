@@ -650,9 +650,9 @@ class SpreadScheduler:
                         job_id, verified=True, upload_result=result, keep_master_mp4=False
                     )
                     job = self.state_manager.get_job(job_id)
-                    if job and job.status == JobStatus.COMPLETED:
-                        self.state_manager.update_job_status(job_id, JobStatus.CLEANED)
-                    elif job and job.status != JobStatus.CLEANED:
+                    if job:
+                        job.rendered_video_path = None
+                        job.preview_video_path = None
                         job.status = JobStatus.CLEANED
                         self.state_manager.save_job(job)
                     logger.info(f"Post-upload cleanup completed for job {job_id}.")

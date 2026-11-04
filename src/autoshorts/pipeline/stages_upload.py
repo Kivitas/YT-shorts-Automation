@@ -355,6 +355,8 @@ class UploadMixin:
                         upload_result=result,
                         keep_master_mp4=False,
                     )
+                    job.rendered_video_path = None
+                    job.preview_video_path = None
                     job.transition_to(JobStatus.CLEANED)
                     self.state_manager.save_job(job)
                     logger.info("Job %s: Post-upload cleanup completed.", job.id)
