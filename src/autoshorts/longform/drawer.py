@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Iterator, Sequence
 from functools import lru_cache
 from typing import Any
@@ -24,6 +25,7 @@ from autoshorts.core.theme import (
     BG_DEEP,
     BG_SURFACE,
     TEXT_MUTED,
+    TEXT_PRIMARY,
     ease_in_out_cubic,
     lerp_rgb,
 )
@@ -862,14 +864,73 @@ def _commit_layer(img: Image.Image, layer: Image.Image) -> None:
     img.paste(base.convert("RGB"))
 
 
-def _draw_chrome(d: ImageDraw.ImageDraw, title: str, index: int) -> None:
-    """Cinematic frame: pure black letterbox bars, a small PART label and the title in the top bar."""
-    d.rectangle([0, 0, WIDTH, LETTERBOX_TOP], fill=(0, 0, 0))
-    d.rectangle([0, LETTERBOX_BOTTOM, WIDTH, HEIGHT], fill=(0, 0, 0))
-    if title:
-        tfont = _fit_font(d, title, 24, WIDTH - 400, bold=False)
-        d.text((72, 20), title, font=tfont, fill=TEXT_MUTED)
-    d.text((72, 84), f"PART {index + 1}", font=load_font(22, True), fill=TEXT_MUTED)
+DAY_MILESTONES: tuple[int, ...] = (1, 3, 12, 30, 64, 90, 150, 270, 365)
+ACCENT_GOLD: tuple[int, int, int] = ACCENT_YELLOW
+_DAY_PATTERN = re.compile(r"\bday\s+(\d{1,4})\b", re.IGNORECASE)
+
+
+def _resolve_day_label(index: int, heading: str = "", narration: str = "") -> str:
+    """Resolve day progression counter (e.g. DAY 1, DAY 3, DAY 12) from text or milestone table."""
+    match = _DAY_PATTERN.search(heading or "")
+    if not match:
+        match = _DAY_PATTERN.search(narration or "")
+    if match:
+        return f"DAY {match.group(1)}"
+    clamped = min(max(index, 0), len(DAY_MILESTONES) - 1)
+    return f"DAY {DAY_MILESTONES[clamped]}"
+
+
+def _draw_chrome(
+    draw: ImageDraw.ImageDraw,
+    index: int | str = 0,
+    heading: str | int = "",
+    narration: str = "",
+    **kwargs: Any,
+) -> None:
+    """Cinematic frame: black letterbox bars, and top-left HUD pill with DAY progression."""
+    # Handle callers that pass (draw, title, index)
+    if isinstance(index, str) and isinstance(heading, int):
+        heading, index = index, heading
+    elif isinstance(index, str) and not heading:
+        heading = index
+        index = 0
+    if "title" in kwargs and not heading:
+        heading = kwargs["title"]
+
+    idx = int(index)
+    heading_str = str(heading).strip() if heading else ""
+    narration_str = str(narration).strip() if narration else ""
+
+    draw.rectangle([0, 0, WIDTH, LETTERBOX_TOP], fill=(0, 0, 0))
+    draw.rectangle([0, LETTERBOX_BOTTOM, WIDTH, HEIGHT], fill=(0, 0, 0))
+
+    day_label = _resolve_day_label(idx, heading_str, narration_str)
+
+    if heading_str:
+        hud_text = f"{day_label}  ·  PART {idx + 1}  ·  {heading_str[:28].upper()}"
+    else:
+        hud_text = f"{day_label}  ·  PART {idx + 1}"
+
+    pill_x0 = 72
+    pill_y0 = 16
+    pill_h = 32
+    font = load_font(20, True)
+    text_w = draw.textlength(hud_text, font=font)
+    pad_x = 12
+    pill_w = int(text_w + pad_x * 2)
+
+    # Rounded pill container
+    draw.rounded_rectangle(
+        [pill_x0, pill_y0, pill_x0 + pill_w, pill_y0 + pill_h],
+        radius=4,
+        fill=BG_SURFACE,
+    )
+
+    # Crisp gold/yellow left accent tick (3px wide vertical bar in ACCENT_GOLD)
+    draw.rectangle([pill_x0, pill_y0, pill_x0 + 3, pill_y0 + pill_h], fill=ACCENT_GOLD)
+
+    # Text
+    draw.text((pill_x0 + pad_x, pill_y0 + 5), hud_text, font=font, fill=TEXT_PRIMARY)
 
 
 def _paint_heading(layer: Image.Image, heading: str, t: float) -> None:
@@ -990,10 +1051,48 @@ def _camera_zoom(section_index: int, frame: int, frame_count: int) -> float:
 
 
 def _shot_camera(
-    img: Image.Image, shot: Shot, t_in_shot: float, camera_zoom: float = 1.0
+    img: Image.Image,
+    shot: Shot,
+    t_in_shot: float = 0.0,
+    camera_zoom: float | tuple[float, float] | None = 1.0,
+    focus_xy: tuple[float, float] | None = None,
+    progress: float | None = None,
 ) -> Image.Image:
-    """Shot-kind camera: centre punch-in (on top of the section camera), plus a decaying shake."""
-    img = _zoom_centre(img, SHOT_ZOOM.get(shot.kind, 1.0) * camera_zoom)
+    """Shot-kind camera: centre punch-in (on top of the section camera), plus a decaying shake.
+
+    When ``focus_xy`` is provided and ``shot.kind in ('ecu', 'insert', 'close')`` and
+    ``zoom > 1.0005``, blends the crop centre 35% toward ``focus_xy`` (clamped safely inside
+    ``[0, W] x [0, H]``).
+    """
+    if progress is not None:
+        t_in_shot = progress
+    if isinstance(camera_zoom, tuple):
+        focus_xy = camera_zoom
+        camera_zoom = 1.0
+    elif camera_zoom is None:
+        camera_zoom = 1.0
+
+    zoom = SHOT_ZOOM.get(shot.kind, 1.0) * float(camera_zoom)
+    w, h = img.size
+
+    if zoom > 1.0005 and focus_xy is not None and shot.kind in ("ecu", "insert", "close"):
+        crop_w = int(w / zoom)
+        crop_h = int(h / zoom)
+        cx_default = w / 2.0
+        cy_default = h / 2.0
+        fx = max(0.0, min(float(w), float(focus_xy[0])))
+        fy = max(0.0, min(float(h), float(focus_xy[1])))
+        cx = cx_default + 0.35 * (fx - cx_default)
+        cy = cy_default + 0.35 * (fy - cy_default)
+        x0 = int(round(cx - crop_w / 2.0))
+        y0 = int(round(cy - crop_h / 2.0))
+        x0 = max(0, min(w - crop_w, x0))
+        y0 = max(0, min(h - crop_h, y0))
+        cropped = img.crop((x0, y0, x0 + crop_w, y0 + crop_h))
+        img = cropped.resize((w, h), Image.BICUBIC)
+    else:
+        img = _zoom_centre(img, zoom)
+
     if shot.kind == "impact":
         dx, dy = camera_shake_offset(
             t_in_shot, 0.0, duration=SHAKE_SECONDS, amplitude=SHAKE_AMPLITUDE
@@ -1032,12 +1131,43 @@ def _draw_scene(
     img = _shot_camera(img, shot, t_in_shot, camera_zoom)
     # Text goes on after the camera, so the zoom cannot push the narration into the letterbox.
     draw_beat_text(img, plan, t, 0.0, section_seconds, sa.section.narration)
-    _draw_chrome(ImageDraw.Draw(img), title, index)
+    _draw_chrome(ImageDraw.Draw(img), index, sa.section.heading or title, sa.section.narration)
     # The heading sits in the bottom bar, so it is painted after the letterbox.
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     _paint_heading(layer, sa.section.heading, t)
     _commit_layer(img, layer)
     return _impact_flash(img, shot, t_in_shot)
+
+
+def render_scene_frame(
+    sa: SectionAudio,
+    title: str = "",
+    index: int = 0,
+    t: float = 0.0,
+    camera_zoom: float = 1.0,
+    focus_xy: tuple[float, float] | None = None,
+) -> Image.Image:
+    """Render a single frame of a section audio beat at section time ``t``."""
+    plan = plan_beat(
+        index, sa.section.heading, sa.section.narration, _speaker(sa), False
+    )
+    shots = _section_shots(sa) or [Shot(0.0, max(float(sa.duration), 0.0), "wide")]
+    f = round(t * FPS)
+    shot, shot_start = _locate_frame(shots, f)
+    t_in_shot = max(0.0, f - shot_start) / FPS
+
+    img = Image.new("RGB", (WIDTH, HEIGHT))
+    draw_beat(img, plan, t, 0.0, sa.duration, sa.section.narration, sa.words, text=False)
+    img = _shot_camera(img, shot, t_in_shot, camera_zoom, focus_xy=focus_xy)
+    draw_beat_text(img, plan, t, 0.0, sa.duration, sa.section.narration)
+    _draw_chrome(ImageDraw.Draw(img), index, sa.section.heading or title, sa.section.narration)
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    _paint_heading(layer, sa.section.heading, t)
+    _commit_layer(img, layer)
+    return _impact_flash(img, shot, t_in_shot)
+
+
+render_beat_frame = render_scene_frame
 
 
 def _transition(kind: str, prev: Image.Image, cur: Image.Image, k: float) -> Image.Image:

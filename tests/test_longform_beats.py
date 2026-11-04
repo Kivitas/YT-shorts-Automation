@@ -13,6 +13,7 @@ import autoshorts.longform.beats as beats
 import autoshorts.longform.sprites as sprites
 from autoshorts.core.theme import ACCENT_CORAL, ACCENT_TEAL, NAVY_LIGHT, OFFWHITE, YELLOW_SOFT
 from autoshorts.longform.beats import (
+    FIGURE_BASE_YELLOW,
     FIGURE_SPRITE_SCALE,
     LYING_POSES,
     NARRATION_BAND,
@@ -29,6 +30,7 @@ from autoshorts.longform.beats import (
     _lift_origin,
     _split_sentences,
     draw_beat,
+    draw_beat_text,
     plan_beat,
 )
 from autoshorts.longform.props import PROP_NAMES
@@ -676,3 +678,124 @@ def test_present_sprite_is_pasted_at_its_slot(tmp_path: Path, use_sprite_dir) ->
     placed = beats._sprite_layout(plan, 0.0, narration, 1.5)
     assert len(placed) == 1
     assert with_sprite.getpixel((placed[0].x, placed[0].y)) == (10, 200, 10)
+
+
+def test_mirror_and_fridge_planning() -> None:
+    # 1. Plain mirror: not cracked, no shadow reflection
+    plan_mirror = plan_beat(0, "H", "Look in the mirror.", "host", False)
+    assert "mirror" in _names(plan_mirror)
+    mirror_prop = next(p for p in plan_mirror.props if p.name == "mirror")
+    assert mirror_prop.x == 1320 and mirror_prop.y == 460
+    assert mirror_prop.scale == 1.0
+    assert mirror_prop.params == {"cracked": False, "shadow_reflection": False}
+
+    # 2. Mirror with shadow or negative: cracked and shadow_reflection
+    plan_shadow = plan_beat(0, "H", "Stare at yourself in the mirror and face the shadow.", "host", False)
+    assert "mirror" in _names(plan_shadow)
+    mirror_shadow = next(p for p in plan_shadow.props if p.name == "mirror")
+    assert mirror_shadow.params == {"cracked": True, "shadow_reflection": True}
+
+    plan_neg = plan_beat(0, "H", "Never look in the reflection.", "host", False)
+    assert "mirror" in _names(plan_neg)
+    mirror_neg = next(p for p in plan_neg.props if p.name == "mirror")
+    assert mirror_neg.params == {"cracked": True, "shadow_reflection": True}
+
+    # 3. Fridge words
+    plan_fridge = plan_beat(0, "H", "Open the fridge for a midnight snack.", "host", False)
+    assert "fridge_open" in _names(plan_fridge)
+    fridge_prop = next(p for p in plan_fridge.props if p.name == "fridge_open")
+    assert fridge_prop.x == 1340 and fridge_prop.y == 520
+    assert fridge_prop.scale == 1.0
+
+    plan_refrig = plan_beat(0, "H", "Check the refrigerator.", "host", False)
+    assert "fridge_open" in _names(plan_refrig)
+
+
+def test_alarm_clock_and_heavy_bag_params() -> None:
+    # Alarm clock gets ringing and time_str: "5:00"
+    plan_alarm = plan_beat(0, "H", "Sleep in bed with the alarm.", "host", False)
+    clock = next(p for p in plan_alarm.props if p.name == "alarm_clock_7seg")
+    assert clock.params.get("ringing") is True
+    assert clock.params.get("time_str") == "5:00"
+
+    # Heavy bag gets hit_recoil: True
+    plan_bag = plan_beat(0, "H", "Punch the bag.", "host", False)
+    bag = next(p for p in plan_bag.props if p.name == "heavy_bag")
+    assert bag.params.get("hit_recoil") is True
+
+
+def test_shatter_text_planning_and_drawing() -> None:
+    # 1. Action poses with action/breakthrough triggers assign shatter_text
+    plan_punch = plan_beat(0, "H", "Punch the bag with strength.", "host", False)
+    assert plan_punch.pose == "box_punch"
+    assert plan_punch.shatter_text == '"you can\'t."'
+
+    plan_climb = plan_beat(0, "H", "We climb the mountain today.", "host", False)
+    assert plan_climb.pose == "climb_slope"
+    assert plan_climb.shatter_text == '"you can\'t."'
+
+    # 2. When inner_voice is present on action pose, shatter_text is inner_voice
+    plan_excuse = plan_beat(0, "H", "Tomorrow I will punch the bag.", "host", False)
+    assert plan_excuse.pose == "box_punch"
+    assert plan_excuse.inner_voice == "I'll start tomorrow"
+    assert plan_excuse.shatter_text == "I'll start tomorrow"
+
+    # 3. Non-action poses get shatter_text None by default
+    plan_plain = plan_beat(0, "H", "Nothing special here.", "host", False)
+    assert plan_plain.shatter_text is None
+
+
+def test_draw_beat_text_shattering_after_impact_t(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = replace(
+        plan_beat(0, "H", "Punch the bag.", "host", False),
+        shatter_text='"you can\'t."',
+        inner_voice=None,
+    )
+    start = 0.0
+    end = 4.0
+    impact_t = start + max(0.35, (end - start) * 0.62)
+
+    shatter_calls: list[float] = []
+
+    def mock_draw_shatter_text(img, text, anchor, t, start_t, duration=0.65, color=None):
+        shatter_calls.append(t)
+
+    import autoshorts.longform.beats as beats_mod
+    monkeypatch.setattr(beats_mod, "draw_shatter_text", mock_draw_shatter_text)
+
+    # Before impact_t: shatter_text is NOT called (inner_voice hovers)
+    img_before = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat_text(img_before, plan, impact_t - 0.2, start, end, "")
+    assert len(shatter_calls) == 0
+
+    # At or after impact_t: shatter_text IS called
+    img_after = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat_text(img_after, plan, impact_t + 0.1, start, end, "")
+    assert len(shatter_calls) == 1
+    assert shatter_calls[0] == pytest.approx(impact_t + 0.1)
+
+
+def test_draw_beat_renders_action_fx_and_sleep_zs() -> None:
+    # 1. sleep_bed renders sleep Zs (uses OFFWHITE, modifies pixels near RIG_ORIGIN)
+    plan_sleep = plan_beat(0, "H", "I sleep in bed.", "host", False)
+    assert plan_sleep.pose == "sleep_bed"
+    img_sleep = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img_sleep, plan_sleep, 1.5, 0.0, 4.0, "I sleep in bed.")
+    assert _has_colour(img_sleep, OFFWHITE)
+
+    # 2. box_punch renders speed lines and hit sparks
+    plan_box = plan_beat(0, "H", "Punch the bag now.", "host", False)
+    assert plan_box.pose == "box_punch"
+    img_box = Image.new("RGB", FRAME, PALETTE.void)
+    # At t = start + 0.25 s, hit sparks are active (start + 0.15 to end)
+    draw_beat(img_box, plan_box, 0.25, 0.0, 4.0, "Punch the bag now.")
+    assert _has_colour(img_box, FIGURE_BASE_YELLOW)  # hit sparks
+    assert _has_colour(img_box, OFFWHITE)  # speed lines
+
+    # 3. climb_slope renders diagonal speed lines
+    plan_climb = plan_beat(0, "H", "We climb the mountain.", "host", False)
+    assert plan_climb.pose == "climb_slope"
+    img_climb = Image.new("RGB", FRAME, PALETTE.void)
+    draw_beat(img_climb, plan_climb, 1.0, 0.0, 4.0, "We climb the mountain.")
+    assert _has_colour(img_climb, OFFWHITE)
+

@@ -20,8 +20,10 @@ from autoshorts.longform.sfx import (
     mix_events,
     synth_alarm,
     synth_clock_ticks,
+    synth_glass_crack,
     synth_punch,
     synth_whisper,
+    synth_whoosh,
 )
 from autoshorts.longform.thumbnail import make_thumbnail
 from autoshorts.longform.tts import SECTION_GAP_SECONDS, synthesize_sections
@@ -44,6 +46,8 @@ BGM_DUCK_GAIN = 0.3
 EDL_FILENAME = "edl.json"
 _SFX_SAMPLE_RATE = 48000
 _SKEPTIC_PATTERN = re.compile(r"\b(not|lazy)\b", re.IGNORECASE)
+_MIRROR_CRACK_WORDS = ("mirror", "reflection", "shatter", "excuse", "can't", "quit")
+_WHOOSH_WORDS = ("punch", "strike", "fight", "bag", "climb", "mountain", "sprint", "run")
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +147,12 @@ def build_sfx_track(sections: list[SectionAudio], work_dir: Path) -> Path | None
     events: list[tuple[Path, float]] = []
 
     def add(kind: str, idx: int, synth, offset: float, **kwargs) -> None:
-        path = synth(sfx_dir / f"{kind}_{idx:03d}_{len(events):03d}.wav", **kwargs)
+        target = sfx_dir / f"{kind}_{idx:03d}_{len(events):03d}.wav"
+        res = synth(target, **kwargs)
+        if isinstance(res, (Path, str)):
+            path = Path(res)
+        else:
+            path = target
         events.append((path, offset))
 
     for i, sa in enumerate(sections):
@@ -151,16 +160,38 @@ def build_sfx_track(sections: list[SectionAudio], work_dir: Path) -> Path | None
         add("punch", i, synth_punch, start + 0.0)
 
         section = sa.section
-        text = f"{section.heading} {section.narration}"
+        text = f"{section.heading} {section.narration}".lower()
         if section.speaker == "skeptic" or _SKEPTIC_PATTERN.search(text):
             add("whisper", i, synth_whisper, start + 0.2)
 
+        scheduled_crack = False
+        scheduled_whoosh = False
+
         for word in sa.words:
-            token = str(word.get("word", "")).strip().lower()
+            raw_token = str(word.get("word", "")).strip().lower()
+            token = re.sub(r"[^\w']", "", raw_token)
+            at = start + float(word.get("start", 0.0))
             if token.startswith("clock") or token.startswith("alarm"):
-                at = start + float(word.get("start", 0.0))
                 add("ticks", i, synth_clock_ticks, at, duration=2.0)
                 add("alarm", i, synth_alarm, at)
+            if any(token == kw or token.startswith(kw) for kw in _MIRROR_CRACK_WORDS):
+                add("glass_crack", i, synth_glass_crack, at)
+                scheduled_crack = True
+            if any(token == kw or token.startswith(kw) for kw in _WHOOSH_WORDS):
+                add("whoosh", i, synth_whoosh, at)
+                scheduled_whoosh = True
+
+        if not scheduled_crack:
+            for kw in _MIRROR_CRACK_WORDS:
+                if re.search(rf"\b{re.escape(kw)}\b", text):
+                    add("glass_crack", i, synth_glass_crack, start + 0.3)
+                    break
+
+        if not scheduled_whoosh:
+            for kw in _WHOOSH_WORDS:
+                if re.search(rf"\b{re.escape(kw)}\b", text):
+                    add("whoosh", i, synth_whoosh, start + 0.4)
+                    break
 
     if not events:
         return None

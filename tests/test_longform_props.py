@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PIL import Image, ImageChops
 
-from autoshorts.longform.props import PROP_NAMES, draw_prop
+from autoshorts.longform.props import PROP_NAMES, _draw_7seg_digit, draw_prop
 
 CANVAS = (1920, 1080)
 BACKGROUND = (8, 8, 12)
@@ -165,3 +165,98 @@ def test_wiggle_changes_pixels_between_times() -> None:
     draw_prop(a, "bed", (200, 150), wiggle=5.0, t=0.0)
     draw_prop(b, "bed", (200, 150), wiggle=5.0, t=0.25)
     assert a.tobytes() != b.tobytes()
+
+
+def test_alarm_clock_time_str_and_ringing() -> None:
+    default_clock = _canvas()
+    clock_459 = _canvas()
+    clock_847 = _canvas()
+    clock_ringing = _canvas()
+
+    draw_prop(default_clock, "alarm_clock_7seg", (200, 150))
+    draw_prop(clock_459, "alarm_clock_7seg", (200, 150), time_str="4:59")
+    draw_prop(clock_847, "alarm_clock_7seg", (200, 150), time_str="8:47")
+    draw_prop(clock_ringing, "alarm_clock_7seg", (200, 150), ringing=True)
+
+    # Different time strings render different digits
+    assert clock_459.tobytes() != default_clock.tobytes()
+    assert clock_847.tobytes() != default_clock.tobytes()
+    assert clock_459.tobytes() != clock_847.tobytes()
+
+    # Ringing draws acoustic vibration rays/arcs
+    assert clock_ringing.tobytes() != default_clock.tobytes()
+    diff = ImageChops.difference(clock_ringing, default_clock)
+    assert diff.getbbox() is not None
+
+    # Test explicit digits parameter matches equivalent time_str
+    explicit_digits = _canvas()
+    draw_prop(explicit_digits, "alarm_clock_7seg", (200, 150), digits=("4", "5", "9"))
+    assert explicit_digits.tobytes() == clock_459.tobytes()
+
+
+def test_mirror_cracked_and_shadow_reflection() -> None:
+    default_mirror = _canvas()
+    cracked_mirror = _canvas()
+    shadow_mirror = _canvas()
+    both_mirror = _canvas()
+
+    draw_prop(default_mirror, "mirror", (200, 150))
+    draw_prop(cracked_mirror, "mirror", (200, 150), cracked=True)
+    draw_prop(shadow_mirror, "mirror", (200, 150), shadow_reflection=True)
+    draw_prop(both_mirror, "mirror", (200, 150), cracked=True, shadow_reflection=True)
+
+    assert cracked_mirror.tobytes() != default_mirror.tobytes()
+    assert shadow_mirror.tobytes() != default_mirror.tobytes()
+    assert both_mirror.tobytes() != cracked_mirror.tobytes()
+    assert both_mirror.tobytes() != shadow_mirror.tobytes()
+
+    diff_cracked = ImageChops.difference(cracked_mirror, default_mirror)
+    diff_shadow = ImageChops.difference(shadow_mirror, default_mirror)
+    assert diff_cracked.getbbox() is not None
+    assert diff_shadow.getbbox() is not None
+
+
+def test_heavy_bag_hit_recoil() -> None:
+    still_bag = _canvas()
+    hit_bag = _canvas()
+
+    draw_prop(still_bag, "heavy_bag", (200, 150), hit_recoil=False)
+    draw_prop(hit_bag, "heavy_bag", (200, 150), hit_recoil=True)
+
+    assert hit_bag.tobytes() != still_bag.tobytes()
+    diff = ImageChops.difference(hit_bag, still_bag)
+    bbox = diff.getbbox()
+    assert bbox is not None
+    # Punch impact lines expand leftward of the still bag
+    assert bbox[0] < 200 + 20
+
+
+def test_shadow_demon_cower() -> None:
+    towering_demon = _canvas()
+    cowering_demon = _canvas()
+
+    draw_prop(towering_demon, "shadow_demon", (200, 150), cower=False)
+    draw_prop(cowering_demon, "shadow_demon", (200, 150), cower=True)
+
+    assert cowering_demon.tobytes() != towering_demon.tobytes()
+    diff = ImageChops.difference(cowering_demon, towering_demon)
+    assert diff.getbbox() is not None
+
+    # In cower mode, the upper portion (e.g. y < 150 + 100) has no demon pixels (shrunken down)
+    cower_crop = cowering_demon.crop((200 + 50, 150, 200 + 200, 150 + 100))
+    bg_crop = _canvas().crop((200 + 50, 150, 200 + 200, 150 + 100))
+    diff_upper = ImageChops.difference(cower_crop, bg_crop)
+    # The towering demon definitely has pixels here, cowering does not
+    tower_crop = towering_demon.crop((200 + 50, 150, 200 + 200, 150 + 100))
+    diff_tower = ImageChops.difference(tower_crop, bg_crop)
+    assert diff_tower.getbbox() is not None
+    assert diff_upper.getbbox() is None
+
+
+def test_draw_7seg_digit_all_numbers() -> None:
+    for digit in "0123456789":
+        img = _canvas("RGBA")
+        draw_prop(img, "alarm_clock_7seg", (100, 100), time_str=f"{digit}:00")
+        diff = ImageChops.difference(img.convert("RGB"), _canvas())
+        assert diff.getbbox() is not None
+

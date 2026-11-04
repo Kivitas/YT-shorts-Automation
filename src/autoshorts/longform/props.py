@@ -48,6 +48,10 @@ PURPLE = _hex("8A5CC7")
 BLUE = _hex("3B6FD8")
 WOOD = _hex("9A6B3F")
 NIGHT = _hex("1B2445")
+OFFWHITE = _hex("F2F0EB")
+GREY = _hex("8C8E9A")
+YELLOW = _hex("FFC83C")
+CRIMSON: Color = (225, 45, 57, 255)
 
 _INK_UNITS = 2.0
 
@@ -85,10 +89,11 @@ class _Canvas:
         fill: Color,
         radius: float = 0.0,
         outline: bool = True,
+        outline_color: Color = INK,
     ) -> None:
         kwargs: dict[str, Any] = {"fill": fill}
         if outline:
-            kwargs.update(outline=INK, width=self.ink)
+            kwargs.update(outline=outline_color, width=self.ink)
         box = self.box(x0, y0, x1, y1)
         if radius > 0:
             self.draw.rounded_rectangle(box, radius=self.n(radius), **kwargs)
@@ -103,10 +108,11 @@ class _Canvas:
         y1: float,
         fill: Color,
         outline: bool = True,
+        outline_color: Color = INK,
     ) -> None:
         kwargs: dict[str, Any] = {"fill": fill}
         if outline:
-            kwargs.update(outline=INK, width=self.ink)
+            kwargs.update(outline=outline_color, width=self.ink)
         self.draw.ellipse(self.box(x0, y0, x1, y1), **kwargs)
 
     def poly(
@@ -114,11 +120,12 @@ class _Canvas:
         points: list[tuple[float, float]],
         fill: Color,
         outline: bool = True,
+        outline_color: Color = INK,
     ) -> None:
         pts = self.pts(points)
         self.draw.polygon(pts, fill=fill)
         if outline:
-            self.draw.line(pts + [pts[0]], fill=INK, width=self.ink, joint="curve")
+            self.draw.line(pts + [pts[0]], fill=outline_color, width=self.ink, joint="curve")
 
     def line(self, points: list[tuple[float, float]], color: Color, width: float = 2.0) -> None:
         self.draw.line(self.pts(points), fill=color, width=self.n(width), joint="curve")
@@ -297,14 +304,144 @@ def _draw_mirror(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
     cv.poly([(44, 30), (66, 30), (40, 140), (18, 140)], CREAM, outline=False)
     cv.poly([(78, 30), (86, 30), (60, 140), (52, 140)], CREAM, outline=False)
 
+    if p.get("shadow_reflection", False):
+        shadow_dark = (12, 12, 16, 255)
+        # Menacing silhouette reflection inside mirror glass (0:40-0:49 reference video)
+        cv.poly(
+            [(34, 246), (36, 185), (58, 142), (122, 142), (144, 185), (146, 246)],
+            shadow_dark,
+            outline=False,
+        )
+        cv.ellipse(66, 76, 114, 138, shadow_dark, outline=False)
+        cv.poly([(72, 88), (60, 60), (80, 78)], shadow_dark, outline=False)
+        cv.poly([(108, 88), (120, 60), (100, 78)], shadow_dark, outline=False)
+
+        # Two menacing glowing CRIMSON eyes (225, 45, 57)
+        def _mirror_eyes(d: ImageDraw.ImageDraw) -> None:
+            d.ellipse(cv.box(74, 98, 90, 110), fill=255)
+            d.ellipse(cv.box(90, 98, 106, 110), fill=255)
+
+        cv.glow(_mirror_eyes, radius=6, rgb=CRIMSON[:3], strength=_pulse(t))
+        cv.ellipse(76, 101, 88, 107, CRIMSON, outline=False)
+        cv.ellipse(92, 101, 104, 107, CRIMSON, outline=False)
+
+    if p.get("cracked", False):
+        cx, cy = 96.0, 114.0
+        # Spiderweb fracture lines radiating from impact point across mirror glass
+        radials_offwhite = [
+            [(cx, cy), (70, 85), (45, 55), (16, 26)],
+            [(cx, cy), (122, 90), (148, 62), (164, 38)],
+            [(cx, cy), (124, 142), (150, 180), (164, 218)],
+            [(cx, cy), (72, 146), (46, 190), (18, 236)],
+            [(cx, cy), (92, 70), (86, 40), (88, 16)],
+            [(cx, cy), (100, 155), (106, 205), (102, 244)],
+            [(cx, cy), (55, 110), (32, 118), (16, 122)],
+            [(cx, cy), (135, 116), (155, 112), (164, 110)],
+        ]
+        for pts in radials_offwhite:
+            cv.line(pts, OFFWHITE, width=2.0)
+
+        radials_grey = [
+            [(70, 85), (50, 95), (16, 92)],
+            [(45, 55), (30, 40), (16, 50)],
+            [(122, 90), (140, 102), (164, 100)],
+            [(124, 142), (140, 130), (164, 136)],
+            [(72, 146), (54, 136), (18, 148)],
+            [(100, 155), (82, 180), (70, 230)],
+            [(106, 205), (130, 226), (146, 244)],
+        ]
+        for pts in radials_grey:
+            cv.line(pts, GREY, width=1.5)
+
+        # Concentric web ring connectors
+        cv.line(
+            [(80, 94), (92, 85), (112, 98), (114, 128), (84, 132), (80, 94)],
+            OFFWHITE,
+            width=1.5,
+        )
+        cv.line(
+            [(58, 72), (90, 52), (136, 75), (140, 155), (60, 166), (58, 72)],
+            GREY,
+            width=1.5,
+        )
+
+        # Central impact point
+        cv.poly(
+            [
+                (cx - 4, cy - 2),
+                (cx, cy - 6),
+                (cx + 4, cy - 2),
+                (cx + 7, cy + 3),
+                (cx + 2, cy + 5),
+                (cx - 3, cy + 6),
+                (cx - 6, cy + 2),
+            ],
+            OFFWHITE,
+            outline=False,
+        )
+
 
 def _draw_heavy_bag(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
-    cv.line([(80, 0), (80, 30)], MUTED_SLATE, 3)
-    cv.rect(40, 30, 120, 48, SLATE, radius=6)
-    cv.ellipse(30, 312, 130, 330, VOID, outline=False)
-    cv.rect(20, 48, 140, 300, CORAL, radius=40)
-    cv.rect(20, 130, 140, 142, AMBER, outline=False)
-    cv.rect(20, 200, 140, 212, AMBER, outline=False)
+    if p.get("hit_recoil", False):
+        # Angled chain to shifted bag mount
+        cv.line([(80, 0), (96, 30)], MUTED_SLATE, 3)
+        cv.rect(56, 30, 136, 48, SLATE, radius=6)
+        cv.ellipse(38, 312, 138, 330, VOID, outline=False)
+
+        # Bag body with rightward tilt and concave impact dent on left side (1:27-1:39 reference video)
+        bag_outline = [
+            (52, 48), (44, 54), (38, 65),
+            (36, 90), (38, 120), (44, 138),
+            (58, 152), (74, 168),  # concave impact dent peak
+            (60, 184), (46, 198),
+            (48, 225), (52, 260),
+            (56, 285), (66, 298), (80, 300),
+            (140, 300), (156, 298), (166, 285),
+            (170, 260), (166, 225), (162, 190), (158, 150), (156, 110), (156, 80),
+            (154, 62), (144, 52), (130, 48),
+            (100, 48), (70, 48),
+        ]
+        cv.poly(bag_outline, CORAL)
+
+        # Accent stripes conforming to tilted body
+        cv.poly([(42, 130), (158, 130), (157, 142), (48, 142)], AMBER, outline=False)
+        cv.poly([(47, 200), (163, 200), (164, 212), (48, 212)], AMBER, outline=False)
+
+        # Sharp radial impact shock lines in YELLOW / OFFWHITE bursting from strike zone
+        cv.line([(55, 168), (10, 168)], YELLOW, width=4.0)
+        cv.line([(58, 154), (18, 126)], OFFWHITE, width=3.5)
+        cv.line([(58, 182), (18, 210)], OFFWHITE, width=3.5)
+        cv.line([(64, 142), (32, 94)], YELLOW, width=3.0)
+        cv.line([(64, 194), (32, 242)], YELLOW, width=3.0)
+        cv.line([(50, 160), (25, 148)], YELLOW, width=2.5)
+        cv.line([(50, 176), (25, 188)], YELLOW, width=2.5)
+
+        # Shockwave arcs
+        cv.arc(28, 138, 78, 198, 110, 250, YELLOW, width=3.0)
+        cv.arc(6, 116, 86, 220, 115, 245, OFFWHITE, width=2.5)
+
+        # Flash star at strike point
+        cv.poly(
+            [
+                (68, 161),
+                (70, 166),
+                (75, 168),
+                (70, 170),
+                (68, 175),
+                (66, 170),
+                (61, 168),
+                (66, 166),
+            ],
+            WHITE,
+            outline=False,
+        )
+    else:
+        cv.line([(80, 0), (80, 30)], MUTED_SLATE, 3)
+        cv.rect(40, 30, 120, 48, SLATE, radius=6)
+        cv.ellipse(30, 312, 130, 330, VOID, outline=False)
+        cv.rect(20, 48, 140, 300, CORAL, radius=40)
+        cv.rect(20, 130, 140, 142, AMBER, outline=False)
+        cv.rect(20, 200, 140, 212, AMBER, outline=False)
 
 
 _SEGMENTS = {
@@ -321,7 +458,7 @@ _SEGMENTS = {
 }
 
 
-def _draw_digit(cv: _Canvas, char: str, x: float, y: float, w: float, h: float) -> None:
+def _draw_7seg_digit(cv: _Canvas, char: str, x: float, y: float, w: float, h: float) -> None:
     th = 9.0
     mid = y + h / 2
     rects = {
@@ -333,27 +470,94 @@ def _draw_digit(cv: _Canvas, char: str, x: float, y: float, w: float, h: float) 
         "f": (x, y + th, x + th, mid - th / 2),
         "g": (x + th, mid - th / 2, x + w - th, mid + th / 2),
     }
-    lit = _SEGMENTS[char]
+    lit = _SEGMENTS.get(char, "")
     for seg, box in rects.items():
         cv.rect(*box, CORAL if seg in lit else SLATE, outline=False)
 
 
+_draw_digit = _draw_7seg_digit
+
+
 def _draw_alarm_clock(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
+    # Clock casing and display face
     cv.rect(0, 0, 300, 180, SLATE, radius=24)
     cv.rect(20, 30, 280, 150, VOID, radius=10)
-    for x, char in ((44, "5"), (140, "0"), (206, "0")):
-        _draw_digit(cv, char, x, 48, 52, 84)
-    colon_x = 118.0
-    dots = ((colon_x - 5, 67, colon_x + 5, 77), (colon_x - 5, 103, colon_x + 5, 113))
+
+    # Raised rectangular SNOOZE button bar on top of the alarm clock casing
+    cv.rect(90, -14, 210, 2, VOID, radius=4, outline=True, outline_color=OFFWHITE)
+    cv.draw.text(cv.pt(150, -6), "SNOOZE", font=_font(cv.n(9)), fill=OFFWHITE, anchor="mm")
+
+    # Parse digits from explicit parameter or time_str (defaults to "5:00")
+    digits_arg = p.get("digits")
+    if digits_arg is not None:
+        digits = tuple(str(d) for d in digits_arg)
+    else:
+        time_str = str(p.get("time_str", "5:00"))
+        if ":" in time_str:
+            h_str, m_str = time_str.split(":", 1)
+            h_str = h_str.strip()
+            m_str = m_str.strip()
+            if len(m_str) < 2:
+                m_str = m_str.zfill(2)
+            if len(h_str) == 1:
+                digits = (h_str, m_str[0], m_str[1])
+            elif len(h_str) == 2 and h_str.startswith("0"):
+                digits = (h_str[1], m_str[0], m_str[1])
+            else:
+                digits = tuple(h_str) + (m_str[0], m_str[1])
+        else:
+            digits = tuple(time_str)
+
+    if len(digits) == 3:
+        colon_x = 118.0
+        digit_coords = [(44, digits[0]), (140, digits[1]), (206, digits[2])]
+        digit_w, digit_h = 52.0, 84.0
+    elif len(digits) == 4:
+        colon_x = 150.0
+        digit_w, digit_h = 44.0, 84.0
+        digit_coords = [(30, digits[0]), (84, digits[1]), (172, digits[2]), (226, digits[3])]
+    else:
+        colon_x = 150.0
+        digit_w, digit_h = 40.0, 84.0
+        step = 220.0 / max(1, len(digits))
+        digit_coords = [(30 + i * step, d) for i, d in enumerate(digits)]
+
+    for x_pos, char in digit_coords:
+        _draw_7seg_digit(cv, char, x_pos, 48, digit_w, digit_h)
+
+    colon_dots = ((colon_x - 5, 67, colon_x + 5, 77), (colon_x - 5, 103, colon_x + 5, 113))
     strength = _pulse(t)
 
     def _dots(d: ImageDraw.ImageDraw) -> None:
-        for x0, y0, x1, y1 in dots:
+        for x0, y0, x1, y1 in colon_dots:
             d.ellipse(cv.box(x0 - 4, y0 - 4, x1 + 4, y1 + 4), fill=255)
 
     cv.glow(_dots, radius=7, rgb=RED_GLOW[:3], strength=strength)
-    for x0, y0, x1, y1 in dots:
+    for x0, y0, x1, y1 in colon_dots:
         cv.ellipse(x0, y0, x1, y1, RED_GLOW, outline=False)
+
+    if p.get("ringing", False):
+        # Flanking acoustic vibration rays
+        cv.line([(-10, 16), (-36, -8)], CORAL, width=3.5)
+        cv.line([(-4, 2), (-26, -26)], YELLOW, width=3.5)
+        cv.line([(14, -8), (-2, -36)], CORAL, width=3.5)
+        cv.line([(32, -12), (20, -42)], YELLOW, width=3.0)
+
+        # Top-left vibration acoustic arcs
+        cv.arc(-30, -30, 50, 50, 130, 230, YELLOW, width=3.0)
+        cv.arc(-48, -48, 68, 68, 130, 230, CORAL, width=3.0)
+        cv.arc(-66, -66, 86, 86, 135, 225, YELLOW, width=2.5)
+
+        # Top-right vibration rays
+        cv.line([(310, 16), (336, -8)], CORAL, width=3.5)
+        cv.line([(304, 2), (326, -26)], YELLOW, width=3.5)
+        cv.line([(286, -8), (302, -36)], CORAL, width=3.5)
+        cv.line([(268, -12), (280, -42)], YELLOW, width=3.0)
+
+        # Top-right vibration acoustic arcs
+        cv.arc(250, -30, 330, 50, 310, 50, YELLOW, width=3.0)
+        cv.arc(232, -48, 348, 68, 310, 50, CORAL, width=3.0)
+        cv.arc(214, -66, 366, 86, 315, 45, YELLOW, width=2.5)
 
 
 def _draw_calendar(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
@@ -438,25 +642,52 @@ def _draw_sun_glow(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
 
 def _draw_shadow_demon(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
     strength = _pulse(t)
-    cv.glow(
-        lambda d: d.ellipse(cv.box(20, 20, 240, 320), fill=255),
-        radius=22,
-        rgb=RED_GLOW[:3],
-        strength=strength,
-    )
-    cv.poly([(88, 70), (70, 8), (108, 52)], VOID, outline=False)
-    cv.poly([(172, 70), (190, 8), (152, 52)], VOID, outline=False)
-    cv.ellipse(76, 30, 184, 140, VOID, outline=False)
-    cv.poly([(64, 130), (196, 130), (236, 318), (24, 318)], VOID, outline=False)
-    eyes = ((98, 74, 118, 96), (142, 74, 162, 96))
+    if p.get("cower", False):
+        # Shrunken down (~55% height) in the lower half of the prop box (2:17 reference video)
+        cv.glow(
+            lambda d: d.ellipse(cv.box(36, 170, 224, 320), fill=255),
+            radius=16,
+            rgb=RED_GLOW[:3],
+            strength=strength * 0.65,
+        )
+        # Drooping shrunken horns curled downward
+        cv.poly([(94, 202), (76, 172), (108, 190)], VOID, outline=False)
+        cv.poly([(166, 202), (184, 172), (152, 190)], VOID, outline=False)
+        # Hunched head shrunken down
+        cv.ellipse(82, 172, 178, 246, VOID, outline=False)
+        # Curled crouching body in lower half
+        cv.poly([(40, 318), (54, 235), (84, 210), (176, 210), (206, 235), (220, 318)], VOID, outline=False)
 
-    def _eyes(d: ImageDraw.ImageDraw) -> None:
+        # Narrowed fearful eyes instead of towering wide eyes
+        narrow_eyes = ((100, 209, 118, 215), (142, 209, 160, 215))
+
+        def _narrow_eyes_glow(d: ImageDraw.ImageDraw) -> None:
+            for x0, y0, x1, y1 in narrow_eyes:
+                d.ellipse(cv.box(x0 - 3, y0 - 3, x1 + 3, y1 + 3), fill=255)
+
+        cv.glow(_narrow_eyes_glow, radius=4, rgb=RED_GLOW[:3], strength=strength * 0.7)
+        for x0, y0, x1, y1 in narrow_eyes:
+            cv.ellipse(x0, y0, x1, y1, RED_GLOW, outline=False)
+    else:
+        cv.glow(
+            lambda d: d.ellipse(cv.box(20, 20, 240, 320), fill=255),
+            radius=22,
+            rgb=RED_GLOW[:3],
+            strength=strength,
+        )
+        cv.poly([(88, 70), (70, 8), (108, 52)], VOID, outline=False)
+        cv.poly([(172, 70), (190, 8), (152, 52)], VOID, outline=False)
+        cv.ellipse(76, 30, 184, 140, VOID, outline=False)
+        cv.poly([(64, 130), (196, 130), (236, 318), (24, 318)], VOID, outline=False)
+        eyes = ((98, 74, 118, 96), (142, 74, 162, 96))
+
+        def _eyes(d: ImageDraw.ImageDraw) -> None:
+            for x0, y0, x1, y1 in eyes:
+                d.ellipse(cv.box(x0 - 4, y0 - 4, x1 + 4, y1 + 4), fill=255)
+
+        cv.glow(_eyes, radius=5, rgb=RED_GLOW[:3], strength=strength)
         for x0, y0, x1, y1 in eyes:
-            d.ellipse(cv.box(x0 - 4, y0 - 4, x1 + 4, y1 + 4), fill=255)
-
-    cv.glow(_eyes, radius=5, rgb=RED_GLOW[:3], strength=strength)
-    for x0, y0, x1, y1 in eyes:
-        cv.ellipse(x0, y0, x1, y1, RED_GLOW, outline=False)
+            cv.ellipse(x0, y0, x1, y1, RED_GLOW, outline=False)
 
 
 def _draw_speech_bubble(cv: _Canvas, t: float, p: dict[str, Any]) -> None:

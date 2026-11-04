@@ -35,7 +35,13 @@ from autoshorts.core.theme import (
     YELLOW_SOFT,
 )
 from autoshorts.longform.background import draw_themed_background
-from autoshorts.longform.kinetic_text import draw_inner_voice, draw_kinetic_line, draw_number_pop
+import autoshorts.longform.fx as _fx_mod
+from autoshorts.longform.kinetic_text import (
+    draw_inner_voice,
+    draw_kinetic_line,
+    draw_number_pop,
+    draw_shatter_text,
+)
 from autoshorts.longform.lighting import colour_wash, source_glow
 from autoshorts.longform.props import draw_prop
 from autoshorts.longform.rig import POSES, animate_pose, draw_rig
@@ -170,6 +176,8 @@ PROP_XY: dict[str, tuple[int, int]] = {
     "coffee_table": (1420, 559),
     "cup": (1500, 470),  # bottom edge rests on the coffee table top at y 639
     "computer": (1440, 509),
+    "mirror": (1320, 460),
+    "fridge_open": (1340, 520),
 }
 MAX_PROPS = 4  # keeps each frame readable; earlier rules win when the cap cuts props
 # Narration keyword (whole word or phrase) -> satori sprite name. A missing sprite file is
@@ -447,6 +455,8 @@ COUCH_WORDS = frozenset({"couch", "tired"})
 DESK_WORDS = frozenset({"desk", "work", "focus"})
 BAG_WORDS = frozenset({"bag", "punch", "fight", "hit"})
 MOUNTAIN_WORDS = frozenset({"mountain", "climb", "summit", "top"})
+MIRROR_WORDS = frozenset({"mirror", "reflection", "stare at yourself"})
+FRIDGE_WORDS = frozenset({"fridge", "refrigerator", "midnight snack"})
 SHADOW_WORDS = frozenset({"shadow", "excuse", "demon", "tomorrow", "later"})
 SLEEP_WORDS = frozenset({"bed", "sleep", "night", "tired"})
 PRONE_WORDS = frozenset({"stomach", "prone", "face"})
@@ -495,6 +505,8 @@ PROP_ENTRANCE_WORDS: dict[str, frozenset[str]] = {
     "mountain": MOUNTAIN_WORDS,
     "shadow_demon": SHADOW_WORDS,
     "calendar": CALENDAR_WORDS | DAY_WORDS | {"every"},
+    "mirror": MIRROR_WORDS,
+    "fridge_open": FRIDGE_WORDS,
 }
 PROP_ENTRANCE_KIND: dict[str, str] = {"heavy_bag": "drop", "mountain": "drop"}
 PROP_WIGGLE: dict[str, float] = {"alarm_clock_7seg": 1.2, "phone": 1.2}
@@ -521,6 +533,67 @@ class PropSpec(NamedTuple):
     y: int
     scale: float
     params: dict[str, Any]
+
+    @property
+    def pos(self) -> tuple[int, int]:
+        return (self.x, self.y)
+
+
+class PropPlacement(PropSpec):
+    """PropPlacement representation, interchangeable with PropSpec.
+
+    Supports both (name, (x, y), scale, params) and (name, x, y, scale, params).
+    """
+
+    def __new__(
+        cls,
+        name: str,
+        pos_or_x: int | float | tuple[int | float, int | float],
+        y_or_scale: int | float = 1.0,
+        scale_or_params: float | dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> PropPlacement:
+        if isinstance(pos_or_x, tuple):
+            x = int(round(pos_or_x[0]))
+            y = int(round(pos_or_x[1]))
+            scale = float(y_or_scale)
+            if isinstance(scale_or_params, dict):
+                p = dict(scale_or_params)
+            else:
+                p = dict(params) if params is not None else {}
+        else:
+            x = int(round(pos_or_x))
+            y = int(round(y_or_scale))
+            scale = float(1.0 if scale_or_params is None else scale_or_params)
+            p = dict(params) if params is not None else {}
+        return super().__new__(cls, name, x, y, scale, p)
+
+
+def _contains_any(
+    blob: str | set[str] | Sequence[str], keywords: frozenset[str] | set[str]
+) -> bool:
+    """Check if any keyword or phrase in ``keywords`` is present in ``blob``."""
+    if isinstance(blob, str):
+        lowered = blob.lower()
+        for kw in keywords:
+            if " " in kw:
+                if kw in lowered:
+                    return True
+            else:
+                if re.search(r"\b" + re.escape(kw) + r"\b", lowered):
+                    return True
+        return False
+    token_set = set(blob)
+    for kw in keywords:
+        if " " in kw:
+            words = kw.split()
+            if isinstance(blob, (list, tuple)):
+                for i in range(len(blob) - len(words) + 1):
+                    if list(blob[i : i + len(words)]) == words:
+                        return True
+        elif kw in token_set:
+            return True
+    return False
 
 
 class SpriteSpec(NamedTuple):
@@ -558,6 +631,7 @@ class BeatPlan:
     gesture: str | None = None  # when set, this rig pose replaces ``pose`` on screen
     theme: str = NIGHT_THEME  # backdrop theme name for draw_themed_background
     sprites: list[SpriteSpec] = field(default_factory=list)  # keyword sprites, at most SPRITE_CAP
+    shatter_text: str | None = None
 
 
 def _choose_gesture(words: set[str], lowered: str) -> str | None:
@@ -638,7 +712,7 @@ def _add_prop(props: list[PropSpec], name: str) -> None:
     """Add the prop at its fixed position unless the section already has it."""
     if not _has_prop(props, name):
         x, y = PROP_XY[name]
-        props.append(PropSpec(name, x, y, 1.0, {}))
+        props.append(PropPlacement(name, (x, y), 1.0, {}))
 
 
 def _choose_mood(words: set[str]) -> tuple[str | None, str | None]:
@@ -678,6 +752,7 @@ def plan_beat(
     """Build the visual plan for one section. Deterministic for the same inputs."""
     del heading, speaker  # accepted for API context; the rules read the narration only
     lowered = narration.lower()
+    blob = lowered
     tokens = _WORD_RE.findall(lowered)
     words = set(tokens)
 
@@ -687,27 +762,44 @@ def plan_beat(
     mood: RGB | None = None
     inner_voice: str | None = None
 
+    has_negative = bool(words & NEGATIVE_WORDS)
+    has_shadow = bool(words & SHADOW_WORDS)
+
     if words & BED_WORDS:
-        props.append(PropSpec("bed", *BED_XY, BED_SCALE, {}))
-        props.append(PropSpec("alarm_clock_7seg", 600, 600, 0.5, {}))
+        props.append(PropPlacement("bed", BED_XY, BED_SCALE, {}))
+        props.append(
+            PropPlacement(
+                "alarm_clock_7seg",
+                (600, 600),
+                0.5,
+                {"ringing": True, "time_str": "5:00"},
+            )
+        )
     if words & PHONE_WORDS:
-        props.append(PropSpec("phone", 1420, 560, 1.0, {}))
+        props.append(PropPlacement("phone", (1420, 560), 1.0, {}))
         light_sources.append(LightSource((1450, 600), 260.0, PALETTE.blue, 0.8))
     if words & COUCH_WORDS:
-        props.append(PropSpec("couch", 1380, 600, 1.0, {}))
+        props.append(PropPlacement("couch", (1380, 600), 1.0, {}))
         pose = pose or "slump_couch"
     if words & DESK_WORDS:
         desk_x = RIG_ORIGIN[0] + _HAND_OFFSET[0] + DESK_MONITOR_OFFSET[0]
         desk_y = RIG_ORIGIN[1] + _HAND_OFFSET[1] + DESK_MONITOR_OFFSET[1]
-        props.append(PropSpec("desk_monitor", round(desk_x), round(desk_y), DESK_MONITOR_SCALE, {}))
+        props.append(
+            PropPlacement(
+                "desk_monitor",
+                (round(desk_x), round(desk_y)),
+                DESK_MONITOR_SCALE,
+                {},
+            )
+        )
     if words & BAG_WORDS:
-        props.append(PropSpec("heavy_bag", 1460, 380, 1.0, {}))
+        props.append(PropPlacement("heavy_bag", (1460, 380), 1.0, {"hit_recoil": True}))
         pose = pose or "box_punch"
     if words & MOUNTAIN_WORDS:
-        props.append(PropSpec("mountain", 60, 380, 1.0, {}))
+        props.append(PropPlacement("mountain", (60, 380), 1.0, {}))
         pose = pose or ("climb_slope" if "climb" in words else "summit_stand")
     if words & SHADOW_WORDS:
-        props.append(PropSpec("shadow_demon", 1480, 380, 1.0, {}))
+        props.append(PropPlacement("shadow_demon", (1480, 380), 1.0, {}))
         mood = PALETTE.red
         for token in tokens:
             if token in EXCUSE_LINES:
@@ -715,7 +807,21 @@ def plan_beat(
                 break
     if words & CALENDAR_WORDS or CALENDAR_PHRASE_RE.search(lowered):
         marks = sum(1 for token in tokens if token in DAY_WORDS)
-        props.append(PropSpec("calendar", 1380, 300, 1.0, {"marks": marks}))
+        props.append(PropPlacement("calendar", (1380, 300), 1.0, {"marks": marks}))
+    if _contains_any(blob, MIRROR_WORDS):
+        props.append(
+            PropPlacement(
+                "mirror",
+                (1320, 460),
+                1.0,
+                {
+                    "cracked": has_negative or has_shadow,
+                    "shadow_reflection": has_shadow or has_negative,
+                },
+            )
+        )
+    if _contains_any(blob, FRIDGE_WORDS):
+        props.append(PropPlacement("fridge_open", (1340, 520), 1.0))
 
     # Scene props added by keyword. Each name is added at most once.
     if words & LAMP_WORDS:
@@ -744,7 +850,7 @@ def plan_beat(
         _add_prop(props, "cup")
 
     if not props:
-        props.append(PropSpec("window", 80, 340, 1.0, {}))
+        props.append(PropPlacement("window", (80, 340), 1.0, {}))
 
     # Body position and expression from the narration, first match wins. The props above
     # (couch, bag, mountain) keep their own pose.
@@ -761,7 +867,7 @@ def plan_beat(
 
     # A lying figure always has a bed under it, even when the narration never names one.
     if pose in LYING_POSES and not _has_prop(props, "bed"):
-        props.insert(0, PropSpec("bed", *BED_XY, BED_SCALE, {}))
+        props.insert(0, PropPlacement("bed", BED_XY, BED_SCALE, {}))
 
     del props[MAX_PROPS:]
     # Figure centre x, used to place the hand and icon sprites beside the body.
@@ -773,6 +879,15 @@ def plan_beat(
         expression = "determined"
     else:
         expression = "exhausted" if section_index % 2 == 0 else "grit"
+
+    shatter_text: str | None = None
+    if pose in ("box_punch", "climb_slope", "fist_up", "thumbs_up") and (
+        inner_voice is not None
+        or has_negative
+        or _contains_any(blob, BAG_WORDS)
+        or _contains_any(blob, MOUNTAIN_WORDS)
+    ):
+        shatter_text = inner_voice or '"you can\'t."'
 
     return BeatPlan(
         section_index=section_index,
@@ -788,6 +903,7 @@ def plan_beat(
         gesture=_choose_gesture(words, lowered) if pose in GESTURE_POSES else None,
         theme=_choose_theme(words, section_index),
         sprites=_choose_sprites(lowered, figure_x),
+        shatter_text=shatter_text,
     )
 
 
@@ -902,17 +1018,33 @@ def _draw_prop(
             centre = (prop.x + size[0] / 2, prop.y + size[1] / 2)
             if paste_sprite(img, sprite_name, centre, scale=prop.scale):
                 return
-    draw_prop(
-        img,
-        prop.name,
-        (prop.x, prop.y),
-        scale=prop.scale,
-        t=t,
-        entrance_start=entrance_start,
-        entrance=PROP_ENTRANCE_KIND.get(prop.name, "pop"),
-        wiggle=PROP_WIGGLE.get(prop.name, 0.0),
-        **prop.params,
-    )
+    try:
+        draw_prop(
+            img,
+            prop.name,
+            (prop.x, prop.y),
+            scale=prop.scale,
+            t=t,
+            entrance_start=entrance_start,
+            entrance=PROP_ENTRANCE_KIND.get(prop.name, "pop"),
+            wiggle=PROP_WIGGLE.get(prop.name, 0.0),
+            **prop.params,
+        )
+    except ValueError:
+        # Fallback if prop drawer is not yet registered (e.g. fridge_open falling back to fridge)
+        fallback_name = "fridge" if prop.name == "fridge_open" else None
+        if fallback_name is not None:
+            draw_prop(
+                img,
+                fallback_name,
+                (prop.x, prop.y),
+                scale=prop.scale,
+                t=t,
+                entrance_start=entrance_start,
+                entrance=PROP_ENTRANCE_KIND.get(prop.name, "pop"),
+                wiggle=PROP_WIGGLE.get(prop.name, 0.0),
+                **prop.params,
+            )
 
 
 def _draw_figure_base(
@@ -1150,6 +1282,75 @@ def _draw_space(img: Image.Image, t: float, blue: RGB, highlight: RGB) -> None:
         draw.ellipse((x - r, y - r, x + r, y + r), fill=colour)
 
 
+def _fallback_draw_speed_lines(
+    img: Image.Image,
+    t: float,
+    direction: str = "right",
+    count: int = 16,
+    color: tuple[int, int, int] = (234, 230, 223),
+) -> None:
+    draw = ImageDraw.Draw(img)
+    for i in range(count):
+        phase = (t * 5.0 + i * 0.37) % 1.0
+        if direction == "diagonal":
+            x0 = int(200 + (i / max(1, count)) * 1400 + phase * 60)
+            y0 = int(200 + phase * 100 + (i % 5) * 120)
+            length = 80 + (i % 3) * 30
+            x1 = x0 + length
+            y1 = y0 - length
+            draw.line([(x0, y0), (x1, y1)], fill=color, width=2)
+        else:
+            y = int(150 + (i / max(1, count)) * 750 + ((i * 37) % 40))
+            x0 = int(300 + phase * 400 + (i % 4) * 200)
+            x1 = x0 + 100 + (i % 3) * 50
+            draw.line([(x0, y), (x1, y)], fill=color, width=2)
+
+
+def _fallback_draw_hit_sparks(
+    img: Image.Image,
+    center: tuple[int, int],
+    t: float,
+    start: float = 0.0,
+    duration: float = 0.4,
+    color: tuple[int, int, int] = (245, 197, 24),
+) -> None:
+    if not (start <= t <= start + duration):
+        return
+    tau = t - start
+    k = tau / duration if duration > 0 else 0.0
+    r_inner = 15.0 + k * 40.0
+    r_outer = 35.0 + k * 70.0
+    draw = ImageDraw.Draw(img)
+    cx, cy = center
+    num_sparks = 8
+    for i in range(num_sparks):
+        angle = (i * 2 * math.pi / num_sparks) + 0.3 * math.sin(t * 10)
+        p0 = (cx + r_inner * math.cos(angle), cy + r_inner * math.sin(angle))
+        p1 = (cx + r_outer * math.cos(angle), cy + r_outer * math.sin(angle))
+        draw.line([p0, p1], fill=color, width=3)
+
+
+def _fallback_draw_sleep_zs(
+    img: Image.Image,
+    anchor: tuple[int, int],
+    t: float,
+    color: tuple[int, int, int] = (234, 230, 223),
+) -> None:
+    draw = ImageDraw.Draw(img)
+    cx, cy = anchor
+    for i in range(3):
+        phase = (t * 0.8 + i * 0.4) % 1.2
+        if phase > 1.0:
+            continue
+        scale = 0.7 + i * 0.3
+        x = cx + math.sin(phase * 3.0 + i) * 20.0 + i * 25.0
+        y = cy - phase * 90.0 - i * 30.0
+        size = 12 * scale
+        draw.line([(x, y), (x + size, y)], fill=color, width=2)
+        draw.line([(x + size, y), (x, y + size)], fill=color, width=2)
+        draw.line([(x, y + size), (x + size, y + size)], fill=color, width=2)
+
+
 def draw_beat_text(
     img: Image.Image,
     plan: BeatPlan,
@@ -1158,17 +1359,51 @@ def draw_beat_text(
     end: float,
     section_text: str,
 ) -> None:
-    """Draw the text layer for time ``t``: narration line, inner voice and number pops.
+    """Draw the text layer for time ``t``: narration line, inner voice, shatter text and number pops.
 
     Kept apart from :func:`draw_beat` so the caller can paint it after the camera. Text
     drawn before a zoom would drift toward the frame edge and into the letterbox bars.
     """
     if section_text.strip():
         _draw_narration(img, section_text, t, start, end)
-    if plan.inner_voice:
+
+    if plan.shatter_text:
+        impact_t = start + max(0.35, (end - start) * 0.62)
+        if t < impact_t:
+            if not plan.inner_voice:
+                draw_inner_voice(
+                    img,
+                    plan.shatter_text,
+                    (960, 200),
+                    t,
+                    start,
+                    end,
+                    color=PALETTE.inner_voice,
+                )
+            else:
+                draw_inner_voice(
+                    img,
+                    plan.inner_voice,
+                    INNER_VOICE_ANCHOR,
+                    t,
+                    start,
+                    end,
+                    color=PALETTE.inner_voice,
+                )
+        else:
+            draw_shatter_text(
+                img,
+                plan.shatter_text,
+                (960, 200),
+                t,
+                impact_t,
+                duration=0.65,
+            )
+    elif plan.inner_voice:
         draw_inner_voice(
             img, plan.inner_voice, INNER_VOICE_ANCHOR, t, start, end, color=PALETTE.inner_voice
         )
+
     _draw_number_pops(img, plan.number_values, t, start, end)
 
 
@@ -1236,6 +1471,27 @@ def draw_beat(
             head_turn=_head_turn(section_text),
         )
 
+    # Action FX & Sleep Z's
+    if plan.pose in ("box_punch", "climb_slope"):
+        direction = "diagonal" if plan.pose == "climb_slope" else "right"
+        speed_fn = getattr(_fx_mod, "draw_speed_lines", _fallback_draw_speed_lines)
+        speed_fn(img, t, direction=direction, count=16, color=(234, 230, 223))
+
+    if plan.pose == "box_punch" and any(prop.name == "heavy_bag" for prop in plan.props):
+        spark_fn = getattr(_fx_mod, "draw_hit_sparks", _fallback_draw_hit_sparks)
+        spark_fn(
+            img,
+            (1320, 480),
+            t,
+            start=start + 0.15,
+            duration=max(0.4, end - start),
+            color=(245, 197, 24),
+        )
+
+    if plan.pose in LYING_POSES:
+        zs_fn = getattr(_fx_mod, "draw_sleep_zs", _fallback_draw_sleep_zs)
+        zs_fn(img, (RIG_ORIGIN[0] - 80, RIG_ORIGIN[1] - 110), t, color=(234, 230, 223))
+
     for src in plan.light_sources:
         source_glow(img, src.center, src.radius, src.color, src.intensity)
 
@@ -1249,9 +1505,12 @@ def draw_beat(
 __all__ = [
     "BeatPalette",
     "BeatPlan",
+    "FRIDGE_WORDS",
     "LightSource",
     "MAX_PROPS",
+    "MIRROR_WORDS",
     "PALETTE",
+    "PropPlacement",
     "PropSpec",
     "beat_palette",
     "draw_beat",

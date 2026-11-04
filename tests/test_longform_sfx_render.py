@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import wave
 
-from autoshorts.longform.render import SFX_GAIN, build_sfx_track
+from autoshorts.longform.render import (
+    _MIRROR_CRACK_WORDS,
+    _WHOOSH_WORDS,
+    SFX_GAIN,
+    build_sfx_track,
+)
 from autoshorts.longform.tts import SECTION_GAP_SECONDS
 from autoshorts.longform.types import Section, SectionAudio
 
@@ -51,3 +56,55 @@ def test_writes_sfx_wav_spanning_full_timeline(tmp_path):
 
 def test_sfx_gain_is_low():
     assert SFX_GAIN == 0.35
+
+
+def test_keyword_tuples_defined():
+    assert "mirror" in _MIRROR_CRACK_WORDS
+    assert "shatter" in _MIRROR_CRACK_WORDS
+    assert "can't" in _MIRROR_CRACK_WORDS
+    assert "punch" in _WHOOSH_WORDS
+    assert "strike" in _WHOOSH_WORDS
+    assert "run" in _WHOOSH_WORDS
+
+
+def test_schedules_glass_crack_and_whoosh_from_words(tmp_path):
+    sections = [
+        _audio(
+            _section("Look in mirror", "You can't quit now"),
+            2.0,
+            words=[
+                {"word": "Look", "start": 0.1, "end": 0.3},
+                {"word": "mirror", "start": 0.5, "end": 0.8},
+                {"word": "can't", "start": 1.0, "end": 1.3},
+            ],
+        ),
+        _audio(
+            _section("Fight back", "Sprint up the mountain"),
+            2.5,
+            words=[
+                {"word": "Sprint", "start": 0.2, "end": 0.5},
+                {"word": "mountain", "start": 0.8, "end": 1.2},
+            ],
+        ),
+    ]
+
+    out = build_sfx_track(sections, tmp_path)
+    assert out is not None and out.is_file()
+
+    sfx_files = [f.name for f in (tmp_path / "sfx").glob("*.wav")]
+    assert any(f.startswith("glass_crack") for f in sfx_files)
+    assert any(f.startswith("whoosh") for f in sfx_files)
+
+
+def test_schedules_glass_crack_and_whoosh_from_section_text_fallback(tmp_path):
+    sections = [
+        _audio(_section("Shatter the Excuse", "No excuses today"), 2.0, words=[]),
+        _audio(_section("The Fight", "Strike the bag with force"), 2.0, words=[]),
+    ]
+
+    out = build_sfx_track(sections, tmp_path)
+    assert out is not None and out.is_file()
+
+    sfx_files = [f.name for f in (tmp_path / "sfx").glob("*.wav")]
+    assert any(f.startswith("glass_crack") for f in sfx_files)
+    assert any(f.startswith("whoosh") for f in sfx_files)
