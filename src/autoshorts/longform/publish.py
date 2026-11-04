@@ -179,17 +179,105 @@ def validate_longform_upload(
     return clean_title, fixed_desc, clean_tags
 
 
-def publish_longform(result: LongformResult, config=None, state_manager=None) -> str:
+def enqueue_longform_on_quota(
+    result: LongformResult,
+    config=None,
+    state_manager=None,
+) -> str:
+    """Store and queue a long-form video in the scheduler queue for upload when quota resets."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from autoshorts.core.config import load_config
+    from autoshorts.core.models import Job, JobStatus
+    from autoshorts.core.state_manager import StateManager
+    from autoshorts.scheduler.spread_scheduler import SpreadScheduler
+
+    cfg = config or load_config(None)
+    state = state_manager or StateManager()
+    upload_cfg = getattr(cfg, "upload", None)
+
+    title, description, tags = validate_longform_upload(
+        result, result.title, result.description, list(result.hashtags)
+    )
+
+    default_privacy = (
+        getattr(upload_cfg, "privacy_status", None)
+        or getattr(upload_cfg, "default_privacy_status", None)
+        or "public"
+    )
+
+    pt_tz = ZoneInfo("America/Los_Angeles")
+    now_pt = datetime.now(pt_tz)
+    tomorrow_pt = (now_pt + timedelta(days=1)).replace(
+        hour=8, minute=0, second=0, microsecond=0
+    )
+
+    from autoshorts.quota.quota_tracker import QuotaTracker
+    qt = QuotaTracker(state_manager=state, config=cfg)
+    scheduler = SpreadScheduler(config=cfg, state_manager=state, quota_tracker=qt)
+    pending = state.get_pending_scheduled_slots()
+    if pending:
+        last_str = pending[-1]["scheduled_time"]
+        last_time = datetime.fromisoformat(last_str)
+        if last_time.tzinfo is None:
+            last_time = last_time.replace(tzinfo=pt_tz)
+        anchor = max(last_time, tomorrow_pt)
+        scheduled_time = scheduler.slot_generator.next_slot_after(anchor)
+    else:
+        scheduled_time = scheduler.slot_generator.next_slot_after(tomorrow_pt)
+
+    job_id = Path(result.video_path).stem
+    job = Job(
+        id=job_id,
+        source_url=f"longform:{result.topic}",
+        status=JobStatus.SCHEDULED,
+        rendered_video_path=str(result.video_path),
+        thumbnail_path=str(result.thumbnail_path) if result.thumbnail_path else None,
+        is_short=False,
+        title=title,
+        category_id=getattr(upload_cfg, "category_id", "27"),
+        scheduled_time=scheduled_time,
+        privacy_status=default_privacy,
+    )
+    state.save_job(job)
+
+    state.enqueue_for_upload(
+        job_id=job_id,
+        video_path=str(result.video_path),
+        title=title,
+        description=description,
+        scheduled_time=scheduled_time,
+        privacy_status=default_privacy,
+        tags=tags,
+    )
+
+    logger.info(
+        "Stored and queued longform video %s for upload at %s upon quota reset.",
+        job_id,
+        scheduled_time.isoformat(),
+    )
+    return f"queued://{job_id}?scheduled_time={scheduled_time.isoformat()}"
+
+
+def publish_longform(
+    result: LongformResult,
+    config=None,
+    state_manager=None,
+    queue_on_quota: bool = False,
+) -> str:
     """Upload one rendered long-form video and return its YouTube/export URL.
 
     Respects `cfg.upload.mode` ('api', 'studio', or 'local') and raises RuntimeError
     when today's cap (`upload.longform_daily_cap`) is already used or no URL is returned.
+    If queue_on_quota is True, quota exhaustion stores the video and queues it in the scheduler.
     The network upload runs outside the lock; the lock covers only the cap check and the
     count. A slot is reserved before the upload and released if the upload fails.
     """
     from autoshorts.core.config import load_config
     from autoshorts.core.state_manager import StateManager
+    from autoshorts.core.exceptions import QuotaExhaustedError
     from autoshorts.quota.quota_tracker import QuotaTracker
+    from autoshorts.uploader.errors import QuotaExceededError
     from autoshorts.uploader.local_exporter import LocalExportUploader
     from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
     from autoshorts.uploader.youtube_api import YouTubeApiUploader
@@ -207,10 +295,22 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
     # Scheduled publish: the uploader sets publishAt and YouTube requires private until then.
     publish_at = getattr(upload_cfg, "publish_at", None)
     scheduled = bool(publish_at) and upload_mode in ("api", "studio")
-    privacy = "private" if scheduled else "public"
+    default_privacy = (
+        getattr(upload_cfg, "privacy_status", None)
+        or getattr(upload_cfg, "default_privacy_status", None)
+        or "public"
+    )
+    privacy = "private" if scheduled else default_privacy
     schedule_kwargs = {"publish_at": str(publish_at)} if scheduled else {}
 
-    _reserve_slot(eff_cap)
+    try:
+        _reserve_slot(eff_cap)
+    except RuntimeError as cap_err:
+        if queue_on_quota:
+            logger.warning("Daily longform cap reached (%s). Enqueueing for tomorrow.", cap_err)
+            return enqueue_longform_on_quota(result, config=cfg, state_manager=state_manager)
+        raise
+
     try:
         if upload_mode == "studio":
             uploader = PlaywrightStudioUploader(config=cfg)
@@ -235,8 +335,20 @@ def publish_longform(result: LongformResult, config=None, state_manager=None) ->
         )
         if not getattr(upload_result, "url", None):
             raise RuntimeError("YouTube upload did not return a video URL.")
-    except BaseException:
+    except BaseException as ex:
         _release_slot()
+        is_quota_err = (
+            isinstance(ex, (QuotaExceededError, QuotaExhaustedError))
+            or "quota" in str(ex).lower()
+            or "uploadlimitexceeded" in str(ex).lower()
+            or "cap reached" in str(ex).lower()
+        )
+        if queue_on_quota and is_quota_err:
+            logger.warning(
+                "Upload quota reached for longform video (%s). Storing video and queueing for upload upon quota reset.",
+                ex,
+            )
+            return enqueue_longform_on_quota(result, config=cfg, state_manager=state_manager)
         raise
 
     logger.info("Published long-form video %s (mode=%s)", upload_result.url, upload_mode)

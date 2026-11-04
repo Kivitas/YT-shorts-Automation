@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from autoshorts.longform.publish import (
     LONGFORM_DAILY_CAP,
+    enqueue_longform_on_quota,
     longform_remaining_today,
     longform_uploads_today,
     publish_longform,
@@ -51,6 +52,7 @@ __all__ = [
     "SectionAudio",
     "TopicSpec",
     "build_script",
+    "enqueue_longform_on_quota",
     "description_for",
     "estimate_duration",
     "get_topic",

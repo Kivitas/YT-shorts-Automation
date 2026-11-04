@@ -44,7 +44,7 @@ class QuotaTracker:
         # Resolve quota config
         if quota_config is not None:
             self.quota_config = quota_config
-        elif config is not None:
+        elif config is not None and hasattr(config, "quota"):
             self.quota_config = config.quota
         else:
             self.quota_config = QuotaConfig()
@@ -52,7 +52,7 @@ class QuotaTracker:
         # Resolve scheduler config
         if scheduler_config is not None:
             self.scheduler_config = scheduler_config
-        elif config is not None:
+        elif config is not None and hasattr(config, "scheduler"):
             self.scheduler_config = config.scheduler
         else:
             self.scheduler_config = SchedulerConfig()

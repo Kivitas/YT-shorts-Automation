@@ -88,9 +88,12 @@ class SpreadScheduler:
             if hasattr(config, "scheduler"):
                 self.settings = config
                 self.config = config.scheduler
-            else:
+            elif isinstance(config, SchedulerConfig):
                 self.settings = None
                 self.config = config
+            else:
+                self.settings = config
+                self.config = SchedulerConfig()
         else:
             self.settings = None
             self.config = SchedulerConfig()
@@ -507,6 +510,7 @@ class SpreadScheduler:
                 if isinstance(uploader_to_use, PlaywrightStudioUploader):
                     kwargs["privacy_status"] = effective_privacy
 
+                is_short = getattr(job_obj, "is_short", True) if job_obj is not None else True
                 extra_sched_kwargs = {
                     "category_id": category_id,
                     "altered_content": altered_content,
@@ -515,6 +519,7 @@ class SpreadScheduler:
                     "auto_pin_comment": auto_pin_comment,
                     "pin_comment_text": pin_comment_text,
                     "thumbnail_path": thumbnail_path,
+                    "is_short": is_short,
                 }
                 try:
                     import inspect
