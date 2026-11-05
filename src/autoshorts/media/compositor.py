@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,7 @@ from autoshorts.core.config import Settings, load_config
 from autoshorts.core.models import EditDecisionList
 from autoshorts.core.paths import get_assets_dir
 from autoshorts.media.dopamine_effects import (
+    DopaminePreset,
     build_color_grading_filter,
     build_complex_filtergraph,
     build_watermark_filter,
@@ -717,6 +718,72 @@ def _discard_partial_output(path: Path) -> None:
         logger.warning("Could not remove partial render %s: %s", path, exc)
 
 
+# Video arguments for the libx264 CPU retry after a hardware encoder fails at runtime.
+_CPU_FALLBACK_VIDEO_ARGS: tuple[str, ...] = (
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "22",
+    "-threads",
+    "4",
+    "-pix_fmt",
+    "yuv420p",
+)
+
+
+@dataclass(frozen=True)
+class _TrimPlan:
+    """Source timing for one render: probed streams, the EDL hook window and the output length."""
+
+    has_src_audio: bool
+    has_src_video: bool
+    hook_in: float
+    hook_out: float
+    target_duration: float
+
+
+@dataclass(frozen=True)
+class _ComposeStyle:
+    """Effective per-render styling: explicit arguments, then config branding, audio and job."""
+
+    layout: str
+    crop_focus: str
+    color_grading: str
+    watermark_text: str | None
+    watermark_position: str
+    watermark_opacity: float
+    progress_bar_position: str
+    progress_bar_color: str
+    voice_boost: bool
+    target_lufs: float
+    bg_music_volume: float
+    bgm_path: Path | str | None
+    split_separator: str | None
+    branding_split_separator: str | None
+
+
+@dataclass(frozen=True)
+class _InputPlan:
+    """ffmpeg input arguments in order (source, background, music, sfx) and the stream indices."""
+
+    args: list[str]
+    is_single_source: bool
+    music_index: int | None
+    sfx_index: int | None
+
+
+@dataclass(frozen=True)
+class _ChyronPlan:
+    """Resolved broadcast lower-third settings for one render, passed on to the filtergraph."""
+
+    enabled: bool | None
+    badge: str | None
+    text: str | None
+    style: str | None
+
+
 class FFmpegCompositor:
     """High-efficiency deterministic FFmpeg compositor for vertical 9:16 YouTube Shorts.
 
@@ -781,6 +848,121 @@ class FFmpegCompositor:
 
         Atomic write: renders to .tmp.mp4 first then renames via os.replace.
         """
+        src, sub_path, dest = self._prepare_paths(source_clip, subtitles_path, output_path)
+        job = kwargs.get("job")
+        style = self._resolve_style(
+            job=job,
+            layout_mode=layout_mode,
+            crop_focus=crop_focus,
+            color_grading=color_grading,
+            watermark_text=watermark_text,
+            watermark_position=watermark_position,
+            watermark_opacity=watermark_opacity,
+            progress_bar_position=progress_bar_position,
+            progress_bar_color=progress_bar_color,
+            voice_boost=voice_boost,
+            target_lufs=target_lufs,
+            bg_music_volume=bg_music_volume,
+            split_separator=split_separator,
+            bg_music_path=bg_music_path,
+            bgm_path=bgm_path,
+            bgm_volume=bgm_volume,
+        )
+        trim = self._plan_trim(src, edl)
+        logger.info(
+            "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs, layout=%s, has_v=%s, has_a=%s)",
+            job_id,
+            trim.target_duration,
+            trim.hook_in,
+            trim.hook_out,
+            style.layout,
+            trim.has_src_video,
+            trim.has_src_audio,
+        )
+
+        preset, enable_ducking = self._resolve_preset(dopamine_level, style.bgm_path)
+        encoder = self._get_encoder()
+        chyron = self._resolve_chyron(
+            enable_chyron=enable_chyron,
+            chyron_badge=chyron_badge,
+            chyron_text=chyron_text,
+            chyron_style=chyron_style,
+            job=job,
+            preset=preset,
+        )
+        inputs = self._build_inputs(
+            src=src,
+            edl=edl,
+            background_path=background_path,
+            background_offset=background_offset,
+            trim=trim,
+            style=style,
+            preset=preset,
+            enable_ducking=enable_ducking,
+        )
+        fonts_param = self._fonts_dir_param()
+        effective_release = self._resolve_ducking_release(rhythm_ducking_release, job)
+        graph_edl = _edl_on_trimmed_timeline(edl, trim.hook_in)
+
+        # The subtitles path is staged (copied) when it contains an apostrophe. The staged copy
+        # is removed in the finally block below.
+        staged_sub = stage_subtitles_for_filter(sub_path, dest, job_id)
+        filtergraph, out_v, out_a = self._build_filtergraph(
+            style=style,
+            preset=preset,
+            trim=trim,
+            inputs=inputs,
+            graph_edl=graph_edl,
+            subtitles_path=staged_sub or sub_path,
+            fonts_param=fonts_param,
+            split_separator=self._resolve_split_separator(style, preset),
+            chyron=chyron,
+            rhythm_ducking_release=effective_release,
+        )
+
+        cmd = [
+            self.ffmpeg_binary,
+            "-y",
+            *inputs.args,
+            "-filter_complex",
+            filtergraph,
+            "-map",
+            out_v,
+            "-map",
+            out_a,
+        ]
+        cmd.extend(self._video_encoder_args(encoder))
+        # Audio encoding parameters
+        cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100"])
+        # Hard cap at 60s and shortest stream
+        cmd.extend(["-t", f"{trim.target_duration:.3f}", "-shortest"])
+        cmd.extend(["-max_muxing_queue_size", "1024"])
+        # Move the moov atom to the front so the Short starts playing before full download
+        cmd.extend(["-movflags", "+faststart"])
+        # Temporary atomic destination
+        tmp_dest = dest.with_name(f".tmp_{job_id}_{dest.name}")
+        cmd.append(str(tmp_dest))
+
+        try:
+            return self._render_and_publish(cmd, encoder, tmp_dest, dest, job_id, timeout_sec)
+        except subprocess.TimeoutExpired as exc:
+            _discard_partial_output(tmp_dest)
+            raise TimeoutError(
+                f"FFmpeg compositing for job {job_id} exceeded timeout ({timeout_sec}s)"
+            ) from exc
+        except Exception:
+            # Cleanup must never hide the original failure (on Windows the file may be locked).
+            _discard_partial_output(tmp_dest)
+            raise
+        finally:
+            if staged_sub is not None:
+                staged_sub.unlink(missing_ok=True)
+
+    @staticmethod
+    def _prepare_paths(
+        source_clip: Path | str, subtitles_path: Path | str, output_path: Path | str
+    ) -> tuple[Path, Path, Path]:
+        """Resolve the input and output paths, create the output directory, check inputs exist."""
         src = Path(source_clip).resolve()
         sub_path = Path(subtitles_path).resolve()
         dest = Path(output_path).resolve()
@@ -790,41 +972,33 @@ class FFmpegCompositor:
             raise FileNotFoundError(f"Source clip not found: {src}")
         if not sub_path.is_file():
             raise FileNotFoundError(f"Subtitles file not found: {sub_path}")
+        return src, sub_path, dest
 
-        # Resolve studio styling defaults from config branding / audio mastering
+    def _resolve_style(
+        self,
+        *,
+        job: Any,
+        layout_mode: str | None,
+        crop_focus: str,
+        color_grading: str | None,
+        watermark_text: str | None,
+        watermark_position: str | None,
+        watermark_opacity: float | None,
+        progress_bar_position: str | None,
+        progress_bar_color: str | None,
+        voice_boost: bool | None,
+        target_lufs: float | None,
+        bg_music_volume: float | None,
+        split_separator: str | None,
+        bg_music_path: Path | str | None,
+        bgm_path: Path | str | None,
+        bgm_volume: float | None,
+    ) -> _ComposeStyle:
+        """Resolve styling: explicit arguments first, then config branding, audio and job defaults."""
         branding = getattr(self.config, "branding", None)
         audio_cfg = getattr(self.config, "audio_mastering", None)
         job_defaults = getattr(self.config, "job_defaults", None)
 
-        eff_layout = layout_mode or getattr(job_defaults, "layout_mode", None) or "split_50_50"
-        eff_crop_focus = crop_focus or getattr(job_defaults, "crop_focus", None) or "center"
-        eff_color_grading = color_grading or getattr(branding, "color_grading", None) or "none"
-        eff_watermark_text = (
-            watermark_text
-            if watermark_text is not None
-            else getattr(branding, "watermark_text", None)
-        )
-        eff_watermark_pos = (
-            watermark_position or getattr(branding, "watermark_position", None) or "top_right"
-        )
-        eff_watermark_opacity = (
-            watermark_opacity
-            if watermark_opacity is not None
-            else getattr(branding, "watermark_opacity", 0.65)
-        )
-        eff_pb_pos = (
-            progress_bar_position or getattr(branding, "progress_bar_position", None) or "bottom"
-        )
-        eff_pb_color = (
-            progress_bar_color or getattr(branding, "progress_bar_color", None) or "red@0.8"
-        )
-        eff_voice_boost = (
-            voice_boost if voice_boost is not None else getattr(audio_cfg, "voice_boost", True)
-        )
-        eff_target_lufs = (
-            target_lufs if target_lufs is not None else getattr(audio_cfg, "target_lufs", -14.0)
-        )
-        job = kwargs.get("job")
         effective_bgm = (
             bg_music_path or bgm_path or (getattr(job, "bgm_path", None) if job else None)
         )
@@ -837,17 +1011,53 @@ class FFmpegCompositor:
                 else (getattr(job, "bgm_volume", None) if job else None)
             )
         )
-        eff_bg_music_vol = (
-            effective_vol
-            if effective_vol is not None
-            else getattr(audio_cfg, "bg_music_volume", 0.18)
+        return _ComposeStyle(
+            layout=layout_mode or getattr(job_defaults, "layout_mode", None) or "split_50_50",
+            crop_focus=crop_focus or getattr(job_defaults, "crop_focus", None) or "center",
+            color_grading=color_grading or getattr(branding, "color_grading", None) or "none",
+            watermark_text=(
+                watermark_text
+                if watermark_text is not None
+                else getattr(branding, "watermark_text", None)
+            ),
+            watermark_position=(
+                watermark_position or getattr(branding, "watermark_position", None) or "top_right"
+            ),
+            watermark_opacity=(
+                watermark_opacity
+                if watermark_opacity is not None
+                else getattr(branding, "watermark_opacity", 0.65)
+            ),
+            progress_bar_position=(
+                progress_bar_position
+                or getattr(branding, "progress_bar_position", None)
+                or "bottom"
+            ),
+            progress_bar_color=(
+                progress_bar_color or getattr(branding, "progress_bar_color", None) or "red@0.8"
+            ),
+            voice_boost=(
+                voice_boost if voice_boost is not None else getattr(audio_cfg, "voice_boost", True)
+            ),
+            target_lufs=(
+                target_lufs if target_lufs is not None else getattr(audio_cfg, "target_lufs", -14.0)
+            ),
+            bg_music_volume=(
+                effective_vol
+                if effective_vol is not None
+                else getattr(audio_cfg, "bg_music_volume", 0.18)
+            ),
+            bgm_path=effective_bgm,
+            split_separator=split_separator,
+            branding_split_separator=getattr(branding, "split_separator", None),
         )
 
-        # Early stream detection for robust audio/video layout configuration
+    @staticmethod
+    def _plan_trim(src: Path, edl: EditDecisionList | None) -> _TrimPlan:
+        """Probe the source streams and duration, then apply the EDL hook window."""
         has_src_audio = has_audio_stream(src)
         has_src_video = has_video_stream(src)
 
-        # Determine target duration and trim points
         clip_duration = probe_media_duration(src)
         hook_in = 0.0
         hook_out = clip_duration
@@ -859,24 +1069,226 @@ class FFmpegCompositor:
                 hook_out = min(clip_duration, edl.hook_out_sec)
 
         target_duration = max(1.0, min(60.0, hook_out - hook_in))
-        logger.info(
-            "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs, layout=%s, has_v=%s, has_a=%s)",
-            job_id,
-            target_duration,
-            hook_in,
-            hook_out,
-            eff_layout,
-            has_src_video,
-            has_src_audio,
+        return _TrimPlan(
+            has_src_audio=has_src_audio,
+            has_src_video=has_src_video,
+            hook_in=hook_in,
+            hook_out=hook_out,
+            target_duration=target_duration,
         )
 
+    def _resolve_preset(
+        self, dopamine_level: str | None, bgm_path: Path | str | None
+    ) -> tuple[DopaminePreset, bool]:
+        """Return the dopamine preset and whether music ducking is on (an explicit BGM forces it)."""
         level = dopamine_level or self.config.job_defaults.dopamine_level
         preset = get_dopamine_preset(level)
-        enable_ducking = bool(effective_bgm) or getattr(preset, "enable_music_ducking", False)
+        enable_ducking = bool(bgm_path) or getattr(preset, "enable_music_ducking", False)
         if enable_ducking and not getattr(preset, "enable_music_ducking", False):
             preset = replace(preset, enable_music_ducking=True)
-        encoder = self._get_encoder()
+        return preset, enable_ducking
 
+    @staticmethod
+    def _source_input_args(src: Path, trim: _TrimPlan) -> list[str]:
+        """Input 0: the source clip, seeked to the hook start and limited to the target duration."""
+        args: list[str] = []
+        if trim.hook_in > 0:
+            args.extend(["-ss", f"{trim.hook_in:.3f}"])
+        args.extend(["-t", f"{trim.target_duration:.3f}", "-i", str(src)])
+        return args
+
+    def _background_input_args(
+        self,
+        background_path: Path | str | None,
+        background_offset: float | None,
+        edl: EditDecisionList | None,
+        trim: _TrimPlan,
+    ) -> list[str]:
+        """Input 1 for multi-source layouts: a gameplay clip, an asset pick, or a lavfi gradient."""
+        target_duration = trim.target_duration
+        bg_file: Path | None = None
+        bg_offset = 0.0
+
+        bg_reject_reason: str | None = None
+        if background_path:
+            p = Path(background_path).resolve()
+            if not p.is_file():
+                bg_reject_reason = "file missing"
+            elif not has_video_stream(p):
+                bg_reject_reason = "no video stream"
+            else:
+                bg_file = p
+                bg_dur = probe_media_duration(p)
+                max_offset = max(0.0, bg_dur - target_duration)
+                if background_offset is not None and background_offset >= 0:
+                    bg_offset = min(float(background_offset), max_offset)
+                else:
+                    bg_offset = random.uniform(0.0, min(180.0, max_offset))
+        elif background_path is None:
+            bg_reject_reason = "no background selected"
+
+        if bg_file is None:
+            # Try to pick from assets directory based on EDL or config
+            bg_style = (
+                (edl.background_style_recommendation if edl else None)
+                or self.config.job_defaults.background_category
+                or "minecraft"
+            )
+            cand_file, cand_offset = pick_background_asset(category=bg_style, auto_fetch=False)
+            if cand_file and cand_file.is_file() and has_video_stream(cand_file):
+                bg_file = cand_file
+                bg_offset = cand_offset
+
+        if bg_file and bg_file.is_file():
+            return [
+                "-ss",
+                f"{bg_offset:.3f}",
+                "-stream_loop",
+                "-1",
+                "-t",
+                f"{target_duration:.3f}",
+                "-i",
+                str(bg_file),
+            ]
+
+        # Procedural fallback background via lavfi color/gradients
+        logger.warning(
+            "Gameplay background unavailable (path=%s, reason=%s); "
+            "rendering procedural gradient instead.",
+            background_path,
+            bg_reject_reason or "no usable background in assets",
+        )
+        lavfi_dims = "1080x1920" if not trim.has_src_video else "1080x960"
+        return [
+            "-f",
+            "lavfi",
+            "-t",
+            f"{target_duration:.3f}",
+            "-i",
+            f"color=c=0x16213e:s={lavfi_dims}:r=30:d={target_duration:.3f}",
+        ]
+
+    @staticmethod
+    def _audio_asset_input_args(
+        preset: DopaminePreset,
+        enable_ducking: bool,
+        bgm_path: Path | str | None,
+        target_duration: float,
+        first_index: int,
+    ) -> tuple[list[str], int | None, int | None]:
+        """Optional music bed (when ducking) and sfx inputs. Returns (args, music_idx, sfx_idx)."""
+        args: list[str] = []
+        music_idx: int | None = None
+        sfx_idx: int | None = None
+        next_index = first_index
+
+        if enable_ducking:
+            chosen_music: Path | str | None = None
+            if bgm_path:
+                chosen_music = bgm_path
+            else:
+                music_files = find_user_audio_assets("music")
+                if music_files:
+                    chosen_music = random.choice(music_files)
+
+            if chosen_music:
+                args.extend(
+                    ["-stream_loop", "-1", "-t", f"{target_duration:.3f}", "-i", str(chosen_music)]
+                )
+                music_idx = next_index
+                next_index += 1
+
+        if preset.enable_sfx:
+            sfx_files = find_user_audio_assets("sfx")
+            if sfx_files:
+                chosen_sfx = random.choice(sfx_files)
+                args.extend(["-i", str(chosen_sfx)])
+                sfx_idx = next_index
+
+        return args, music_idx, sfx_idx
+
+    def _build_inputs(
+        self,
+        *,
+        src: Path,
+        edl: EditDecisionList | None,
+        background_path: Path | str | None,
+        background_offset: float | None,
+        trim: _TrimPlan,
+        style: _ComposeStyle,
+        preset: DopaminePreset,
+        enable_ducking: bool,
+    ) -> _InputPlan:
+        """Assemble ffmpeg inputs in order: source, background (multi-source only), music, sfx."""
+        args = self._source_input_args(src, trim)
+        # Single source vs multi-source layouts (audio-only source cannot be single-source)
+        is_single_source = (style.layout in ("full_blur_bg", "full_center_crop")) and (
+            trim.has_src_video
+        )
+        next_index = 1 if is_single_source else 2
+        if not is_single_source:
+            args.extend(self._background_input_args(background_path, background_offset, edl, trim))
+        audio_args, music_idx, sfx_idx = self._audio_asset_input_args(
+            preset, enable_ducking, style.bgm_path, trim.target_duration, next_index
+        )
+        args.extend(audio_args)
+        return _InputPlan(
+            args=args,
+            is_single_source=is_single_source,
+            music_index=music_idx,
+            sfx_index=sfx_idx,
+        )
+
+    @staticmethod
+    def _fonts_dir_param() -> Path | None:
+        """The assets fonts dir for the subtitles filter, or None when it is absent or unusable."""
+        fonts_dir = get_assets_dir() / "fonts"
+        fonts_param = fonts_dir if fonts_dir.is_dir() else None
+        if fonts_param is not None and "'" in str(fonts_param):
+            logger.warning(
+                "Fonts dir %s contains an apostrophe and cannot be used in the subtitles filter; "
+                "rendering without fontsdir.",
+                fonts_param,
+            )
+            fonts_param = None
+        return fonts_param
+
+    @staticmethod
+    def _resolve_split_separator(style: _ComposeStyle, preset: DopaminePreset) -> str:
+        """Split separator style: explicit argument, then branding, then the preset."""
+        return (
+            style.split_separator
+            or style.branding_split_separator
+            or (
+                preset.split_separator_style
+                if getattr(preset, "enable_split_separator", False)
+                else "none"
+            )
+        )
+
+    @staticmethod
+    def _resolve_ducking_release(rhythm_ducking_release: int | None, job: Any) -> int | None:
+        """Ducking release in ms: explicit argument, then the job's rhythm metadata."""
+        # A falsy explicit value (including 0) counts as unset, as it always has.
+        effective_release = rhythm_ducking_release or None
+        if effective_release is None and job:
+            r_meta = getattr(job, "rhythm_metadata", None)
+            if isinstance(r_meta, dict):
+                effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
+        return effective_release
+
+    def _resolve_chyron(
+        self,
+        *,
+        enable_chyron: bool | None,
+        chyron_badge: str | None,
+        chyron_text: str | None,
+        chyron_style: str | None,
+        job: Any,
+        preset: DopaminePreset,
+    ) -> _ChyronPlan:
+        """Resolve lower-third chyron settings: arguments first, then branding, job and preset."""
+        branding = getattr(self.config, "branding", None)
         # Resolve broadcast lower-third chyron defaults
         eff_enable_chyron = (
             enable_chyron
@@ -897,7 +1309,8 @@ class FFmpegCompositor:
             if chyron_text is not None
             else (
                 getattr(branding, "chyron_text", None)
-                if hasattr(branding, "chyron_text") and getattr(branding, "chyron_text", None) is not None
+                if hasattr(branding, "chyron_text")
+                and getattr(branding, "chyron_text", None) is not None
                 else (
                     getattr(job, "chyron_text", None)
                     if job and hasattr(job, "chyron_text")
@@ -914,186 +1327,66 @@ class FFmpegCompositor:
             or getattr(branding, "chyron_style", None)
             or getattr(preset, "chyron_style", "broadcast_red")
         )
-
-        # Input 0: Source clip with trim
-        cmd = [self.ffmpeg_binary, "-y"]
-        if hook_in > 0:
-            cmd.extend(["-ss", f"{hook_in:.3f}"])
-        cmd.extend(["-t", f"{target_duration:.3f}", "-i", str(src)])
-
-        # Single source vs multi-source layouts (audio-only source cannot be single-source)
-        is_single_source = (eff_layout in ("full_blur_bg", "full_center_crop")) and has_src_video
-        has_bg_file = False
-        next_input_idx = 1 if is_single_source else 2
-
-        if not is_single_source:
-            # Input 1: Background video or procedural lavfi
-            bg_file: Path | None = None
-            bg_offset = 0.0
-
-            bg_reject_reason: str | None = None
-            if background_path:
-                p = Path(background_path).resolve()
-                if not p.is_file():
-                    bg_reject_reason = "file missing"
-                elif not has_video_stream(p):
-                    bg_reject_reason = "no video stream"
-                else:
-                    bg_file = p
-                    bg_dur = probe_media_duration(p)
-                    max_offset = max(0.0, bg_dur - target_duration)
-                    if background_offset is not None and background_offset >= 0:
-                        bg_offset = min(float(background_offset), max_offset)
-                    else:
-                        bg_offset = random.uniform(0.0, min(180.0, max_offset))
-            elif background_path is None:
-                bg_reject_reason = "no background selected"
-
-            if bg_file is None:
-                # Try to pick from assets directory based on EDL or config
-                bg_style = (
-                    (edl.background_style_recommendation if edl else None)
-                    or self.config.job_defaults.background_category
-                    or "minecraft"
-                )
-                cand_file, cand_offset = pick_background_asset(category=bg_style, auto_fetch=False)
-                if cand_file and cand_file.is_file() and has_video_stream(cand_file):
-                    bg_file = cand_file
-                    bg_offset = cand_offset
-
-            if bg_file and bg_file.is_file():
-                cmd.extend(
-                    [
-                        "-ss",
-                        f"{bg_offset:.3f}",
-                        "-stream_loop",
-                        "-1",
-                        "-t",
-                        f"{target_duration:.3f}",
-                        "-i",
-                        str(bg_file),
-                    ]
-                )
-                has_bg_file = True
-            else:
-                # Procedural fallback background via lavfi color/gradients
-                logger.warning(
-                    "Gameplay background unavailable (path=%s, reason=%s); "
-                    "rendering procedural gradient instead.",
-                    background_path,
-                    bg_reject_reason or "no usable background in assets",
-                )
-                lavfi_dims = "1080x1920" if not has_src_video else "1080x960"
-                cmd.extend(
-                    [
-                        "-f",
-                        "lavfi",
-                        "-t",
-                        f"{target_duration:.3f}",
-                        "-i",
-                        f"color=c=0x16213e:s={lavfi_dims}:r=30:d={target_duration:.3f}",
-                    ]
-                )
-                has_bg_file = True
-
-        # Optional audio assets (music, sfx)
-        music_idx: int | None = None
-        sfx_idx: int | None = None
-
-        if enable_ducking:
-            chosen_music: Path | str | None = None
-            if effective_bgm:
-                chosen_music = effective_bgm
-            else:
-                music_files = find_user_audio_assets("music")
-                if music_files:
-                    chosen_music = random.choice(music_files)
-
-            if chosen_music:
-                cmd.extend(
-                    ["-stream_loop", "-1", "-t", f"{target_duration:.3f}", "-i", str(chosen_music)]
-                )
-                music_idx = next_input_idx
-                next_input_idx += 1
-
-        if preset.enable_sfx:
-            sfx_files = find_user_audio_assets("sfx")
-            if sfx_files:
-                chosen_sfx = random.choice(sfx_files)
-                cmd.extend(["-i", str(chosen_sfx)])
-                sfx_idx = next_input_idx
-                next_input_idx += 1
-
-        fonts_dir = get_assets_dir() / "fonts"
-        fonts_param = fonts_dir if fonts_dir.is_dir() else None
-        if fonts_param is not None and "'" in str(fonts_param):
-            logger.warning(
-                "Fonts dir %s contains an apostrophe and cannot be used in the subtitles filter; "
-                "rendering without fontsdir.",
-                fonts_param,
-            )
-            fonts_param = None
-
-        # Resolve split separator style
-        eff_split_sep = (
-            split_separator
-            or getattr(branding, "split_separator", None)
-            or (
-                preset.split_separator_style
-                if getattr(preset, "enable_split_separator", False)
-                else "none"
-            )
+        return _ChyronPlan(
+            enabled=eff_enable_chyron,
+            badge=eff_chyron_badge,
+            text=eff_chyron_text,
+            style=eff_chyron_style,
         )
 
-        effective_release = rhythm_ducking_release or kwargs.get("rhythm_ducking_release")
-        if effective_release is None and job:
-            r_meta = getattr(job, "rhythm_metadata", None)
-            if isinstance(r_meta, dict):
-                effective_release = r_meta.get("ducking_release_ms") or r_meta.get("release_ms")
-
-        # EDL times are source-clip times, but the input is trimmed with -ss hook_in, so the filter
-        # graph sees a timeline starting at 0. Shift cuts and punch-ins to match.
-        graph_edl = _edl_on_trimmed_timeline(edl, hook_in)
-
-        # Build complex filtergraph (subtitles path staged if it contains an apostrophe)
-        staged_sub = stage_subtitles_for_filter(sub_path, dest, job_id)
+    @staticmethod
+    def _build_filtergraph(
+        *,
+        style: _ComposeStyle,
+        preset: DopaminePreset,
+        trim: _TrimPlan,
+        inputs: _InputPlan,
+        graph_edl: EditDecisionList | None,
+        subtitles_path: Path,
+        fonts_param: Path | None,
+        split_separator: str,
+        chyron: _ChyronPlan,
+        rhythm_ducking_release: int | None,
+    ) -> tuple[str, str, str]:
+        """Build the complex filtergraph. Returns (filtergraph, video label, audio label)."""
         filtergraph, out_v, out_a = build_complex_filtergraph(
-            source_clip_has_audio=has_src_audio,
-            subtitles_path=staged_sub or sub_path,
-            duration_sec=target_duration,
+            source_clip_has_audio=trim.has_src_audio,
+            subtitles_path=subtitles_path,
+            duration_sec=trim.target_duration,
             dopamine_preset=preset,
             edl=graph_edl,
             fonts_dir=fonts_param,
-            has_background_video=has_bg_file,
-            music_input_index=music_idx,
-            sfx_input_index=sfx_idx,
-            layout_mode=eff_layout,
-            color_grading=eff_color_grading,
-            watermark_text=eff_watermark_text,
-            watermark_position=eff_watermark_pos,
-            watermark_opacity=eff_watermark_opacity,
-            progress_bar_position=eff_pb_pos,
-            progress_bar_color=eff_pb_color,
-            voice_boost=eff_voice_boost,
-            target_lufs=eff_target_lufs,
-            bg_music_volume=eff_bg_music_vol,
-            crop_focus=eff_crop_focus,
-            split_separator=eff_split_sep,
-            source_clip_has_video=has_src_video,
-            rhythm_ducking_release=effective_release,
-            enable_chyron=eff_enable_chyron,
-            chyron_badge=eff_chyron_badge,
-            chyron_text=eff_chyron_text,
-            chyron_style=eff_chyron_style,
+            has_background_video=not inputs.is_single_source,
+            music_input_index=inputs.music_index,
+            sfx_input_index=inputs.sfx_index,
+            layout_mode=style.layout,
+            color_grading=style.color_grading,
+            watermark_text=style.watermark_text,
+            watermark_position=style.watermark_position,
+            watermark_opacity=style.watermark_opacity,
+            progress_bar_position=style.progress_bar_position,
+            progress_bar_color=style.progress_bar_color,
+            voice_boost=style.voice_boost,
+            target_lufs=style.target_lufs,
+            bg_music_volume=style.bg_music_volume,
+            crop_focus=style.crop_focus,
+            split_separator=split_separator,
+            source_clip_has_video=trim.has_src_video,
+            rhythm_ducking_release=rhythm_ducking_release,
+            enable_chyron=chyron.enabled,
+            chyron_badge=chyron.badge,
+            chyron_text=chyron.text,
+            chyron_style=chyron.style,
         )
 
-        if effective_release is not None and "release=300" in filtergraph:
-            filtergraph = filtergraph.replace("release=300", f"release={int(effective_release)}")
+        if rhythm_ducking_release is not None and "release=300" in filtergraph:
+            filtergraph = filtergraph.replace(
+                "release=300", f"release={int(rhythm_ducking_release)}"
+            )
+        return filtergraph, out_v, out_a
 
-        cmd.extend(["-filter_complex", filtergraph])
-        cmd.extend(["-map", out_v, "-map", out_a])
-
-        # Video encoding parameters with hardware encoder pixel format detection
+    def _video_encoder_args(self, encoder: EncoderInfo) -> list[str]:
+        """Video encoder arguments, with the pixel format swapped to what the encoder accepts."""
         enc_args = list(encoder.get_ffmpeg_args())
         pix_fmt = detect_encoder_pixel_format(
             encoder.codec,
@@ -1104,84 +1397,60 @@ class FFmpegCompositor:
             idx = enc_args.index("-pix_fmt")
             if idx + 1 < len(enc_args):
                 enc_args[idx + 1] = pix_fmt
-        cmd.extend(enc_args)
+        return enc_args
 
-        # Audio encoding parameters
-        cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100"])
+    @staticmethod
+    def _run_with_cpu_fallback(
+        cmd: list[str], encoder: EncoderInfo, timeout_sec: float
+    ) -> tuple[subprocess.CompletedProcess[str], float]:
+        """Run ffmpeg. A failed hardware encode is retried once with libx264.
 
-        # Hard cap at 60s and shortest stream
-        cmd.extend(["-t", f"{target_duration:.3f}", "-shortest"])
-        cmd.extend(["-max_muxing_queue_size", "1024"])
-        # Move the moov atom to the front so the Short starts playing before full download
-        cmd.extend(["-movflags", "+faststart"])
-
-        # Temporary atomic destination
-        tmp_dest = dest.with_name(f".tmp_{job_id}_{dest.name}")
-        cmd.append(str(tmp_dest))
-
-        logger.debug("Executing FFmpeg command: %s", " ".join(cmd))
+        Returns (process, seconds the first attempt took). The elapsed time excludes the retry.
+        """
         start_time = time.time()
-
-        try:
-            proc = run_command_with_cleanup(
-                cmd,
-                timeout=timeout_sec,
+        proc = run_command_with_cleanup(cmd, timeout=timeout_sec)
+        elapsed = time.time() - start_time
+        if proc.returncode != 0 and encoder.is_hardware_accelerated:
+            logger.warning(
+                "Hardware encoder %s failed (code %d). Retrying with libx264 CPU fallback...",
+                encoder.codec,
+                proc.returncode,
             )
-            elapsed = time.time() - start_time
-            if proc.returncode != 0:
-                # If hardware encoder failed, retry with CPU fallback libx264
-                if encoder.is_hardware_accelerated:
-                    logger.warning(
-                        "Hardware encoder %s failed (code %d). Retrying with libx264 CPU fallback...",
-                        encoder.codec,
-                        proc.returncode,
-                    )
-                    cpu_args = [
-                        "-c:v",
-                        "libx264",
-                        "-preset",
-                        "veryfast",
-                        "-crf",
-                        "22",
-                        "-threads",
-                        "4",
-                        "-pix_fmt",
-                        "yuv420p",
-                    ]
-                    if "-c:v" in cmd:
-                        c_idx = cmd.index("-c:v")
-                        a_idx = cmd.index("-c:a") if "-c:a" in cmd else len(cmd) - 1
-                        cmd_fallback = cmd[:c_idx] + cpu_args + cmd[a_idx:]
-                        proc = run_command_with_cleanup(cmd_fallback, timeout=timeout_sec)
+            if "-c:v" in cmd:
+                c_idx = cmd.index("-c:v")
+                a_idx = cmd.index("-c:a") if "-c:a" in cmd else len(cmd) - 1
+                cmd_fallback = cmd[:c_idx] + list(_CPU_FALLBACK_VIDEO_ARGS) + cmd[a_idx:]
+                proc = run_command_with_cleanup(cmd_fallback, timeout=timeout_sec)
+        return proc, elapsed
 
-            if proc.returncode != 0:
-                if tmp_dest.is_file():
-                    tmp_dest.unlink(missing_ok=True)
-                raise RuntimeError(
-                    f"FFmpeg compositing failed (exit code {proc.returncode}):\n"
-                    f"{_stderr_tail(proc.stderr)}"
-                )
+    def _render_and_publish(
+        self,
+        cmd: list[str],
+        encoder: EncoderInfo,
+        tmp_dest: Path,
+        dest: Path,
+        job_id: str,
+        timeout_sec: float,
+    ) -> Path:
+        """Run ffmpeg, check the temporary output, and atomically move it into place."""
+        logger.debug("Executing FFmpeg command: %s", " ".join(cmd))
+        proc, elapsed = self._run_with_cpu_fallback(cmd, encoder, timeout_sec)
 
-            # Atomic rename on success
-            if not tmp_dest.is_file():
-                raise RuntimeError(f"FFmpeg completed but output file was not created: {tmp_dest}")
+        if proc.returncode != 0:
+            if tmp_dest.is_file():
+                tmp_dest.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"FFmpeg compositing failed (exit code {proc.returncode}):\n"
+                f"{_stderr_tail(proc.stderr)}"
+            )
 
-            os.replace(tmp_dest, dest)
-            logger.info("Compositing job %s completed in %.1fs -> %s", job_id, elapsed, dest)
-            return dest
+        # Atomic rename on success
+        if not tmp_dest.is_file():
+            raise RuntimeError(f"FFmpeg completed but output file was not created: {tmp_dest}")
 
-        except subprocess.TimeoutExpired as exc:
-            _discard_partial_output(tmp_dest)
-            raise TimeoutError(
-                f"FFmpeg compositing for job {job_id} exceeded timeout ({timeout_sec}s)"
-            ) from exc
-        except Exception:
-            # Cleanup must never hide the original failure (on Windows the file may be locked).
-            _discard_partial_output(tmp_dest)
-            raise
-        finally:
-            if staged_sub is not None:
-                staged_sub.unlink(missing_ok=True)
+        os.replace(tmp_dest, dest)
+        logger.info("Compositing job %s completed in %.1fs -> %s", job_id, elapsed, dest)
+        return dest
 
     def generate_preview(
         self,
