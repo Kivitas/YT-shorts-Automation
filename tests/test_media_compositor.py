@@ -1491,6 +1491,114 @@ def test_complex_filtergraph_with_visual_momentum():
     assert "[top_momentum][bottom]vstack=inputs=2:shortest=1[stacked]" in fg
 
 
+def test_complex_filtergraph_with_chyron_overlay():
+    """Verify that build_complex_filtergraph integrates broadcast chyron overlay."""
+    from dataclasses import replace
+
+    preset = get_dopamine_preset("medium")
+    assert preset.enable_chyron is False
+    assert preset.chyron_badge == "BREAKING NEWS"
+    assert preset.chyron_style == "broadcast_red"
+
+    # 1. Explicit enable_chyron=True
+    fg, out_v, out_a = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        layout_mode="split_50_50",
+        enable_chyron=True,
+        chyron_badge="EXCLUSIVE",
+        chyron_text="AI MAJOR BREAKTHROUGH",
+        chyron_style="broadcast_red",
+    )
+    assert "[with_chyron]" in fg
+    assert "drawbox=" in fg
+    assert "drawtext=" in fg
+    assert "EXCLUSIVE" in fg
+
+    # 2. Preset with enable_chyron=True
+    preset_chyron = replace(preset, enable_chyron=True, chyron_badge="SPECIAL REPORT")
+    fg_preset, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset_chyron,
+        chyron_text="DEVELOPING STORY TODAY",
+    )
+    assert "[with_chyron]" in fg_preset
+    assert "SPECIAL REPORT" in fg_preset
+
+    # 3. Non-empty chyron_text automatically triggers chyron
+    fg_text, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+        chyron_text="AUTOMATIC CHYRON ACTIVATION",
+    )
+    assert "[with_chyron]" in fg_text
+    assert "AUTOMATIC CHYRON ACTIVATION" in fg_text
+
+    # 4. Default without chyron
+    fg_none, _, _ = build_complex_filtergraph(
+        source_clip_has_audio=True,
+        subtitles_path="subs.ass",
+        duration_sec=20.0,
+        dopamine_preset=preset,
+    )
+    assert "[with_chyron]" not in fg_none
+
+
+def test_compose_chyron_parameters(tmp_path: Path):
+    """Verify that Compositor.compose() resolves and propagates chyron parameters."""
+    src_video = tmp_path / "src.mp4"
+    src_video.write_bytes(b"dummy source")
+    sub_file = tmp_path / "subs.ass"
+    sub_file.write_text("[Script Info]\n", encoding="utf-8")
+    out_file = tmp_path / "output.mp4"
+
+    comp = FFmpegCompositor()
+    captured_cmd: list[str] = []
+
+    def mock_run(cmd, *args, **kwargs):
+        nonlocal captured_cmd
+        if cmd and "ffmpeg" in str(cmd[0]):
+            captured_cmd = list(cmd)
+            target_tmp = cmd[-1]
+            if target_tmp.endswith(".mp4"):
+                Path(target_tmp).write_bytes(b"rendered bytes")
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        return mock_proc
+
+    with (
+        patch("subprocess.run", side_effect=mock_run),
+        patch("autoshorts.media.compositor.probe_media_duration", return_value=30.0),
+        patch("autoshorts.media.compositor.has_audio_stream", return_value=True),
+        patch("autoshorts.media.compositor.has_video_stream", return_value=True),
+    ):
+        comp.compose(
+            job_id="job_chyron_compose_test",
+            source_clip=src_video,
+            edl=None,
+            background_path=None,
+            subtitles_path=sub_file,
+            output_path=out_file,
+            dopamine_level="medium",
+            enable_chyron=True,
+            chyron_badge="BREAKING NEWS",
+            chyron_text="LIVE CHYRON IN COMPOSITOR",
+            chyron_style="broadcast_red",
+        )
+
+    fg_idx = captured_cmd.index("-filter_complex")
+    filtergraph = captured_cmd[fg_idx + 1]
+    assert "[with_chyron]" in filtergraph
+    assert "LIVE CHYRON IN COMPOSITOR" in filtergraph
+    assert "BREAKING NEWS" in filtergraph
+
+
 def test_align_words_with_text_prompt_and_anchoring(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

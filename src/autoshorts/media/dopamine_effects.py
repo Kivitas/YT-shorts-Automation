@@ -42,6 +42,9 @@ class DopaminePreset:
     enable_hook_card: bool
     enable_split_separator: bool = False
     split_separator_style: str = "none"
+    enable_chyron: bool = False
+    chyron_badge: str = "BREAKING NEWS"
+    chyron_style: str = "broadcast_red"
 
 
 DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
@@ -55,6 +58,9 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_hook_card=False,
         enable_split_separator=False,
         split_separator_style="none",
+        enable_chyron=False,
+        chyron_badge="BREAKING NEWS",
+        chyron_style="broadcast_red",
     ),
     "low": DopaminePreset(
         level="low",
@@ -66,6 +72,9 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_hook_card=False,
         enable_split_separator=False,
         split_separator_style="none",
+        enable_chyron=False,
+        chyron_badge="BREAKING NEWS",
+        chyron_style="broadcast_red",
     ),
     "medium": DopaminePreset(
         level="medium",
@@ -77,6 +86,9 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_hook_card=True,
         enable_split_separator=False,
         split_separator_style="none",
+        enable_chyron=False,
+        chyron_badge="BREAKING NEWS",
+        chyron_style="broadcast_red",
     ),
     "high": DopaminePreset(
         level="high",
@@ -88,6 +100,9 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_hook_card=True,
         enable_split_separator=False,
         split_separator_style="none",
+        enable_chyron=False,
+        chyron_badge="BREAKING NEWS",
+        chyron_style="broadcast_red",
     ),
     "ultra": DopaminePreset(
         level="ultra",
@@ -99,6 +114,9 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_hook_card=True,
         enable_split_separator=True,
         split_separator_style="glow",
+        enable_chyron=False,
+        chyron_badge="BREAKING NEWS",
+        chyron_style="broadcast_red",
     ),
     "extreme": DopaminePreset(
         level="extreme",
@@ -110,6 +128,9 @@ DOPAMINE_PRESETS: dict[str, DopaminePreset] = {
         enable_hook_card=True,
         enable_split_separator=True,
         split_separator_style="glow",
+        enable_chyron=False,
+        chyron_badge="BREAKING NEWS",
+        chyron_style="broadcast_red",
     ),
 }
 
@@ -571,6 +592,10 @@ def build_complex_filtergraph(
     rhythm_ducking_release: float | None = None,
     enable_visual_momentum: bool | None = None,
     skip_in_graph_loudnorm: bool = False,
+    enable_chyron: bool = False,
+    chyron_badge: str | None = None,
+    chyron_text: str | None = None,
+    chyron_style: str = "broadcast_red",
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -991,7 +1016,51 @@ def build_complex_filtergraph(
         current_v = bar_out
 
     # -------------------------------------------------------------------------
-    # 5. ASS Subtitle Burn-In
+    # 5. Broadcast Lower-Third Chyron Overlay
+    # -------------------------------------------------------------------------
+    eff_chyron_text = (chyron_text or "").strip()
+    preset_enable_chyron = getattr(dopamine_preset, "enable_chyron", False)
+    should_enable_chyron = (
+        bool(enable_chyron)
+        or bool(preset_enable_chyron)
+        or bool(eff_chyron_text)
+    )
+    if should_enable_chyron:
+        from autoshorts.media.chyron_overlay import ChyronData, build_chyron_filter
+
+        eff_badge = (
+            chyron_badge
+            or getattr(dopamine_preset, "chyron_badge", None)
+            or "BREAKING NEWS"
+        )
+        eff_style = (
+            chyron_style
+            if (chyron_style and chyron_style != "broadcast_red")
+            else (getattr(dopamine_preset, "chyron_style", None) or chyron_style or "broadcast_red")
+        )
+        pos = "seam" if mode in ("split_50_50", "split_70_30") else "lower_third"
+        chyron_obj = ChyronData(
+            category_badge=eff_badge,
+            headline_text=eff_chyron_text,
+            style=eff_style,
+            position=pos,
+            duration_sec=duration_sec,
+        )
+        chyron_filter, chyron_out = build_chyron_filter(
+            chyron=chyron_obj,
+            input_label=current_v,
+            output_label="with_chyron",
+            width=width,
+            height=height,
+            layout_mode=mode,
+            duration_sec=duration_sec,
+        )
+        if chyron_filter:
+            filter_stages.append(chyron_filter)
+            current_v = chyron_out
+
+    # -------------------------------------------------------------------------
+    # 6. ASS Subtitle Burn-In
     # -------------------------------------------------------------------------
     escaped_subs = escape_ffmpeg_filter_path(subtitles_path)
     subtitles_filter = f"subtitles={escaped_subs}"
@@ -1003,7 +1072,7 @@ def build_complex_filtergraph(
     out_video_label = "[outv]"
 
     # -------------------------------------------------------------------------
-    # 6. Audio Mastering: Voice Boost EQ, Loudnorm, Ducked Music, Event SFX, Limiter
+    # 7. Audio Mastering: Voice Boost EQ, Loudnorm, Ducked Music, Event SFX, Limiter
     # -------------------------------------------------------------------------
     if source_clip_has_audio:
         if current_a is None:

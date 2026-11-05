@@ -768,6 +768,10 @@ class FFmpegCompositor:
         bgm_volume: float | None = None,
         rhythm_ducking_release: int | None = None,
         background_offset: float | None = None,
+        enable_chyron: bool | None = None,
+        chyron_badge: str | None = None,
+        chyron_text: str | None = None,
+        chyron_style: str | None = None,
         **kwargs: Any,
     ) -> Path:
         """Render a vertical 1080x1920 Short MP4 via FFmpeg executing the EDL.
@@ -872,6 +876,44 @@ class FFmpegCompositor:
         if enable_ducking and not getattr(preset, "enable_music_ducking", False):
             preset = replace(preset, enable_music_ducking=True)
         encoder = self._get_encoder()
+
+        # Resolve broadcast lower-third chyron defaults
+        eff_enable_chyron = (
+            enable_chyron
+            if enable_chyron is not None
+            else (
+                getattr(branding, "enable_chyron", None)
+                if getattr(branding, "enable_chyron", None) is not None
+                else getattr(preset, "enable_chyron", False)
+            )
+        )
+        eff_chyron_badge = (
+            chyron_badge
+            or getattr(branding, "chyron_badge", None)
+            or getattr(preset, "chyron_badge", "BREAKING NEWS")
+        )
+        eff_chyron_text = (
+            chyron_text
+            if chyron_text is not None
+            else (
+                getattr(branding, "chyron_text", None)
+                if hasattr(branding, "chyron_text") and getattr(branding, "chyron_text", None) is not None
+                else (
+                    getattr(job, "chyron_text", None)
+                    if job and hasattr(job, "chyron_text")
+                    else (
+                        getattr(job, "diagnostics", {}).get("chyron_text")
+                        if job and isinstance(getattr(job, "diagnostics", None), dict)
+                        else None
+                    )
+                )
+            )
+        )
+        eff_chyron_style = (
+            chyron_style
+            or getattr(branding, "chyron_style", None)
+            or getattr(preset, "chyron_style", "broadcast_red")
+        )
 
         # Input 0: Source clip with trim
         cmd = [self.ffmpeg_binary, "-y"]
@@ -1039,6 +1081,10 @@ class FFmpegCompositor:
             split_separator=eff_split_sep,
             source_clip_has_video=has_src_video,
             rhythm_ducking_release=effective_release,
+            enable_chyron=eff_enable_chyron,
+            chyron_badge=eff_chyron_badge,
+            chyron_text=eff_chyron_text,
+            chyron_style=eff_chyron_style,
         )
 
         if effective_release is not None and "release=300" in filtergraph:

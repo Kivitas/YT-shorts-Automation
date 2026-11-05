@@ -17,6 +17,14 @@ from autoshorts.media.background_fetcher import (
     get_backgrounds_inventory,
     normalize_category,
 )
+from autoshorts.media.chyron_overlay import (
+    ChyronData,
+    build_chyron_ass,
+    build_chyron_filter,
+    calculate_chyron_y,
+    derive_automated_chyron,
+    merge_chyron_into_ass,
+)
 from autoshorts.media.compositor import (
     FasterWhisperTranscriber,
     FFmpegCompositor,
@@ -50,6 +58,7 @@ from autoshorts.media.encoder_probe import (
 
 __all__ = [
     "CURATED_BACKGROUND_SOURCES",
+    "ChyronData",
     "DEFAULT_FORMAT_SPEC",
     "DopaminePreset",
     "DownloadError",
@@ -60,11 +69,15 @@ __all__ = [
     "TimedWord",
     "WordChunk",
     "build_ass_script",
+    "build_chyron_ass",
+    "build_chyron_filter",
     "build_complex_filtergraph",
     "build_jumpcut_select_filter",
     "build_progress_bar_filter",
     "build_zoom_punch_filter",
+    "calculate_chyron_y",
     "chunk_words",
+    "derive_automated_chyron",
     "download_preset_backgrounds",
     "ensure_backgrounds_available",
     "extract_16khz_mono_wav",
@@ -78,6 +91,7 @@ __all__ = [
     "is_emphasis_word",
     "is_ffmpeg_available",
     "is_ffprobe_available",
+    "merge_chyron_into_ass",
     "normalize_category",
     "offset_words_for_hook",
     "pick_background_asset",

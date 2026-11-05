@@ -352,6 +352,10 @@ class Job(BaseModel):
     watermark_text: str | None = None
     watermark_position: str = "top_right"
     progress_bar_position: str = "seam"
+    enable_chyron: bool | None = None
+    chyron_badge: str | None = None
+    chyron_text: str | None = None
+    chyron_style: str | None = None
     text_transform: str = "uppercase"
     subtitle_position: str = "center"
     hook_banner_style: str = "neon_box"

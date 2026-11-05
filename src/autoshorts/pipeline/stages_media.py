@@ -781,6 +781,133 @@ class MediaMixin:
         logger.info("Job %s: ranking edit with %d rank cards", job.id, rank_count)
         return merged_path
 
+    def _prepare_chyron_overlay(
+        self: Any,
+        job: Job,
+        layout_mode: str,
+        current_subtitles_path: Path | str | None,
+        **kwargs: Any,
+    ) -> tuple[Path | None, dict[str, Any]]:
+        """Inject broadcast lower-third chyron overlay into ASS subtitles if requested."""
+        import autoshorts.pipeline as pipeline_mod
+        from autoshorts.media.chyron_overlay import (
+            ChyronData,
+            derive_automated_chyron,
+            merge_chyron_into_ass,
+        )
+
+        branding_cfg = getattr(self.config, "branding", None)
+        chyron_diag = job.diagnostics.get("chyron") if isinstance(job.diagnostics, dict) else None
+        if not isinstance(chyron_diag, dict):
+            chyron_diag = {}
+
+        enable_chyron = (
+            kwargs.get("enable_chyron")
+            or getattr(job, "enable_chyron", None)
+            or chyron_diag.get("enable_chyron")
+            or (job.diagnostics.get("enable_chyron") if isinstance(job.diagnostics, dict) else None)
+            or getattr(branding_cfg, "enable_chyron", False)
+            or bool(kwargs.get("chyron_text") or getattr(job, "chyron_text", None) or chyron_diag.get("chyron_text"))
+        )
+        enable_chyron = bool(enable_chyron)
+
+        chyron_badge = (
+            kwargs.get("chyron_badge")
+            or getattr(job, "chyron_badge", None)
+            or chyron_diag.get("chyron_badge")
+            or getattr(branding_cfg, "chyron_badge", "BREAKING NEWS")
+            or "BREAKING NEWS"
+        )
+        chyron_text = (
+            kwargs.get("chyron_text")
+            or getattr(job, "chyron_text", None)
+            or chyron_diag.get("chyron_text")
+        )
+        chyron_style = (
+            kwargs.get("chyron_style")
+            or getattr(job, "chyron_style", None)
+            or chyron_diag.get("chyron_style")
+            or getattr(branding_cfg, "chyron_style", "broadcast_red")
+            or "broadcast_red"
+        )
+
+        chyron_params: dict[str, Any] = {
+            "enable_chyron": enable_chyron,
+            "chyron_badge": chyron_badge,
+            "chyron_text": chyron_text,
+            "chyron_style": chyron_style,
+        }
+
+        if not enable_chyron:
+            return None, chyron_params
+
+        # Derive automated chyron if custom headline was not explicitly provided
+        title = job.video_metadata.title if job.video_metadata else None
+        hook = getattr(job, "hook_text", None)
+        if not hook and job.edl and getattr(job.edl, "hook_text", None):
+            hook = job.edl.hook_text
+        if not hook and job.selected_clips:
+            hook = getattr(job.selected_clips[0], "hook_title", None) or getattr(job.selected_clips[0], "reason", None)
+
+        if chyron_text:
+            chyron_obj = ChyronData(
+                category_badge=str(chyron_badge),
+                headline_text=str(chyron_text),
+                style=str(chyron_style),
+            )
+        else:
+            chyron_obj = derive_automated_chyron(
+                title=title,
+                hook_text=hook,
+                default_badge=str(chyron_badge),
+                style=str(chyron_style),
+            )
+
+        chyron_params["chyron_badge"] = chyron_obj.category_badge
+        chyron_params["chyron_text"] = chyron_obj.headline_text
+        chyron_params["chyron_style"] = chyron_obj.style
+
+        # Total duration for chyron
+        total_sec = 0.0
+        if job.edl and (job.edl.hook_out_sec - job.edl.hook_in_sec) > 0:
+            total_sec = float(job.edl.hook_out_sec - job.edl.hook_in_sec)
+        elif job.video_metadata and job.video_metadata.duration > 0:
+            total_sec = float(job.video_metadata.duration)
+        if total_sec <= 0:
+            total_sec = 30.0
+
+        merged_path = None
+        if current_subtitles_path and Path(current_subtitles_path).is_file():
+            try:
+                base_ass = Path(current_subtitles_path).read_text(encoding="utf-8")
+                merged_ass = merge_chyron_into_ass(
+                    base_ass,
+                    chyron_obj,
+                    total_duration_sec=total_sec,
+                    layout_mode=layout_mode,
+                )
+                work_dir = pipeline_mod.get_work_dir() / job.id
+                work_dir.mkdir(parents=True, exist_ok=True)
+                merged_path = work_dir / f"{job.id}_chyron.ass"
+                merged_path.write_text(merged_ass, encoding="utf-8")
+                logger.info(
+                    "Job %s: lower-third chyron overlay merged into ASS subtitles [%s: %s]",
+                    job.id,
+                    chyron_obj.category_badge,
+                    chyron_obj.headline_text,
+                )
+            except Exception as exc:
+                logger.warning("Job %s: failed to merge chyron into ASS subtitles: %s", job.id, exc)
+
+        job.record_diagnostic(
+            "chyron",
+            enabled=True,
+            badge=chyron_obj.category_badge,
+            headline=chyron_obj.headline_text,
+            style=chyron_obj.style,
+        )
+        return merged_path, chyron_params
+
     def _run_compositing_stage(
         self: Any,
         job: Job,
@@ -876,6 +1003,15 @@ class MediaMixin:
                 comp_kwargs["background_path"] = None
                 comp_kwargs["subtitles_path"] = ranking_subs
                 layout_mode = "full_center_crop"
+
+            chyron_subs, chyron_info = self._prepare_chyron_overlay(
+                job,
+                layout_mode=layout_mode,
+                current_subtitles_path=comp_kwargs.get("subtitles_path"),
+                **kwargs,
+            )
+            if chyron_subs is not None:
+                comp_kwargs["subtitles_path"] = chyron_subs
             bgm_file = getattr(job, "bgm_path", None)
             duck_release_ms: int | None = None
             if bgm_file:
@@ -910,6 +1046,10 @@ class MediaMixin:
                 "bg_music_path": bgm_file,
                 "rhythm_ducking_release": duck_release_ms,
                 "duck_release_ms": duck_release_ms,
+                "enable_chyron": chyron_info.get("enable_chyron", False),
+                "chyron_badge": chyron_info.get("chyron_badge"),
+                "chyron_text": chyron_info.get("chyron_text"),
+                "chyron_style": chyron_info.get("chyron_style"),
             }
             try:
                 c_sig = inspect.signature(self.compositor.compose)
@@ -1043,3 +1183,5 @@ class MediaMixin:
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
             raise
+
+    _run_compose_stage = _run_compositing_stage

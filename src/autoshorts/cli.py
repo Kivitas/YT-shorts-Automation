@@ -84,6 +84,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--instructions", "-i", type=str, default=None, help="Custom operator clipping instructions"
     )
+    run_parser.add_argument(
+        "--chyron",
+        "--breaking-news",
+        action="store_true",
+        help="Add broadcast lower-third chyron overlay",
+    )
+    run_parser.add_argument(
+        "--chyron-badge",
+        type=str,
+        default=None,
+        help="Custom category badge for chyron (e.g. 'BREAKING NEWS', 'EXCLUSIVE')",
+    )
+    run_parser.add_argument(
+        "--chyron-text",
+        type=str,
+        default=None,
+        help="Custom headline text for chyron overlay",
+    )
 
     # 2. dashboard command
     dash_parser = subparsers.add_parser("dashboard", help="Launch the local FastAPI web dashboard")
@@ -204,6 +222,9 @@ def cmd_run(args: argparse.Namespace, config: Settings, state_manager: StateMana
         background_category=args.bg,
         dopamine_level=args.preset,
         custom_instructions=args.instructions,
+        enable_chyron=getattr(args, "chyron", False),
+        chyron_badge=getattr(args, "chyron_badge", None),
+        chyron_text=getattr(args, "chyron_text", None),
     )
 
     print("\n" + "=" * 60)

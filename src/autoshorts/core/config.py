@@ -70,6 +70,9 @@ class JobDefaultsConfig(BaseModel):
     background_style: str = "minecraft"
     dopamine_level: Literal["low", "medium", "high"] = "medium"
     auto_approve: bool = False
+    enable_chyron: bool = False
+    chyron_badge: str = "BREAKING NEWS"
+    chyron_style: str = "broadcast_red"
 
 
 class EditPlannerConfig(BaseModel):
@@ -235,6 +238,12 @@ class VisualBrandingConfig(BaseModel):
     progress_bar_height: int = Field(default=12, ge=4, le=24)
     hook_opener: str = "none"  # none, zoom_burst, flash
     outro_cta_text: str | None = None
+    enable_chyron: bool = False
+    chyron_badge: str = "BREAKING NEWS"
+    chyron_style: str = "broadcast_red"
+
+
+BrandingConfig = VisualBrandingConfig
 
 
 class AudioMasteringConfig(BaseModel):
@@ -463,6 +472,7 @@ __all__ = [
     "ActiveWindowConfig",
     "AppConfig",
     "AudioMasteringConfig",
+    "BrandingConfig",
     "CleanupConfig",
     "ColorGradingPreset",
     "ConfigError",

@@ -237,6 +237,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         dopamine_level: str | None = None,
         style_preset: str | None = None,
         privacy_status: str | None = None,
+        enable_chyron: bool | None = None,
+        chyron_badge: str | None = None,
+        chyron_text: str | None = None,
     ) -> Job:
         """Run the pipeline for one job, unless another process is already working on it.
 
@@ -256,6 +259,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
                     dopamine_level=dopamine_level,
                     style_preset=style_preset,
                     privacy_status=privacy_status,
+                    enable_chyron=enable_chyron,
+                    chyron_badge=chyron_badge,
+                    chyron_text=chyron_text,
                 )
         except JobLockedError as exc:
             logger.info("Skipping job %s: %s", job.id, exc)
@@ -270,6 +276,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         dopamine_level: str | None = None,
         style_preset: str | None = None,
         privacy_status: str | None = None,
+        enable_chyron: bool | None = None,
+        chyron_badge: str | None = None,
+        chyron_text: str | None = None,
     ) -> Job:
         job = self._resolve_job(job_or_id)
 
@@ -277,6 +286,22 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
             job.style_preset = style_preset
         if privacy_status is not None:
             job.privacy_status = privacy_status
+        if enable_chyron is not None:
+            job.enable_chyron = enable_chyron
+        if chyron_badge is not None:
+            job.chyron_badge = chyron_badge
+        if chyron_text is not None:
+            job.chyron_text = chyron_text
+
+        if enable_chyron is not None or chyron_badge is not None or chyron_text is not None:
+            chyron_diag: dict[str, Any] = {}
+            if enable_chyron is not None:
+                chyron_diag["enable_chyron"] = enable_chyron
+            if chyron_badge is not None:
+                chyron_diag["chyron_badge"] = chyron_badge
+            if chyron_text is not None:
+                chyron_diag["chyron_text"] = chyron_text
+            job.record_diagnostic("chyron", **chyron_diag)
 
         # If job is already completed or cleaned, return immediately
         if job.status in (JobStatus.COMPLETED, JobStatus.CLEANED):
@@ -334,6 +359,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
                         job,
                         background_category=background_category,
                         dopamine_level=dopamine_level,
+                        enable_chyron=enable_chyron,
+                        chyron_badge=chyron_badge,
+                        chyron_text=chyron_text,
                     )
 
             # Stage 9: Upload / Schedule / Review (network only, no render slot)
@@ -429,6 +457,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         custom_instructions: str | None = None,
         style_preset: str | None = None,
         privacy_status: str | None = None,
+        enable_chyron: bool = False,
+        chyron_badge: str | None = None,
+        chyron_text: str | None = None,
     ) -> list[Job]:
         """Process a batch of links or Job objects sequentially."""
         if isinstance(jobs_or_links, (str, Path)) or (
@@ -440,6 +471,22 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         else:
             jobs = list(jobs_or_links)  # type: ignore[arg-type]
 
+        for j in jobs:
+            if enable_chyron or chyron_badge is not None or chyron_text is not None:
+                if hasattr(j, "enable_chyron"):
+                    j.enable_chyron = enable_chyron
+                if hasattr(j, "chyron_badge") and chyron_badge is not None:
+                    j.chyron_badge = chyron_badge
+                if hasattr(j, "chyron_text") and chyron_text is not None:
+                    j.chyron_text = chyron_text
+                chyron_dict: dict[str, Any] = {"enable_chyron": enable_chyron}
+                if chyron_badge is not None:
+                    chyron_dict["chyron_badge"] = chyron_badge
+                if chyron_text is not None:
+                    chyron_dict["chyron_text"] = chyron_text
+                j.record_diagnostic("chyron", **chyron_dict)
+                self.state_manager.save_job(j)
+
         def _process_single(j: Job) -> Job:
             try:
                 return self.process_job(
@@ -450,6 +497,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
                     dopamine_level=dopamine_level,
                     style_preset=style_preset,
                     privacy_status=privacy_status,
+                    enable_chyron=enable_chyron,
+                    chyron_badge=chyron_badge,
+                    chyron_text=chyron_text,
                 )
             except Exception as err:
                 logger.warning("Batch processing encountered error on job %s: %s", j.id, err)
@@ -475,6 +525,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         dopamine_level: str | None = None,
         style_preset: str | None = None,
         privacy_status: str | None = None,
+        enable_chyron: bool | None = None,
+        chyron_badge: str | None = None,
+        chyron_text: str | None = None,
     ) -> Job:
         """Reset a failed job to QUEUED and re-execute pipeline."""
         job = self.state_manager.get_job(job_id)
@@ -503,6 +556,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
             dopamine_level=dopamine_level,
             style_preset=style_preset,
             privacy_status=privacy_status,
+            enable_chyron=enable_chyron,
+            chyron_badge=chyron_badge,
+            chyron_text=chyron_text,
         )
 
     def _resolve_job(self, job_or_id: Job | str) -> Job:
