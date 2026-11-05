@@ -113,6 +113,10 @@
           <button id="scheduler-toggle-btn" class="btn btn-secondary btn-sm" onclick="toggleScheduler()">
             <span id="scheduler-toggle">Pause Scheduler</span>
           </button>
+          <button id="scheduler-upload-now-btn" class="btn btn-primary btn-sm" onclick="triggerImmediateUpload()" title="Trigger immediate upload of next queued video">
+            <svg class="ui-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -2px;"><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>
+            <span id="scheduler-upload-now-text">Upload Now</span>
+          </button>
           <span class="pending-badge" id="pending-slots-count">0 queued slots</span>
         </div>
       </div>

@@ -234,6 +234,7 @@ body {
   align-items: center;
   gap: 0.75rem;
   margin-top: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .pending-badge {
@@ -871,11 +872,17 @@ input:checked + .slider:before {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 0.5rem;
   background-color: var(--bg-card);
   border: 1px solid #21262d;
   border-radius: 4px;
   padding: 0.35rem 0.6rem;
   font-size: 0.74rem;
+}
+
+.timeline-upload-btn {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .timeline-item-title {

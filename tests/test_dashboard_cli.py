@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -253,6 +254,112 @@ def test_dashboard_upload_now_endpoint(dashboard_client: dict[str, Any]):
     data = res.json()
     assert data["success"] is True
     assert data["upload_result"]["video_id"] == "vid_uploaded_btn"
+
+
+def test_dashboard_scheduler_upload_now_with_pending_slot(dashboard_client: dict[str, Any]):
+    """Verify POST /api/scheduler/upload-now uploads the next queued scheduled slot."""
+    client: TestClient = dashboard_client["client"]
+    state_mgr: StateManager = dashboard_client["state_mgr"]
+    scheduler: MagicMock = dashboard_client["scheduler"]
+
+    job_id = "job_sched_now_1"
+    job = Job(id=job_id, source_url="https://youtube.com/watch?v=sched1")
+    state_mgr.save_job(job)
+    state_mgr.enqueue_for_upload(
+        job_id=job_id,
+        video_path="output/sched1.mp4",
+        title="Scheduled Short 1",
+        description="Desc 1",
+        scheduled_time=datetime.now(UTC) + timedelta(minutes=15),
+        slot_jitter_minutes=5,
+    )
+
+    mock_res = UploadResult(
+        video_id="yt_slot_immediate",
+        url="https://youtube.com/shorts/yt_slot_immediate",
+        status="uploaded",
+        verified=True,
+    )
+    scheduler.upload_now.return_value = mock_res
+
+    res = client.post("/api/scheduler/upload-now")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["job_id"] == job_id
+    assert data["title"] == "Scheduled Short 1"
+    assert data["upload_result"]["video_id"] == "yt_slot_immediate"
+    scheduler.upload_now.assert_called_once_with(job_id)
+
+
+def test_dashboard_scheduler_upload_now_with_ready_job_fallback(dashboard_client: dict[str, Any]):
+    """Verify POST /api/scheduler/upload-now falls back to ready-for-review job when no slots are scheduled."""
+    client: TestClient = dashboard_client["client"]
+    state_mgr: StateManager = dashboard_client["state_mgr"]
+    pipeline: MagicMock = dashboard_client["pipeline"]
+
+    job = Job(
+        id="job_ready_fallback",
+        source_url="https://youtube.com/watch?v=fallback",
+        status=JobStatus.READY_FOR_REVIEW,
+        rendered_video_path="work/fallback.mp4",
+    )
+    state_mgr.save_job(job)
+
+    mock_res = UploadResult(
+        video_id="yt_fallback_immediate",
+        url="https://youtube.com/shorts/yt_fallback_immediate",
+        status="uploaded",
+        verified=True,
+    )
+    pipeline._run_immediate_upload.return_value = mock_res
+
+    res = client.post("/api/scheduler/upload-now")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["job_id"] == "job_ready_fallback"
+    assert data["upload_result"]["video_id"] == "yt_fallback_immediate"
+    pipeline._run_immediate_upload.assert_called_once()
+
+
+def test_dashboard_scheduler_upload_now_empty_queue_raises_400(dashboard_client: dict[str, Any]):
+    """Verify POST /api/scheduler/upload-now returns 400 when queue has no pending videos."""
+    client: TestClient = dashboard_client["client"]
+    res = client.post("/api/scheduler/upload-now")
+    assert res.status_code == 400
+    assert "No pending videos in queue waiting to upload" in res.json()["detail"]
+
+
+def test_dashboard_scheduler_upload_next_alias(dashboard_client: dict[str, Any]):
+    """Verify POST /api/scheduler/upload-next works as an alias."""
+    client: TestClient = dashboard_client["client"]
+    state_mgr: StateManager = dashboard_client["state_mgr"]
+    scheduler: MagicMock = dashboard_client["scheduler"]
+
+    job_id = "job_sched_alias"
+    job = Job(id=job_id, source_url="https://youtube.com/watch?v=alias")
+    state_mgr.save_job(job)
+    state_mgr.enqueue_for_upload(
+        job_id=job_id,
+        video_path="output/alias.mp4",
+        title="Alias Short",
+        description="Alias Desc",
+        scheduled_time=datetime.now(UTC) + timedelta(minutes=10),
+        slot_jitter_minutes=5,
+    )
+    mock_res = UploadResult(
+        video_id="yt_alias_immediate",
+        url="https://youtube.com/shorts/yt_alias_immediate",
+        status="uploaded",
+        verified=True,
+    )
+    scheduler.upload_now.return_value = mock_res
+
+    res = client.post("/api/scheduler/upload-next")
+    assert res.status_code == 200
+    assert res.json()["success"] is True
+    scheduler.upload_now.assert_called_once_with(job_id)
 
 
 # =============================================================================
@@ -605,7 +712,7 @@ def test_dashboard_jobs_enriched_with_seo_metadata_and_youtube_link(
     )
     state_mgr.save_job(uploaded_job)
 
-    res = client.get("/api/jobs")
+    res = client.get("/api/jobs?include_uploaded=true")
     assert res.status_code == 200
     jobs = res.json()["jobs"]
     target = next((j for j in jobs if j["id"] == "job_seo_test"), None)

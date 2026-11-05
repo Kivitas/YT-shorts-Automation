@@ -315,6 +315,13 @@ async function refreshScheduler() {
     }
 
     if (pending) pending.textContent = `${s.pending_count || 0} queued slots`;
+    const uploadBtn = document.getElementById("scheduler-upload-now-btn");
+    if (uploadBtn) {
+      const count = s.pending_count || 0;
+      uploadBtn.title = count > 0
+        ? `Trigger immediate upload of next queued video (${count} waiting in queue)`
+        : "Trigger immediate upload of next available video";
+    }
     renderPacingStatus();
   } catch (err) {
     console.debug("Scheduler refresh error:", err);
@@ -327,6 +334,57 @@ async function toggleScheduler() {
     if (res.ok) refreshScheduler();
   } catch (err) {
     alert("Failed to toggle scheduler: " + err);
+  }
+}
+
+async function triggerImmediateUpload() {
+  const uploadBtn = document.getElementById("scheduler-upload-now-btn");
+  const uploadText = document.getElementById("scheduler-upload-now-text");
+  const originalText = uploadText ? uploadText.textContent : "Upload Now";
+
+  const pendingCount = (_lastScheduler && _lastScheduler.pending_count) || 0;
+  const promptMsg = pendingCount > 0
+    ? `Trigger immediate upload for the next queued video (${pendingCount} video(s) in queue)?`
+    : "Trigger immediate upload of the next video in queue?";
+
+  if (!confirm(promptMsg)) return;
+
+  try {
+    if (uploadBtn) {
+      uploadBtn.disabled = true;
+      uploadBtn.classList.add("loading");
+    }
+    if (uploadText) uploadText.textContent = "Uploading...";
+
+    const res = await fetch("/api/scheduler/upload-now", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      const errMsg = data.detail || data.message || "Immediate upload failed.";
+      alert("Immediate upload failed: " + errMsg);
+      return;
+    }
+
+    const jobTitle = data.title || (data.job_id ? `Job #${data.job_id}` : "next video");
+    showToast(`🚀 Dispatched immediate upload for ${jobTitle}!`, "success");
+
+    await Promise.allSettled([
+      refreshScheduler(),
+      refreshSchedulerSlots(),
+      refreshJobs(),
+      refreshQuota(),
+    ]);
+  } catch (err) {
+    alert("Network error while triggering immediate upload: " + err);
+  } finally {
+    if (uploadBtn) {
+      uploadBtn.disabled = false;
+      uploadBtn.classList.remove("loading");
+    }
+    if (uploadText) uploadText.textContent = originalText;
   }
 }
 
@@ -357,10 +415,14 @@ async function refreshSchedulerSlots() {
         ? parseSafariSafeDate(slot.scheduled_time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })
         : "Pending next available window";
       const title = slot.title || `Job #${slot.job_id || "clip"}`;
+      const uploadAction = slot.job_id
+        ? `<button class="btn btn-secondary btn-xs timeline-upload-btn" onclick="uploadNow('${escapeHtml(slot.job_id)}')" title="Upload this slot immediately">Upload Now</button>`
+        : "";
       return `
         <div class="timeline-item">
           <span class="timeline-item-title" title="${escapeHtml(title)}">🎬 ${escapeHtml(title)}</span>
           <span class="timeline-item-time">⏰ ${escapeHtml(timeStr)}</span>
+          ${uploadAction}
         </div>
       `;
     }).join("");

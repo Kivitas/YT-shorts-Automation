@@ -2018,6 +2018,105 @@ def create_app(
             "count": len(enriched_slots),
         }
 
+    @app.post("/api/scheduler/upload-now")
+    @app.post("/api/scheduler/upload-next")
+    async def trigger_scheduler_upload_now(
+        job_id: str | None = None,
+        req: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Trigger immediate upload of the next queued video in the scheduler.
+
+        Dispatches the earliest pending scheduled slot (or ready-for-upload job)
+        immediately, bypassing interval delay while respecting daily/hourly caps.
+        """
+        target_job_id = (req.get("job_id") if isinstance(req, dict) else None) or job_id
+
+        # 1. Check pending scheduled slots
+        pending = state_mgr.get_pending_scheduled_slots()
+        target_slot = None
+        if target_job_id:
+            target_slot = next((s for s in pending if s.get("job_id") == target_job_id), None)
+        elif pending:
+            target_slot = pending[0]
+
+        if target_slot:
+            jid = target_slot["job_id"]
+            try:
+                result = pipe.scheduler.upload_now(jid)
+                res_dump = (
+                    result.model_dump()
+                    if hasattr(result, "model_dump")
+                    else (result.__dict__ if hasattr(result, "__dict__") else str(result))
+                )
+                return {
+                    "success": True,
+                    "job_id": jid,
+                    "title": target_slot.get("title", ""),
+                    "upload_result": res_dump,
+                    "message": f"Successfully uploaded job #{jid} immediately.",
+                }
+            except Exception as e:
+                logger.error("Immediate scheduler upload failed for slot %s: %s", jid, e)
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+        # If a specific job_id was requested but not in scheduler slots, or if no slots exist:
+        if target_job_id:
+            job = state_mgr.get_job(target_job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job {target_job_id} not found")
+            try:
+                result = pipe._run_immediate_upload(job)
+                res_dump = (
+                    result.model_dump()
+                    if hasattr(result, "model_dump")
+                    else (result.__dict__ if hasattr(result, "__dict__") else str(result))
+                )
+                return {
+                    "success": True,
+                    "job_id": job.id,
+                    "title": getattr(job.video_metadata, "title", "") if getattr(job, "video_metadata", None) else "",
+                    "upload_result": res_dump,
+                    "message": f"Successfully uploaded job #{job.id} immediately.",
+                }
+            except Exception as e:
+                logger.error("Immediate upload failed for job %s: %s", job.id, e)
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+        # 2. Fallback: Check for ready-for-review jobs awaiting upload
+        candidates = []
+        if hasattr(state_mgr, "list_jobs"):
+            candidates = state_mgr.list_jobs(status=JobStatus.READY_FOR_REVIEW)
+        if not candidates and hasattr(state_mgr, "get_all_jobs"):
+            candidates = [
+                j for j in state_mgr.get_all_jobs()
+                if getattr(j, "status", None) == JobStatus.READY_FOR_REVIEW
+            ]
+
+        if candidates:
+            job = candidates[0]
+            try:
+                result = pipe._run_immediate_upload(job)
+                res_dump = (
+                    result.model_dump()
+                    if hasattr(result, "model_dump")
+                    else (result.__dict__ if hasattr(result, "__dict__") else str(result))
+                )
+                return {
+                    "success": True,
+                    "job_id": job.id,
+                    "title": getattr(job.video_metadata, "title", "") if getattr(job, "video_metadata", None) else "",
+                    "upload_result": res_dump,
+                    "message": f"Successfully uploaded job #{job.id} immediately.",
+                }
+            except Exception as e:
+                logger.error("Immediate upload failed for job %s: %s", job.id, e)
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+        raise HTTPException(
+            status_code=400,
+            detail="No pending videos in queue waiting to upload.",
+        )
+
     # -------------------------------------------------------------------------
     # Spark Companion Import API
     # -------------------------------------------------------------------------
