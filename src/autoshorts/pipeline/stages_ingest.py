@@ -31,6 +31,40 @@ generate_candidate_windows = getattr(
 )
 
 
+def _load_performance_prior(state_manager: Any, settings: Any, job: Job) -> Any:
+    """Build the historical performance prior for a job, or None when priors are off.
+
+    Any failure is logged and returns None, so a broken analytics store never blocks
+    clip selection. The advisory hook thresholds are recorded on the job diagnostics.
+    """
+    cfg = getattr(settings, "analytics_priors", None)
+    if cfg is None or not getattr(cfg, "enabled", False):
+        return None
+    try:
+        from autoshorts.analytics.attribution import PerformanceAttributionEngine
+        from autoshorts.decider.performance_prior import (
+            build_performance_prior,
+            observations_from_pairs,
+        )
+
+        pairs = PerformanceAttributionEngine(state_manager).get_records_with_jobs()
+        prior = build_performance_prior(observations_from_pairs(pairs), cfg)
+    except Exception as err:
+        logger.debug("Performance prior unavailable: %s", err)
+        return None
+
+    thresholds = prior.hook_thresholds
+    job.record_diagnostic(
+        "performance_prior",
+        status=prior.status,
+        advisory_hook_approve_threshold=thresholds.approve,
+        advisory_hook_patch_threshold=thresholds.patch,
+        advisory_hook_threshold_adapted=thresholds.adapted,
+        advisory_hook_threshold_reason=thresholds.reason,
+    )
+    return prior
+
+
 class IngestMixin:
     """Stage methods for video ingestion: metadata, transcript, slicing, and SemIf."""
 
@@ -277,11 +311,15 @@ class IngestMixin:
             scored = self.decider.score_candidates(job.candidate_windows, instructions=prompt)
             job.candidate_windows = scored
 
-            clips = self.decider.select_clips(
-                scored,
-                count=self.config.job_defaults.clips_per_video,
-                job_id=job.id,
-            )
+            select_kwargs: dict[str, Any] = {
+                "count": self.config.job_defaults.clips_per_video,
+                "job_id": job.id,
+            }
+            # Only passed when priors are enabled, so the default call is unchanged.
+            performance_prior = _load_performance_prior(self.state_manager, self.config, job)
+            if performance_prior is not None:
+                select_kwargs["performance_prior"] = performance_prior
+            clips = self.decider.select_clips(scored, **select_kwargs)
 
             if not clips:
                 raise AutoShortsError(f"SemIf decider selected 0 clips for job {job.id}")

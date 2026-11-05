@@ -175,6 +175,18 @@ integrations:
     enabled: false                 # Enable EachLabs audio and music synthesis
     model: "mureka-generate-music" # Model identifier for EachLabs generation
 
+# Historical analytics -> clip ranking (src/autoshorts/decider/performance_prior.py).
+# Off by default. Stays inactive until min_videos analytics rows exist, so a fresh install ranks as before.
+analytics_priors:
+  enabled: false                   # Let past Shorts performance nudge candidate scores
+  min_videos: 10                   # Analytics rows with a usable clip needed before any prior applies
+  min_group_samples: 3             # Rows needed in a length or hook group before that group counts
+  shrinkage_m: 2.0                 # Pseudo-count pulling small groups toward the channel average
+  max_score_adjustment: 0.05       # Hard cap on how far a prior can move one candidate score (0 to 0.25)
+  adaptive_thresholds: true        # Report advisory approve/patch hook thresholds fitted from history
+  threshold_max_shift: 5.0         # Advisory thresholds may move at most this far from the defaults
+  threshold_min_lift: 3.0          # Minimum SVS lift a hook split needs before thresholds move
+
 # API Keys & Secrets (Set in .env or environment variables):
 # GEMINI_API_KEY: "AIzaSy..."
 # OPENROUTER_API_KEY: "sk-or-v1-..."

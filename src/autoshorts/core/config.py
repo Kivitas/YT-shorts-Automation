@@ -335,6 +335,27 @@ class IntegrationsConfig(BaseModel):
     eachlabs: EachLabsConfig = Field(default_factory=EachLabsConfig)
 
 
+class AnalyticsPriorsConfig(BaseModel):
+    """Feed historical Shorts analytics back into clip ranking (decider/performance_prior.py)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    # Off by default: when on, past SVS results can nudge candidate scores.
+    enabled: bool = False
+    # Minimum analytics rows with a usable clip before any prior is applied.
+    min_videos: int = Field(default=10, ge=1)
+    # Minimum rows in a feature group before that group contributes.
+    min_group_samples: int = Field(default=3, ge=1)
+    # Pseudo-count that pulls small groups toward the channel mean.
+    shrinkage_m: float = Field(default=2.0, ge=0.0)
+    # Hard cap on the additive change a prior can make to one candidate score.
+    max_score_adjustment: float = Field(default=0.05, ge=0.0, le=0.25)
+    # Advisory approve/patch hook thresholds fitted from history (reported, not enforced).
+    adaptive_thresholds: bool = True
+    threshold_max_shift: float = Field(default=5.0, ge=0.0, le=10.0)
+    threshold_min_lift: float = Field(default=3.0, ge=0.0)
+
+
 class Settings(BaseSettings):
     """Master Application Settings loaded from config.yaml and environment."""
 
@@ -361,6 +382,7 @@ class Settings(BaseSettings):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
+    analytics_priors: AnalyticsPriorsConfig = Field(default_factory=AnalyticsPriorsConfig)
 
     # Secrets (strictly from environment or .env, never hardcoded)
     app_env: str = Field(default="production", alias="APP_ENV")
@@ -461,6 +483,7 @@ def load_config(config_path: Path | str | None = None) -> Settings:
 # Re-export redaction helper for callers
 __all__ = [
     "ActiveWindowConfig",
+    "AnalyticsPriorsConfig",
     "AppConfig",
     "AudioMasteringConfig",
     "CleanupConfig",
