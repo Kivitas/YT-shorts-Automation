@@ -91,10 +91,14 @@ def write_caption_plan(
     duration_sec: float,
     style_preset: str = "rapid",
     fps: int = OVERLAY_FPS,
+    top_percent: float | None = None,
 ) -> Path:
     """Write the Remotion input props as JSON.
 
     Presets only change the caption look; 'rapid' shows 1-2 words at a time, others show 3.
+    ``top_percent`` is where the caption block starts, as a percent of the frame height (the
+    prop is named ``bottomPercent`` for historical reasons but is applied as CSS ``top``). Use
+    ``cam_layout.caption_top_percent`` for the cam_gameplay layout so captions sit under the seam.
     """
     words_per_page = 2 if style_preset == "rapid" else 3
     payload = {
@@ -105,7 +109,7 @@ def write_caption_plan(
         "activeColor": rgb_to_hex(ACCENT_YELLOW),
         "primaryColor": rgb_to_hex(TEXT_PRIMARY),
         "fontSize": 60 if style_preset == "kurz" else (84 if style_preset == "rapid" else 76),
-        "bottomPercent": 38,
+        "bottomPercent": 38 if top_percent is None else min(max(float(top_percent), 5.0), 85.0),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

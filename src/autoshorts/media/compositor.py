@@ -16,6 +16,7 @@ Strictly uses FFmpeg and FFprobe subprocess calls (zero MoviePy):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -26,6 +27,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -35,7 +37,8 @@ from autoshorts.core.config import Settings, load_config
 from autoshorts.core.models import EditDecisionList
 from autoshorts.core.paths import get_assets_dir
 from autoshorts.core.render_spec import CAM_GAMEPLAY_LAYOUT, CamLayoutSpec
-from autoshorts.media.cam_layout import cam_layout_from_config, resolve_cam_layout
+from autoshorts.media.cam_layout import cam_layout_from_config, panel_heights, resolve_cam_layout
+from autoshorts.media.chyron_overlay import has_chyron_events, retarget_chyron_ass
 from autoshorts.media.dopamine_effects import (
     DopaminePreset,
     build_color_grading_filter,
@@ -64,6 +67,7 @@ logger = logging.getLogger(__name__)
 # ffprobe JSON probes get the same cold-start budget as encoder probes.
 FFPROBE_TIMEOUT_SEC = ENCODER_PROBE_TIMEOUT_SEC
 _FFPROBE_FALLBACK_WARNED = False
+_CANVAS_HEIGHT = 1920  # compose() always renders 1080x1920
 
 
 def _stderr_tail(text: str | bytes | None, limit: int = 2000) -> str:
@@ -650,7 +654,29 @@ def find_best_thumbnail_timestamp(
     return best_ts
 
 
-def stage_subtitles_for_filter(sub_path: Path, dest: Path, job_id: str) -> Path | None:
+def _claim_staged_path(directory: Path, safe_id: str) -> Path:
+    """Create an empty staging file atomically. Falls back to a unique name on a name clash.
+
+    Variant renders of one job run concurrently with the same job id, so the plain name can
+    already be taken; O_EXCL makes the claim race-free.
+    """
+    candidates = (
+        directory / f".tmp_{safe_id}_subs.ass",
+        directory / f".tmp_{safe_id}_{uuid.uuid4().hex[:8]}_subs.ass",
+    )
+    for candidate in candidates:
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return candidate
+    raise FileExistsError(f"could not claim a staging file in {directory}")
+
+
+def stage_subtitles_for_filter(
+    sub_path: Path, dest: Path, job_id: str, content: str | None = None
+) -> Path | None:
     """Return a copy of the ASS file whose path is safe inside a subtitles= filter argument.
 
     escape_ffmpeg_filter_path wraps the path in single quotes and does not escape quotes,
@@ -658,16 +684,26 @@ def stage_subtitles_for_filter(sub_path: Path, dest: Path, job_id: str) -> Path 
     Returns None when the original path can be used as-is; otherwise copies the file to
     the output directory (or the system temp dir) and returns the copy. The caller must
     unlink the returned file.
+
+    ``content`` replaces the file's text in the copy and forces staging (used to adjust the
+    chyron position without touching the job's own ASS file).
     """
-    if "'" not in str(sub_path):
+    if content is None and "'" not in str(sub_path):
         return None
 
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", job_id)[:48] or "job"
     for directory in (dest.parent, Path(tempfile.gettempdir())):
         if "'" in str(directory) or not directory.is_dir():
             continue
-        staged = directory / f".tmp_{safe_id}_subs.ass"
-        shutil.copyfile(sub_path, staged)
+        staged = _claim_staged_path(directory, safe_id)
+        try:
+            if content is None:
+                shutil.copyfile(sub_path, staged)
+            else:
+                staged.write_text(content, encoding="utf-8")
+        except BaseException:
+            staged.unlink(missing_ok=True)
+            raise
         return staged
 
     raise RuntimeError(
@@ -913,47 +949,48 @@ class FFmpegCompositor:
         effective_release = self._resolve_ducking_release(rhythm_ducking_release, job)
         graph_edl = _edl_on_trimmed_timeline(edl, trim.hook_in)
 
-        # The subtitles path is staged (copied) when it contains an apostrophe. The staged copy
-        # is removed in the finally block below.
-        staged_sub = stage_subtitles_for_filter(sub_path, dest, job_id)
-        filtergraph, out_v, out_a = self._build_filtergraph(
-            style=style,
-            preset=preset,
-            trim=trim,
-            inputs=inputs,
-            graph_edl=graph_edl,
-            subtitles_path=staged_sub or sub_path,
-            fonts_param=fonts_param,
-            split_separator=self._resolve_split_separator(style, preset),
-            chyron=chyron,
-            rhythm_ducking_release=effective_release,
-            cam=cam,
-        )
-
-        cmd = [
-            self.ffmpeg_binary,
-            "-y",
-            *inputs.args,
-            "-filter_complex",
-            filtergraph,
-            "-map",
-            out_v,
-            "-map",
-            out_a,
-        ]
-        cmd.extend(self._video_encoder_args(encoder))
-        # Audio encoding parameters
-        cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100"])
-        # Hard cap at 60s and shortest stream
-        cmd.extend(["-t", f"{trim.target_duration:.3f}", "-shortest"])
-        cmd.extend(["-max_muxing_queue_size", "1024"])
-        # Move the moov atom to the front so the Short starts playing before full download
-        cmd.extend(["-movflags", "+faststart"])
-        # Temporary atomic destination
         tmp_dest = dest.with_name(f".tmp_{job_id}_{dest.name}")
-        cmd.append(str(tmp_dest))
-
+        staged_sub: Path | None = None
         try:
+            # The subtitles file is staged (copied) when its path has an apostrophe or the chyron
+            # events need moving to the cam layout's seam. The copy is removed in `finally`.
+            staged_sub, chyron_in_subs = self._stage_subtitles(sub_path, dest, job_id, cam)
+            filtergraph, out_v, out_a = self._build_filtergraph(
+                style=style,
+                preset=preset,
+                trim=trim,
+                inputs=inputs,
+                graph_edl=graph_edl,
+                subtitles_path=staged_sub or sub_path,
+                fonts_param=fonts_param,
+                split_separator=self._resolve_split_separator(style, preset),
+                chyron=chyron,
+                rhythm_ducking_release=effective_release,
+                cam=cam,
+                chyron_in_subtitles=chyron_in_subs,
+            )
+
+            cmd = [
+                self.ffmpeg_binary,
+                "-y",
+                *inputs.args,
+                "-filter_complex",
+                filtergraph,
+                "-map",
+                out_v,
+                "-map",
+                out_a,
+            ]
+            cmd.extend(self._video_encoder_args(encoder))
+            # Audio encoding parameters
+            cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "44100"])
+            # Hard cap at 60s and shortest stream
+            cmd.extend(["-t", f"{trim.target_duration:.3f}", "-shortest"])
+            cmd.extend(["-max_muxing_queue_size", "1024"])
+            # Move the moov atom to the front so the Short starts playing before full download
+            cmd.extend(["-movflags", "+faststart"])
+            # Temporary atomic destination
+            cmd.append(str(tmp_dest))
             return self._render_and_publish(cmd, encoder, tmp_dest, dest, job_id, timeout_sec)
         except subprocess.TimeoutExpired as exc:
             _discard_partial_output(tmp_dest)
@@ -966,7 +1003,32 @@ class FFmpegCompositor:
             raise
         finally:
             if staged_sub is not None:
-                staged_sub.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    staged_sub.unlink(missing_ok=True)
+
+    @staticmethod
+    def _stage_subtitles(
+        sub_path: Path, dest: Path, job_id: str, cam: CamLayoutSpec | None
+    ) -> tuple[Path | None, bool]:
+        """Stage the ASS file when needed. Returns (staged copy or None, chyron already in ASS).
+
+        When the ASS already carries the chyron badge/headline events the filtergraph must not
+        draw them again. For a cam layout whose seam is not at 50%, those events (generated for
+        a 50/50 seam) are moved to the real seam in the staged copy.
+        """
+        content: str | None = None
+        chyron_in_subs = False
+        try:
+            text = sub_path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            text = ""
+        if text and has_chyron_events(text):
+            chyron_in_subs = True
+            if cam is not None:
+                delta = panel_heights(_CANVAS_HEIGHT, cam.top_ratio)[0] - _CANVAS_HEIGHT // 2
+                if delta:
+                    content = retarget_chyron_ass(text, delta)
+        return stage_subtitles_for_filter(sub_path, dest, job_id, content), chyron_in_subs
 
     @staticmethod
     def _prepare_paths(
@@ -1402,6 +1464,7 @@ class FFmpegCompositor:
         chyron: _ChyronPlan,
         rhythm_ducking_release: int | None,
         cam: CamLayoutSpec | None = None,
+        chyron_in_subtitles: bool = False,
     ) -> tuple[str, str, str]:
         """Build the complex filtergraph. Returns (filtergraph, video label, audio label)."""
         filtergraph, out_v, out_a = build_complex_filtergraph(
@@ -1433,6 +1496,7 @@ class FFmpegCompositor:
             chyron_text=chyron.text,
             chyron_style=chyron.style,
             cam_layout=cam,
+            chyron_in_subtitles=chyron_in_subtitles,
         )
 
         if rhythm_ducking_release is not None and "release=300" in filtergraph:
@@ -1461,23 +1525,24 @@ class FFmpegCompositor:
     ) -> tuple[subprocess.CompletedProcess[str], float]:
         """Run ffmpeg. A failed hardware encode is retried once with libx264.
 
-        Returns (process, seconds the first attempt took). The elapsed time excludes the retry.
+        Returns (process, total seconds spent encoding), including a CPU retry if one ran.
         """
-        start_time = time.time()
+        start_time = time.monotonic()
         proc = run_command_with_cleanup(cmd, timeout=timeout_sec)
-        elapsed = time.time() - start_time
         if proc.returncode != 0 and encoder.is_hardware_accelerated:
             logger.warning(
-                "Hardware encoder %s failed (code %d). Retrying with libx264 CPU fallback...",
+                "Hardware encoder %s failed (code %d) after %.1fs. Retrying with libx264 CPU "
+                "fallback...",
                 encoder.codec,
                 proc.returncode,
+                time.monotonic() - start_time,
             )
             if "-c:v" in cmd:
                 c_idx = cmd.index("-c:v")
                 a_idx = cmd.index("-c:a") if "-c:a" in cmd else len(cmd) - 1
                 cmd_fallback = cmd[:c_idx] + list(_CPU_FALLBACK_VIDEO_ARGS) + cmd[a_idx:]
                 proc = run_command_with_cleanup(cmd_fallback, timeout=timeout_sec)
-        return proc, elapsed
+        return proc, time.monotonic() - start_time
 
     def _render_and_publish(
         self,

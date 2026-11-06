@@ -8,7 +8,7 @@ degrading to the split layout).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -28,6 +28,51 @@ def panel_heights(height: int, top_ratio: float) -> tuple[int, int]:
     ratio = min(max(float(top_ratio), MIN_TOP_RATIO), MAX_TOP_RATIO)
     top_h = int(round(height * ratio / 2)) * 2
     return top_h, height - top_h
+
+
+def caption_margin_v(
+    top_ratio: float, font_size: int = 76, height: int = 1920, gap: int = 56
+) -> int:
+    """ASS bottom ``MarginV`` that seats captions just below the cam/gameplay seam.
+
+    Captions never sit on the seam or over the streamer's face: they go in the gameplay panel,
+    ``gap`` px under the seam, and are kept clear of the bottom UI safe zone (the lowest 12%).
+    At the default top_ratio 0.5 this lands at about 810, next to the usual 780.
+    """
+    seam = panel_heights(height, top_ratio)[0]
+    line_h = int(font_size * 1.25)
+    text_bottom = min(seam + gap + line_h, int(height * 0.88))
+    return max(40, height - text_bottom)
+
+
+def caption_top_percent(top_ratio: float, font_size: int = 76, height: int = 1920) -> float:
+    """Top edge (percent of height) for a caption block that starts below the seam."""
+    seam = panel_heights(height, top_ratio)[0]
+    return round(min(seam + 40, int(height * 0.84)) / height * 100.0, 1)
+
+
+def remap_punch_ins_for_cuts(punch_ins: Sequence[Any], cuts: Sequence[Any]) -> list[Any]:
+    """Move zoom punch-ins onto the timeline that remains after the jump cuts are excised.
+
+    Punch-ins are authored on the pre-cut timeline; the cam panel is built after the cut, so
+    each start/end shifts earlier by the cut time that precedes it. Punches that collapse to
+    nothing are dropped.
+    """
+    spans = sorted(
+        (float(c.cut_start), float(c.cut_end)) for c in cuts if c.cut_end > c.cut_start >= 0
+    )
+
+    def removed(t: float) -> float:
+        return sum(min(max(t - a, 0.0), b - a) for a, b in spans)
+
+    out: list[Any] = []
+    for p in punch_ins:
+        start = float(p.timestamp) - removed(float(p.timestamp))
+        end = float(p.timestamp + p.duration) - removed(float(p.timestamp + p.duration))
+        if end - start < 0.1:
+            continue
+        out.append(p.model_copy(update={"timestamp": max(0.0, start), "duration": end - start}))
+    return out
 
 
 def valid_rect(rect: NormRect | None) -> NormRect | None:
@@ -74,11 +119,15 @@ def build_cam_gameplay_stages(
     width: int,
     height: int,
     fps: int,
+    punch_ins: Sequence[Any] = (),
+    crop_focus: str = "center",
 ) -> tuple[list[str], str]:
     """Filter stages composing camera (top) over gameplay (bottom). Returns (stages, label).
 
     ``source_label`` is the (possibly jump-cut) source video. ``cam_label`` is the separate
     camera input for ``cam_source="file"``; None means the camera is cropped out of the source.
+    ``punch_ins`` are zoom punch-ins already on the post-cut timeline; they zoom the camera
+    panel only (the gameplay panel never zooms).
     """
     top_h, bottom_h = panel_heights(height, spec.top_ratio)
     game_rect = valid_rect(spec.gameplay_rect)
@@ -92,11 +141,26 @@ def build_cam_gameplay_stages(
     else:
         cam_rect = None
         cam_in, game_in = cam_label, source_label
-    stages.append(
-        f"[{cam_in}]{_panel_chain(cam_rect, width, top_h, fps, spec.mirror_cam)}[cam_panel]"
-    )
+    cam_chain = _panel_chain(cam_rect, width, top_h, fps, spec.mirror_cam)
+    if punch_ins:
+        from autoshorts.media.dopamine_effects import build_zoom_punch_filter
+
+        stages.append(f"[{cam_in}]{cam_chain}[cam_pre_zoom]")
+        zoom_stage, _ = build_zoom_punch_filter(
+            punch_ins,
+            input_label="cam_pre_zoom",
+            output_label="cam_panel",
+            target_w=width,
+            target_h=top_h,
+            crop_focus=crop_focus,
+        )
+        stages.append(zoom_stage)
+    else:
+        stages.append(f"[{cam_in}]{cam_chain}[cam_panel]")
     stages.append(f"[{game_in}]{_panel_chain(game_rect, width, bottom_h, fps, False)}[game_panel]")
-    stages.append("[cam_panel][game_panel]vstack=inputs=2[stacked]")
+    # A separate camera recording may outlast (or fall short of) the source: stop at the shorter.
+    vstack_opts = ":shortest=1" if cam_label is not None else ""
+    stages.append(f"[cam_panel][game_panel]vstack=inputs=2{vstack_opts}[stacked]")
     return stages, "stacked"
 
 
@@ -174,8 +238,11 @@ __all__ = [
     "CAM_GAMEPLAY_LAYOUT",
     "build_cam_gameplay_stages",
     "cam_layout_from_config",
+    "caption_margin_v",
+    "caption_top_percent",
     "crop_rect_filter",
     "panel_heights",
+    "remap_punch_ins_for_cuts",
     "resolve_cam_layout",
     "valid_rect",
 ]
