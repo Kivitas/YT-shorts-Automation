@@ -12,7 +12,7 @@ import logging
 import math
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.contracts import Decider, LLMProvider
@@ -32,6 +32,9 @@ from autoshorts.decision.window_slicer import (
     compute_narrative_completeness_score,
     select_non_overlapping_candidates,
 )
+
+if TYPE_CHECKING:
+    from autoshorts.decider.performance_prior import PerformancePrior
 
 logger = logging.getLogger("autoshorts.decision.orchestrator")
 
@@ -308,8 +311,13 @@ class SemIfDecider(Decider):
         count: int = 1,
         *,
         job_id: str | None = None,
+        performance_prior: PerformancePrior | None = None,
     ) -> list[ClipSelection]:
-        """Select top non-overlapping candidate segments and attach styling parameters."""
+        """Select top non-overlapping candidate segments and attach styling parameters.
+
+        An active ``performance_prior`` adjusts candidate scores from historical analytics
+        before ranking. ``None`` or an inactive prior leaves the ranking unchanged.
+        """
         if not candidates or count <= 0:
             return []
 
@@ -337,6 +345,12 @@ class SemIfDecider(Decider):
                 for c in candidates
             ]
 
+        active_prior: PerformancePrior | None = None
+        if performance_prior is not None and performance_prior.active:
+            active_prior = performance_prior
+        if active_prior is not None:
+            candidates = active_prior.apply(candidates)
+
         chosen_candidates = select_non_overlapping_candidates(candidates, count=count)
         selections: list[ClipSelection] = []
 
@@ -359,6 +373,22 @@ class SemIfDecider(Decider):
                     source="llm" if self.provider is not None else "heuristic",
                 )
             )
+
+            if active_prior is not None:
+                prior_adj = active_prior.score_adjustment(cand.duration, cand.text)
+                record_decision(
+                    DecisionRecord(
+                        job_id=job_id,
+                        name="performance_prior",
+                        value=f"{prior_adj.value:+.4f}",
+                        reason=(
+                            "matched " + ", ".join(prior_adj.matched)
+                            if prior_adj.matched
+                            else "no matching historical group"
+                        ),
+                        source="analytics",
+                    )
+                )
 
             # 2. Generate hook text
             hook_text = self.generate_hook(cand.text)
