@@ -365,6 +365,22 @@ class AnalyticsPriorsConfig(BaseModel):
     threshold_min_lift: float = Field(default=3.0, ge=0.0)
 
 
+class RaeaConfig(BaseModel):
+    """raea (Rust+Bevy React renderer) settings used by media/raea_renderer.py."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    # Path to the raea executable. None = AUTOSHORTS_RAEA_BIN, then PATH, then ~/.raea/bin.
+    binary: str | None = None
+    # Render timeout = max(60, clip_seconds * this multiplier).
+    timeout_sec_per_clip_sec: float = Field(default=12.0, gt=0.0)
+    # Run `raea check` on the finished video and record its findings (never fails a render).
+    run_check: bool = False
+    # Extra CLI args appended to `raea render` (e.g. ["--quality", "high"]).
+    extra_args: list[str] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     """Master Application Settings loaded from config.yaml and environment."""
 
@@ -390,6 +406,7 @@ class Settings(BaseSettings):
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    raea: RaeaConfig = Field(default_factory=RaeaConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     analytics_priors: AnalyticsPriorsConfig = Field(default_factory=AnalyticsPriorsConfig)
 
