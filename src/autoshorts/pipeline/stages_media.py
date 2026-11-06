@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,11 @@ from autoshorts.decider.style import choose_style
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.media.ass_styler import write_ass_file
 from autoshorts.media.audio_master import normalize_two_pass
-from autoshorts.media.cam_layout import cam_layout_from_config, resolve_cam_layout
+from autoshorts.media.cam_layout import (
+    cam_layout_from_config,
+    caption_top_percent,
+    resolve_cam_layout,
+)
 from autoshorts.media.compositor import extract_16khz_mono_wav
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.media.ffmpeg_tools import check_delivery
@@ -546,6 +551,10 @@ class MediaMixin:
                 }
             )
             style_preset = style_choice.style_preset
+            cam_top_ratio: float | None = None
+            if style_choice.layout_mode == CAM_GAMEPLAY_LAYOUT:
+                _cam_cfg = getattr(getattr(self.config, "branding", None), "cam_layout", None)
+                cam_top_ratio = float(getattr(_cam_cfg, "top_ratio", 0.5) or 0.5)
             job.record_diagnostic(
                 "style",
                 layout_mode=style_choice.layout_mode,
@@ -584,6 +593,11 @@ class MediaMixin:
                     timed_words,
                     duration_sec=timeline_dur or float(sel.candidate.duration or 1.0),
                     style_preset=style_preset,
+                    **(
+                        {"top_percent": caption_top_percent(cam_top_ratio)}
+                        if cam_top_ratio is not None
+                        else {}
+                    ),
                 )
                 plan_written = True
                 if engine_is_remotion:
@@ -606,6 +620,10 @@ class MediaMixin:
                 "hook_banner_style": hook_banner_style,
                 "enable_emojis": enable_emojis,
             }
+            if cam_top_ratio is not None:
+                # Seat captions just under the seam instead of on the camera panel.
+                extra_ass_kwargs["layout_mode"] = CAM_GAMEPLAY_LAYOUT
+                extra_ass_kwargs["cam_top_ratio"] = cam_top_ratio
             try:
                 sig = inspect.signature(write_ass_file)
                 has_varkw = any(
@@ -1285,7 +1303,15 @@ class MediaMixin:
                     )
                     if not check_path.is_file():
                         break
-                    decode_errors = pipeline_mod.count_decode_errors(check_path)
+                    try:
+                        decode_errors = pipeline_mod.count_decode_errors(check_path)
+                    except subprocess.TimeoutExpired:
+                        logger.warning(
+                            "Job %s: decode check timed out on %s; delivering unverified.",
+                            job.id,
+                            check_path.name,
+                        )
+                        break
                     if decode_errors == 0:
                         break
                     logger.warning(
