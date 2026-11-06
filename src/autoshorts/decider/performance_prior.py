@@ -126,6 +126,8 @@ class PerformancePrior:
             return PriorAdjustment()
 
         raw = sum(effect for _, effect in matched)
+        if not math.isfinite(raw):
+            return PriorAdjustment()  # NaN would otherwise clamp to the maximum boost
         scaled = max(-1.0, min(1.0, raw / SVS_POINTS_FOR_MAX_ADJUSTMENT))
         value = round(self.max_score_adjustment * scaled, 4)
         labels = tuple(f"{feature}:{group}" for (feature, group), _ in matched)
@@ -144,6 +146,9 @@ class PerformancePrior:
         for cand in candidates:
             adj = self.score_adjustment(cand.duration, cand.text).value
             if adj == 0.0:
+                adjusted.append(cand)
+                continue
+            if not math.isfinite(cand.score):
                 adjusted.append(cand)
                 continue
             new_score = round(max(0.0, min(1.0, cand.score + adj)), 4)
@@ -196,10 +201,13 @@ def observations_from_pairs(pairs: Iterable[tuple[Any, Any]]) -> list[PriorObser
             if views <= 0 or not clips:
                 continue
 
+            svs = float(record.svs_score)
+            if not math.isfinite(svs):
+                continue  # one NaN/inf SVS would poison the channel mean and every group effect
             clip = clips[0]
             candidate = clip.candidate
             obs = PriorObservation(
-                svs=float(record.svs_score),
+                svs=svs,
                 length_bucket=length_bucket(candidate.duration),
                 hook_category=hook_category(candidate.text),
                 hook_score=hook_score(getattr(clip, "hook_text", None)),
@@ -315,7 +323,7 @@ def build_performance_prior(
     settings: AnalyticsPriorsConfig,
 ) -> PerformancePrior:
     """Build the prior and advisory thresholds from historical observations."""
-    obs = list(observations)
+    obs = [o for o in observations if math.isfinite(o.svs)]
     n = len(obs)
     thresholds = adaptive_hook_thresholds(obs, settings)
 

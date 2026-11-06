@@ -334,6 +334,21 @@ class SafetyCleaner(Cleaner):
                             files_to_delete.append(item)
 
         # 3. Handle final output MP4 retention
+        def _master_expired(item: Path) -> bool:
+            """Master retention policy: True when a master-tier output should be deleted now."""
+            if eff_keep_days is not None:
+                if eff_keep_days == 0:
+                    return True
+                try:
+                    mtime = item.stat().st_mtime
+                    age_days = (
+                        datetime.now(UTC) - datetime.fromtimestamp(mtime, tz=UTC)
+                    ).total_seconds() / 86400.0
+                    return age_days >= eff_keep_days
+                except OSError:
+                    return False
+            return not eff_keep_master
+
         if self.output_dir.exists():
             for item in self.output_dir.iterdir():
                 if (
@@ -348,26 +363,36 @@ class SafetyCleaner(Cleaner):
                     if is_preview:
                         should_delete = True
                     elif is_master:
-                        if eff_keep_days is not None:
-                            if eff_keep_days == 0:
-                                should_delete = True
-                            else:
-                                try:
-                                    mtime = item.stat().st_mtime
-                                    age_days = (
-                                        datetime.now(UTC) - datetime.fromtimestamp(mtime, tz=UTC)
-                                    ).total_seconds() / 86400.0
-                                    if age_days >= eff_keep_days:
-                                        should_delete = True
-                                except OSError:
-                                    pass
-                        elif not eff_keep_master:
-                            should_delete = True
+                        should_delete = _master_expired(item)
 
                     if should_delete:
                         self.assert_safe_to_delete(item)
                         if item not in files_to_delete:
                             files_to_delete.append(item)
+
+            # 3b. Render variants live in output/<job_id>/<method>.mp4 (the primary is the
+            # {job_id}_master.mp4 above). They are master-tier outputs: removed with the master
+            # under the same retention policy so parallel variant renders cannot leak disk.
+            variants_dir = self.output_dir / job_id
+            if (
+                job_id
+                and Path(job_id).name == job_id
+                and variants_dir.is_dir()
+                and not variants_dir.is_symlink()
+                and _master_expired(variants_dir)
+            ):
+                self.assert_safe_to_delete(variants_dir)
+                for root, dirs, files in os.walk(variants_dir, followlinks=False):
+                    root_path = Path(root)
+                    for file_name in files:
+                        file_path = root_path / file_name
+                        self.assert_safe_to_delete(file_path)
+                        files_to_delete.append(file_path)
+                    for dir_name in dirs:
+                        sub_dir = root_path / dir_name
+                        self.assert_safe_to_delete(sub_dir)
+                        directories_to_delete.append(sub_dir)
+                directories_to_delete.append(variants_dir)
 
         # In dry run mode, return the list of targets that would be removed
         if eff_dry_run:

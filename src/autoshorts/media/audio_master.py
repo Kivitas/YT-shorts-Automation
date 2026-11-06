@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 from autoshorts.media.downloader import run_command_with_cleanup
@@ -164,6 +165,23 @@ def build_loudnorm_filter(
     return f"{chain},{_limiter(true_peak_db)}"
 
 
+def _has_audio(path: Path) -> bool:
+    """False only when the file is positively known to carry no audio stream.
+
+    An unknown probe result (missing ffprobe, unreadable file) answers True so the normal
+    measure/encode path decides, and its own never-raise handling applies.
+    """
+    try:
+        from autoshorts.media.ffmpeg_tools import probe_media_cached
+
+        info = probe_media_cached(path)
+    except Exception:
+        return True
+    if info.get("has_audio"):
+        return True
+    return not info.get("has_video")  # video-only => no audio; nothing recognised => unknown
+
+
 def _within_tolerance(
     measured: dict, target_lufs: float, true_peak_db: float, tolerance_lu: float
 ) -> bool:
@@ -180,8 +198,10 @@ def _keep_original(src: Path, dst: Path) -> Path:
     """Make ``dst`` hold the untouched ``src`` content (no-op when they are the same file)."""
     if src == dst:
         return dst
-    tmp = dst.with_name(f".{dst.stem}.keep.{os.getpid()}{dst.suffix}")
+    # pid + thread + random: two threads keeping the same dst must not share a temp name
+    tmp = dst.with_name(f".{dst.stem}.keep.{os.getpid()}.{uuid.uuid4().hex[:8]}{dst.suffix}")
     try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, tmp)
         os.replace(tmp, dst)
     finally:
@@ -211,6 +231,10 @@ def normalize_two_pass(
     src, dst = Path(src), Path(dst)
     tmp: Path | None = None
     try:
+        if not _has_audio(src):
+            # Nothing to normalise (silent/no-audio source): keep the file as is.
+            logger.info("no audio stream in %s; skipping loudness normalisation", src)
+            return _keep_original(src, dst)
         measured = measure_loudness(src, target_lufs=target_lufs, true_peak_db=true_peak_db)
         if _within_tolerance(measured, target_lufs, true_peak_db, tolerance_lu):
             logger.info(
@@ -235,6 +259,7 @@ def normalize_two_pass(
         if suffix in (".mp4", ".mov", ".m4v"):
             cmd += ["-movflags", "+faststart"]
 
+        dst.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.stem}.", suffix=dst.suffix, dir=dst.parent)
         os.close(fd)
         tmp = Path(tmp_name)

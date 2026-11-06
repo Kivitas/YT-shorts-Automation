@@ -20,7 +20,7 @@ from typing import Any
 
 from autoshorts.core.paths import PROJECT_ROOT
 from autoshorts.media.compositor import get_ffprobe_path
-from autoshorts.media.downloader import probe_video_stream_info
+from autoshorts.media.downloader import probe_video_stream_info, run_command_with_cleanup
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class FfmpegToolError(RuntimeError):
 # --- cached media probe -------------------------------------------------------------------
 # ffprobe is spawned repeatedly for the same file across stages and variants. Results are
 # keyed by (resolved path, mtime_ns, size), so any rewrite of the file invalidates its entry.
-_PROBE_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
+_PROBE_CACHE: dict[tuple[str, int, int, int], dict[str, Any]] = {}
 _PROBE_LOCK = threading.Lock()
 _PROBE_CACHE_MAX = 512
 
@@ -81,7 +81,9 @@ def probe_media_cached(path: Path | str) -> dict[str, Any]:
     p = Path(path)
     try:
         st = p.stat()
-        key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+        # st_ino (the NTFS file index on Windows) changes when a file is replaced via os.replace,
+        # which closes the window where a rewrite keeps the same size within the mtime granularity.
+        key = (str(p.resolve()), st.st_mtime_ns, st.st_size, st.st_ino)
     except OSError:
         return probe_video_stream_info(p)
     with _PROBE_LOCK:
@@ -130,15 +132,11 @@ def run_tool(
     if not script.is_file():
         raise FfmpegToolError(f"ffmpeg tool script is missing: {script}")
     try:
-        return subprocess.run(
+        # Kills the whole process tree on timeout (the scripts spawn ffmpeg/ffprobe children).
+        return run_command_with_cleanup(
             [sys.executable, str(script), *args],
-            cwd=TOOLS_DIR.parent,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=timeout_sec,
-            check=False,
+            cwd=TOOLS_DIR.parent,
             env=_child_env(),
         )
     except subprocess.TimeoutExpired as exc:
@@ -356,6 +354,7 @@ def render_safe_zone_preview(
             return out
 
     # For video formats or if look tool did not produce expected file, draw boxes directly with ffmpeg
+    is_still = out.suffix.lower() in (".png", ".jpg", ".jpeg")
     z = PLATFORM_SAFE_ZONES.get(norm_platform, PLATFORM_SAFE_ZONES["shorts"])
     boxes: list[str] = []
     for edge, frac in (
@@ -386,12 +385,11 @@ def render_safe_zone_preview(
         str(Path(video_path).resolve()),
         "-vf",
         vf,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "ultrafast",
-        "-c:a",
-        "copy",
+        *(
+            ["-frames:v", "1", "-an"]  # a still image: one frame, no audio, image codec by suffix
+            if is_still
+            else ["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy"]
+        ),
         str(out),
     ]
     # The preview is a fast ultrafast re-encode; scale the bound with the clip length.

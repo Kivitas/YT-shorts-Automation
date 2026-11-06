@@ -8,6 +8,8 @@ import math
 import re
 import struct
 import subprocess
+import threading
+import time
 import wave
 from collections.abc import Sequence
 from pathlib import Path
@@ -358,6 +360,9 @@ def _concat_audio(
 # After the last frame is written and stderr closes, ffmpeg only has to flush/mux. A wedged
 # process here is killed by the cleanup path below instead of blocking the render forever.
 _ENCODE_WAIT_TIMEOUT_SEC = 300.0
+# While frames are being fed, the encode is considered hung when no frame has been accepted for
+# this long (a blocked stdin write to a wedged ffmpeg, or a stuck frame generator).
+_ENCODE_STALL_TIMEOUT_SEC = 180.0
 
 
 def _encode(
@@ -375,21 +380,62 @@ def _encode(
     ]  # fmt: skip
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None and proc.stderr is not None
-    try:
+
+    # Frames are written from a worker thread and stderr is drained from another, so this thread
+    # can always enforce a deadline: a blocking pipe write (ffmpeg stopped reading) or a full
+    # stderr pipe can no longer hang the pipeline thread, and neither can deadlock the other.
+    progress = [time.monotonic()]
+    stderr_chunks: list[bytes] = []
+    writer_errors: list[BaseException] = []
+
+    def _drain_stderr() -> None:
+        try:
+            stderr_chunks.append(proc.stderr.read())  # type: ignore[union-attr]
+        except (OSError, ValueError):
+            pass
+
+    def _feed_frames() -> None:
         try:
             for frame in frames:
-                proc.stdin.write(frame)
-            proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-        err = proc.stderr.read().decode("utf-8", "replace")
+                proc.stdin.write(frame)  # type: ignore[union-attr]
+                progress[0] = time.monotonic()
+        except (BrokenPipeError, OSError, ValueError):
+            pass  # ffmpeg exited early; its stderr and exit code explain why
+        except BaseException as exc:  # a frame generator error must fail the render
+            writer_errors.append(exc)
+        finally:
+            try:
+                proc.stdin.close()  # type: ignore[union-attr]
+            except (OSError, ValueError):
+                pass
+
+    drainer = threading.Thread(target=_drain_stderr, name="longform-ffmpeg-stderr", daemon=True)
+    writer = threading.Thread(target=_feed_frames, name="longform-ffmpeg-stdin", daemon=True)
+    drainer.start()
+    writer.start()
+    try:
+        while writer.is_alive():
+            writer.join(0.25)
+            if time.monotonic() - progress[0] > _ENCODE_STALL_TIMEOUT_SEC:
+                raise RuntimeError(
+                    f"ffmpeg encode stalled: no frame accepted for {_ENCODE_STALL_TIMEOUT_SEC:g}s"
+                )
         rc = proc.wait(timeout=_ENCODE_WAIT_TIMEOUT_SEC)
+        drainer.join(timeout=10.0)
     except BaseException:
-        # A frame generator error or Ctrl+C must not leave ffmpeg running or the output half-written.
+        # A stall, frame generator error or Ctrl+C must not leave ffmpeg running or the output
+        # half-written. Killing ffmpeg also unblocks the worker threads (broken pipe / EOF).
         proc.kill()
-        proc.wait()
+        try:
+            proc.wait(timeout=10.0)
+        except Exception:
+            pass
         Path(out_path).unlink(missing_ok=True)
         raise
+    err = b"".join(stderr_chunks).decode("utf-8", "replace")
+    if writer_errors:
+        Path(out_path).unlink(missing_ok=True)
+        raise writer_errors[0]
     if rc != 0:
         Path(out_path).unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg failed: {err[-800:]}")
