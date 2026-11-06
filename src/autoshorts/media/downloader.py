@@ -639,7 +639,7 @@ class Downloader:
         yt_dlp_binary: str = "yt-dlp",
         format_spec: str = DEFAULT_FORMAT_SPEC,
         cookies_from_browser: str | None = None,
-        timeout_sec: float = 180.0,
+        timeout_sec: float = 240.0,
         max_retries: int = 3,
         retry_delay_sec: float = 1.0,
         require_audio_stream: bool = True,
@@ -931,12 +931,23 @@ class Downloader:
 
         use_fallback_format = False
         last_severity = "retryable"
+        last_fail_kind = ""
         for attempt in range(1, total_attempts + 1):
             attempt_cmd = list(base_cmd)
             if use_fallback_format:
                 # The preferred selector reported "format not available": drop to the
                 # permissive ladder so a odd upload still yields a muxed clip.
                 attempt_cmd[attempt_cmd.index("-f") + 1] = FALLBACK_FORMAT_SPEC
+            if (
+                last_fail_kind == "timeout"
+                or (last_error and "timed out" in str(last_error).lower())
+            ) and "--force-keyframes-at-cuts" in attempt_cmd:
+                logger.info(
+                    "Dropping --force-keyframes-at-cuts on attempt %d for %s to avoid transcoding timeout",
+                    attempt,
+                    vid,
+                )
+                attempt_cmd.remove("--force-keyframes-at-cuts")
             # First attempt uses yt-dlp's default client selection. Retries widen the
             # client pool, which is what actually recovers from 403s on section capping.
             player_client = PLAYER_CLIENT_LADDER[min(attempt - 1, len(PLAYER_CLIENT_LADDER) - 1)]
@@ -1066,6 +1077,7 @@ class Downloader:
                 _cleanup_temps()
                 dest.unlink(missing_ok=True)
                 last_severity, fail_kind, fail_hint = classify_download_error(exc)
+                last_fail_kind = fail_kind
                 if last_severity == "fatal":
                     logger.error(
                         "Stopping section retries for %s: failure is not retryable (%s: %s)",

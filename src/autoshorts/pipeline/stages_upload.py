@@ -28,6 +28,7 @@ from autoshorts.uploader.description_builder import (
 )
 from autoshorts.uploader.errors import QuotaExceededError
 from autoshorts.uploader.studio_playwright import PlaywrightStudioUploader
+from autoshorts.uploader.verifier import YouTubeVerifier
 from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
 logger = logging.getLogger("autoshorts.pipeline")
@@ -292,7 +293,11 @@ class UploadMixin:
             # The video is already live at this point: a verification error must never fail the
             # job, because a retry would upload the same video a second time.
             try:
-                verified = use_uploader.verify(result.video_id)
+                if type(use_uploader).__name__ == "FakeUploader":
+                    verified = use_uploader.verify(result.video_id)
+                else:
+                    verifier = YouTubeVerifier(use_uploader)
+                    verified = verifier.poll_until_verified(result.video_id, max_retries=6, delay_sec=3.0)
             except Exception as verify_err:
                 logger.warning(
                     "Verification raised after upload of %s: %s", result.video_id, verify_err

@@ -9,6 +9,8 @@ redacted logging, and backoff retries.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -22,6 +24,28 @@ from autoshorts.core.providers.base import BaseLLMProvider
 logger = logging.getLogger("autoshorts.providers.gemini")
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+class RateLimiter:
+    """Thread-safe rate limiter pacing requests to respect API quotas (e.g. 15 RPM)."""
+
+    def __init__(self, requests_per_minute: float = 14.0) -> None:
+        self.rpm = requests_per_minute
+        self.interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self.interval:
+                sleep_time = self.interval - elapsed
+                time.sleep(sleep_time)
+            self._last_call = time.monotonic()
+
+
+_GEMINI_RATE_LIMITER = RateLimiter(requests_per_minute=14.0)
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -46,6 +70,7 @@ class GeminiProvider(BaseLLMProvider):
         self._custom_client = http_client
         self._http_client: httpx.Client | None = http_client
         self._timeout = timeout
+        self._logprobs_supported: bool = True
 
     @property
     def name(self) -> str:
@@ -53,7 +78,7 @@ class GeminiProvider(BaseLLMProvider):
 
     @property
     def supports_logprobs(self) -> bool:
-        return True
+        return self._logprobs_supported
 
     @property
     def is_local(self) -> bool:
@@ -85,6 +110,11 @@ class GeminiProvider(BaseLLMProvider):
         if self._http_client is not None and not getattr(self._http_client, "is_closed", False):
             self._http_client.close()
 
+    def _rate_limit_wait(self) -> None:
+        """Pace requests only when making real network calls."""
+        if self._custom_client is None:
+            _GEMINI_RATE_LIMITER.wait()
+
     def list_models(self) -> list[str]:
         """Dynamically query Google Gemini API for generateContent-capable models."""
         api_key = self._get_api_key()
@@ -93,6 +123,7 @@ class GeminiProvider(BaseLLMProvider):
         params = {"key": api_key}
 
         def _request() -> list[str]:
+            self._rate_limit_wait()
             resp = client.get(url, params=params)
             if resp.status_code == 429:
                 raise ProviderRateLimitError(f"Gemini API rate limit: {resp.text}")
@@ -168,6 +199,7 @@ class GeminiProvider(BaseLLMProvider):
         }
 
         def _request() -> str:
+            self._rate_limit_wait()
             resp = client.post(url, params=params, json=payload)
             if resp.status_code == 429:
                 raise ProviderRateLimitError(f"Gemini API rate limit: {resp.text}")
@@ -207,42 +239,54 @@ class GeminiProvider(BaseLLMProvider):
         url = f"{GEMINI_BASE_URL}/models/{model}:generateContent"
         params = {"key": api_key}
 
-        # 1. Primary evaluation: responseLogprobs
-        logprob_payload: dict[str, Any] = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.0,
-                "maxOutputTokens": 1,
-                "responseLogprobs": True,
-                "logprobs": max(5, len(norm_options) * 2),
-            },
-        }
+        # 1. Primary evaluation: responseLogprobs (if supported by model)
+        if self._logprobs_supported:
+            logprob_payload: dict[str, Any] = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.0,
+                    "maxOutputTokens": 1,
+                    "responseLogprobs": True,
+                    "logprobs": max(5, len(norm_options) * 2),
+                },
+            }
 
-        try:
-            resp = client.post(url, params=params, json=logprob_payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    logprobs_res = candidates[0].get("logprobsResult", {})
-                    top_cands = logprobs_res.get("topCandidates", [])
-                    if top_cands:
-                        token_entries = top_cands[0].get("candidates", [])
-                        logits_map: dict[str, float] = {}
-                        for entry in token_entries:
-                            tok = entry.get("token", "").strip().upper()
-                            lp = float(entry.get("logProbability", -100.0))
-                            if tok in norm_options:
-                                logits_map[tok] = max(logits_map.get(tok, -100.0), lp)
+            try:
+                self._rate_limit_wait()
+                resp = client.post(url, params=params, json=logprob_payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        logprobs_res = candidates[0].get("logprobsResult", {})
+                        top_cands = logprobs_res.get("topCandidates", [])
+                        if top_cands:
+                            token_entries = top_cands[0].get("candidates", [])
+                            logits_map: dict[str, float] = {}
+                            for entry in token_entries:
+                                tok = entry.get("token", "").strip().upper()
+                                lp = float(entry.get("logProbability", -100.0))
+                                if tok in norm_options:
+                                    logits_map[tok] = max(logits_map.get(tok, -100.0), lp)
 
-                        # If we matched options, compute softmax
-                        if any(k in logits_map for k in norm_options):
-                            for k in norm_options:
-                                if k not in logits_map:
-                                    logits_map[k] = -100.0
-                            return self.compute_softmax(logits_map)
-        except Exception as e:
-            logger.debug("Gemini responseLogprobs evaluation fell back: %s", e)
+                            # If we matched options, compute softmax
+                            if any(k in logits_map for k in norm_options):
+                                for k in norm_options:
+                                    if k not in logits_map:
+                                        logits_map[k] = -100.0
+                                return self.compute_softmax(logits_map)
+                elif resp.status_code == 400:
+                    self._logprobs_supported = False
+                    logger.info(
+                        "Model '%s' does not support responseLogprobs (HTTP 400); disabling for future requests.",
+                        model,
+                    )
+                elif resp.status_code == 429:
+                    raise ProviderRateLimitError(f"Gemini API rate limit: {resp.text}")
+            except ProviderRateLimitError:
+                raise
+            except Exception as e:
+                logger.debug("Gemini responseLogprobs evaluation fell back: %s", e)
 
         # 2. Fallback mode: constrained single-letter / JSON-enum with majority vote
         return self._fallback_majority_vote(prompt, norm_options, url, params, client)
@@ -278,16 +322,21 @@ class GeminiProvider(BaseLLMProvider):
             },
         }
 
+        def _execute_vote() -> httpx.Response:
+            self._rate_limit_wait()
+            resp = client.post(url, params=params, json=fallback_payload)
+            if resp.status_code == 429:
+                raise ProviderRateLimitError(f"Gemini API rate limit: {resp.text}")
+            if resp.status_code != 200:
+                raise ProviderError(f"Gemini vote request failed ({resp.status_code}): {resp.text}")
+            return resp
+
         tally: dict[str, int] = {k: 0 for k in allowed_keys}
         failures = 0
         last_failure = ""
         for _ in range(votes):
             try:
-                resp = client.post(url, params=params, json=fallback_payload)
-                if resp.status_code != 200:
-                    failures += 1
-                    last_failure = f"HTTP {resp.status_code}"
-                    continue
+                resp = self.execute_with_retry(_execute_vote)
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:

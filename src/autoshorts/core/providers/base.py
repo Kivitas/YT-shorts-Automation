@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -20,6 +21,27 @@ from autoshorts.core.logging_setup import redact
 
 logger = logging.getLogger("autoshorts.providers")
 T = TypeVar("T")
+
+
+def extract_retry_delay(text: str) -> float | None:
+    """Extract recommended retry delay in seconds from error text or JSON response."""
+    if not text:
+        return None
+    # 1. Match 'Please retry in X.Xs' or 'retry in Xs'
+    m = re.search(r"retry\s+in\s+([0-9]+(?:\.[0-9]+)?)\s*s", text, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    # 2. Match JSON 'retryDelay': '50s'
+    m = re.search(r'"retryDelay"\s*:\s*"([0-9]+(?:\.[0-9]+)?)s"', text)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
 
 
 class BaseLLMProvider(ABC, LLMProvider):
@@ -157,18 +179,24 @@ class BaseLLMProvider(ABC, LLMProvider):
         while attempt < max_retries:
             try:
                 return action()
-            except ProviderRateLimitError:
+            except ProviderRateLimitError as exc:
                 attempt += 1
                 if attempt >= max_retries:
                     raise
+                parsed_delay = extract_retry_delay(str(exc))
+                sleep_dur = (
+                    min(parsed_delay + 1.0, 65.0)
+                    if parsed_delay is not None
+                    else current_delay
+                )
                 logger.warning(
                     "Rate limit encountered on '%s'. Backing off for %.2fs (attempt %d/%d)",
                     self.name,
-                    current_delay,
+                    sleep_dur,
                     attempt,
                     max_retries,
                 )
-                time.sleep(current_delay)
+                time.sleep(sleep_dur)
                 current_delay *= backoff_multiplier
             except Exception as exc:
                 # Check for 429 status code in exception if present
@@ -179,14 +207,20 @@ class BaseLLMProvider(ABC, LLMProvider):
                         raise ProviderRateLimitError(
                             f"Provider '{self.name}' rate limit exhausted: {exc}"
                         ) from exc
+                    parsed_delay = extract_retry_delay(str(exc))
+                    sleep_dur = (
+                        min(parsed_delay + 1.0, 65.0)
+                        if parsed_delay is not None
+                        else current_delay
+                    )
                     logger.warning(
                         "HTTP 429 on '%s'. Retrying in %.2fs (attempt %d/%d)",
                         self.name,
-                        current_delay,
+                        sleep_dur,
                         attempt,
                         max_retries,
                     )
-                    time.sleep(current_delay)
+                    time.sleep(sleep_dur)
                     current_delay *= backoff_multiplier
                     continue
 

@@ -550,7 +550,11 @@ def get_public_settings_payload(
             "words_per_burst": config.subtitles.words_per_burst,
             "safe_zone_margin_v": config.subtitles.safe_zone_margin_v,
             "karaoke_highlight": getattr(config.subtitles, "karaoke_highlight", True),
-            "karaoke_pop_scale": getattr(config.subtitles, "karaoke_pop_scale", 118),
+            "karaoke_pop_scale": (
+                round(getattr(config.subtitles, "karaoke_pop_scale", 1.18) / 100.0, 2)
+                if getattr(config.subtitles, "karaoke_pop_scale", 1.18) > 10.0
+                else getattr(config.subtitles, "karaoke_pop_scale", 1.18)
+            ),
             "style_preset": getattr(config.subtitles, "style_preset", "neon"),
             "primary_color": getattr(config.subtitles, "primary_color", "&H00FFFFFF"),
             "active_color": getattr(config.subtitles, "active_color", "&H0000FFFF"),

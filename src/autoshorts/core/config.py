@@ -317,7 +317,7 @@ class SubtitlesConfig(BaseModel):
     position: str = "center"
     hook_banner_style: str = "neon_box"
     enable_emojis: bool = True
-    karaoke_pop_scale: int = 118
+    karaoke_pop_scale: float = 1.18
     caption_engine: str = Field(
         default="ass",
         description=(
