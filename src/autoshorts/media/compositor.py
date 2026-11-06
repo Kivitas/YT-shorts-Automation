@@ -34,6 +34,8 @@ from typing import Any
 from autoshorts.core.config import Settings, load_config
 from autoshorts.core.models import EditDecisionList
 from autoshorts.core.paths import get_assets_dir
+from autoshorts.core.render_spec import CAM_GAMEPLAY_LAYOUT, CamLayoutSpec
+from autoshorts.media.cam_layout import cam_layout_from_config, resolve_cam_layout
 from autoshorts.media.dopamine_effects import (
     DopaminePreset,
     build_color_grading_filter,
@@ -846,6 +848,11 @@ class FFmpegCompositor:
         background_offset: start time in the background clip, as returned by
         select_gameplay_background. A random offset is used when it is None.
 
+        cam_layout (keyword, via **kwargs): a CamLayoutSpec for layout_mode="cam_gameplay"
+        (streamer camera on top, gameplay below, no gameplay background). Without one it is
+        built from config.branding.cam_layout; if no camera region is usable the render
+        degrades to split_50_50 with a logged warning.
+
         Atomic write: renders to .tmp.mp4 first then renames via os.replace.
         """
         src, sub_path, dest = self._prepare_paths(source_clip, subtitles_path, output_path)
@@ -869,6 +876,7 @@ class FFmpegCompositor:
             bgm_volume=bgm_volume,
         )
         trim = self._plan_trim(src, edl)
+        style, cam = self._resolve_cam_layout(style, kwargs.get("cam_layout"), src, trim)
         logger.info(
             "Job %s: Rendering short with target duration %.2fs (trim: %.2fs to %.2fs, layout=%s, has_v=%s, has_a=%s)",
             job_id,
@@ -899,6 +907,7 @@ class FFmpegCompositor:
             style=style,
             preset=preset,
             enable_ducking=enable_ducking,
+            cam=cam,
         )
         fonts_param = self._fonts_dir_param()
         effective_release = self._resolve_ducking_release(rhythm_ducking_release, job)
@@ -918,6 +927,7 @@ class FFmpegCompositor:
             split_separator=self._resolve_split_separator(style, preset),
             chyron=chyron,
             rhythm_ducking_release=effective_release,
+            cam=cam,
         )
 
         cmd = [
@@ -1169,6 +1179,42 @@ class FFmpegCompositor:
         ]
 
     @staticmethod
+    def _cam_file_input_args(cam: CamLayoutSpec, trim: _TrimPlan) -> list[str]:
+        """Input 1 for cam_source="file": the camera recording, aligned with the source trim."""
+        args: list[str] = []
+        if trim.hook_in > 0:
+            args.extend(["-ss", f"{trim.hook_in:.3f}"])
+        args.extend(["-stream_loop", "-1", "-t", f"{trim.target_duration:.3f}"])
+        args.extend(["-i", str(cam.cam_file)])
+        return args
+
+    def _resolve_cam_layout(
+        self,
+        style: _ComposeStyle,
+        requested: CamLayoutSpec | None,
+        src: Path,
+        trim: _TrimPlan,
+    ) -> tuple[_ComposeStyle, CamLayoutSpec | None]:
+        """For layout cam_gameplay: a renderable CamLayoutSpec, else degrade to split_50_50."""
+        if style.layout != CAM_GAMEPLAY_LAYOUT:
+            return style, None
+        cam_cfg = getattr(getattr(self.config, "branding", None), "cam_layout", None)
+        spec = requested or (cam_layout_from_config(cam_cfg) if cam_cfg is not None else None)
+        resolved = (
+            resolve_cam_layout(
+                spec,
+                source=src,
+                auto_detect=bool(getattr(cam_cfg, "auto_detect", True)),
+                cam_file_ok=has_video_stream,
+            )
+            if trim.has_src_video
+            else None
+        )
+        if resolved is None:
+            return replace(style, layout="split_50_50"), None
+        return style, resolved
+
+    @staticmethod
     def _audio_asset_input_args(
         preset: DopaminePreset,
         enable_ducking: bool,
@@ -1218,15 +1264,23 @@ class FFmpegCompositor:
         style: _ComposeStyle,
         preset: DopaminePreset,
         enable_ducking: bool,
+        cam: CamLayoutSpec | None = None,
     ) -> _InputPlan:
-        """Assemble ffmpeg inputs in order: source, background (multi-source only), music, sfx."""
+        """Assemble ffmpeg inputs in order: source, background (multi-source only), music, sfx.
+
+        With a resolved cam layout there is no gameplay background: a crop-mode camera needs no
+        extra input and a file-mode camera recording takes the background's input slot.
+        """
         args = self._source_input_args(src, trim)
+        cam_from_file = cam is not None and cam.cam_source == "file"
         # Single source vs multi-source layouts (audio-only source cannot be single-source)
-        is_single_source = (style.layout in ("full_blur_bg", "full_center_crop")) and (
-            trim.has_src_video
-        )
+        is_single_source = (
+            (style.layout in ("full_blur_bg", "full_center_crop")) and trim.has_src_video
+        ) or (cam is not None and not cam_from_file)
         next_index = 1 if is_single_source else 2
-        if not is_single_source:
+        if cam_from_file:
+            args.extend(self._cam_file_input_args(cam, trim))
+        elif not is_single_source:
             args.extend(self._background_input_args(background_path, background_offset, edl, trim))
         audio_args, music_idx, sfx_idx = self._audio_asset_input_args(
             preset, enable_ducking, style.bgm_path, trim.target_duration, next_index
@@ -1347,6 +1401,7 @@ class FFmpegCompositor:
         split_separator: str,
         chyron: _ChyronPlan,
         rhythm_ducking_release: int | None,
+        cam: CamLayoutSpec | None = None,
     ) -> tuple[str, str, str]:
         """Build the complex filtergraph. Returns (filtergraph, video label, audio label)."""
         filtergraph, out_v, out_a = build_complex_filtergraph(
@@ -1377,6 +1432,7 @@ class FFmpegCompositor:
             chyron_badge=chyron.badge,
             chyron_text=chyron.text,
             chyron_style=chyron.style,
+            cam_layout=cam,
         )
 
         if rhythm_ducking_release is not None and "release=300" in filtergraph:

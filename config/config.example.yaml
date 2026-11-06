@@ -96,7 +96,7 @@ subtitles:
   enable_emojis: true              # Segoe UI Emoji inline rendering
 
 branding:
-  layout_mode: "split_50_50"       # "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
+  layout_mode: "split_50_50"       # "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay", "cam_gameplay"
   color_grading: "none"            # "none", "vibrant", "cinematic", "warm", "crisp"
   watermark_text: null             # Channel watermark text (e.g. "@MyChannel")
   watermark_position: "top_right"  # "top_right", "top_left", "bottom_right", "bottom_center"
@@ -106,6 +106,16 @@ branding:
   progress_bar_height: 12          # Height in pixels (4 to 24)
   hook_opener: "none"              # "none", "zoom_burst", "flash"
   outro_cta_text: null             # Optional 2-second outro CTA badge
+  # Used when layout_mode is "cam_gameplay": streamer camera on the top panel, gameplay below.
+  # No gameplay background is fetched for this layout. All rects are normalized x, y, w, h (0..1).
+  cam_layout:
+    top_ratio: 0.5                 # Share of the 1920px height for the camera panel (0.2 to 0.8)
+    cam_source: "crop"             # "crop" = facecam overlay inside the source, "file" = separate camera recording
+    cam_rect: null                 # e.g. [0.72, 0.62, 0.26, 0.34] bottom-right webcam; null = auto-detect
+    cam_file: null                 # Camera recording path when cam_source is "file"
+    gameplay_rect: null            # Gameplay region of the source; null = whole frame
+    mirror_cam: false              # Flip the camera panel horizontally
+    auto_detect: true              # Find the facecam with OpenCV when cam_rect is null (needs opencv-python)
 
 audio_mastering:
   voice_boost: true                # Highpass filter + vocal presence EQ boost

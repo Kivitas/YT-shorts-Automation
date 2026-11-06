@@ -10,11 +10,13 @@ from typing import Any
 
 from autoshorts.core.exceptions import AutoShortsError, DownloadError
 from autoshorts.core.models import Job, JobStatus
+from autoshorts.core.render_spec import CAM_GAMEPLAY_LAYOUT
 from autoshorts.decider.format_classifier import classify_format
 from autoshorts.decider.style import choose_style
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.media.ass_styler import write_ass_file
 from autoshorts.media.audio_master import normalize_two_pass
+from autoshorts.media.cam_layout import cam_layout_from_config
 from autoshorts.media.compositor import extract_16khz_mono_wav
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.media.ffmpeg_tools import check_delivery
@@ -807,7 +809,11 @@ class MediaMixin:
             or chyron_diag.get("enable_chyron")
             or (job.diagnostics.get("enable_chyron") if isinstance(job.diagnostics, dict) else None)
             or getattr(branding_cfg, "enable_chyron", False)
-            or bool(kwargs.get("chyron_text") or getattr(job, "chyron_text", None) or chyron_diag.get("chyron_text"))
+            or bool(
+                kwargs.get("chyron_text")
+                or getattr(job, "chyron_text", None)
+                or chyron_diag.get("chyron_text")
+            )
         )
         enable_chyron = bool(enable_chyron)
 
@@ -847,7 +853,9 @@ class MediaMixin:
         if not hook and job.edl and getattr(job.edl, "hook_text", None):
             hook = job.edl.hook_text
         if not hook and job.selected_clips:
-            hook = getattr(job.selected_clips[0], "hook_title", None) or getattr(job.selected_clips[0], "reason", None)
+            hook = getattr(job.selected_clips[0], "hook_title", None) or getattr(
+                job.selected_clips[0], "reason", None
+            )
 
         if chyron_text:
             chyron_obj = ChyronData(
@@ -950,11 +958,7 @@ class MediaMixin:
                 bg_style = self.config.job_defaults.background_category
             import autoshorts.pipeline as pipeline_mod
 
-            bg_fn = getattr(pipeline_mod, "select_gameplay_background", select_gameplay_background)
-            bg_file, bg_offset = bg_fn(category=bg_style)
-
             branding_cfg = getattr(self.config, "branding", None)
-            audio_cfg = getattr(self.config, "audio_mastering", None)
             style_diag = job.diagnostics.get("style") if isinstance(job.diagnostics, dict) else None
             diag_layout = style_diag.get("layout_mode") if isinstance(style_diag, dict) else None
             layout_mode = (
@@ -963,6 +967,19 @@ class MediaMixin:
                 or getattr(branding_cfg, "layout_mode", None)
                 or getattr(self.config.media, "layout_mode", "split_50_50")
             )
+            cam_layout = None
+            if layout_mode == CAM_GAMEPLAY_LAYOUT:
+                # Camera on top, gameplay from the source: no gameplay background is needed.
+                bg_file, bg_offset = None, None
+                cam_cfg = getattr(branding_cfg, "cam_layout", None)
+                cam_layout = cam_layout_from_config(cam_cfg) if cam_cfg is not None else None
+            else:
+                bg_fn = getattr(
+                    pipeline_mod, "select_gameplay_background", select_gameplay_background
+                )
+                bg_file, bg_offset = bg_fn(category=bg_style)
+
+            audio_cfg = getattr(self.config, "audio_mastering", None)
             color_grading = (
                 getattr(job, "color_grading", None)
                 or getattr(branding_cfg, "color_grading", None)
@@ -1033,6 +1050,7 @@ class MediaMixin:
 
             extra_comp: dict[str, Any] = {
                 "layout_mode": layout_mode,
+                **({"cam_layout": cam_layout} if cam_layout is not None else {}),
                 "color_grading": color_grading,
                 "watermark_text": watermark_text,
                 "watermark_position": watermark_position,

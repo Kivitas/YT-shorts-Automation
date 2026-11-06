@@ -1,0 +1,259 @@
+{
+  "cam_crop_jump_cuts": {
+    "calls": [
+      {
+        "argv": [
+          "fake-ffmpeg",
+          "-y",
+          "-t",
+          "30.000",
+          "-i",
+          "<TMP>/source.mp4",
+          "-filter_complex",
+          "[0:v]select='not(between(t,2.00,3.50))',setpts=N/FRAME_RATE/TB[v_base]; [0:a]aselect='not(between(t,2.00,3.50))',asetpts=N/SR/TB[a_cut]; [v_base]split=2[cam_src][game_src]; [cam_src]crop=w=iw*0.2800:h=ih*0.4000:x=iw*0.7000:y=ih*0.5500,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[cam_panel]; [game_src]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[game_panel]; [cam_panel][game_panel]vstack=inputs=2[stacked]; color=c=#FFE600:s=1080x12:d=30.00[bar_color]; [stacked][bar_color]overlay=x='-1080+(1080*t/30.00)':y=954[with_bar]; [with_bar]subtitles='<TMP>/subs.ass':fontsdir='<TMP>/assets/fonts'[outv]; [a_cut]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7,alimiter=limit=0.8414:attack=5:release=50:level=disabled[voice]; [voice]alimiter=limit=0.8414:level=disabled[master_a]",
+          "-map",
+          "[outv]",
+          "-map",
+          "[master_a]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          "22",
+          "-threads",
+          "0",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-ar",
+          "44100",
+          "-t",
+          "30.000",
+          "-shortest",
+          "-max_muxing_queue_size",
+          "1024",
+          "-movflags",
+          "+faststart",
+          "<TMP>/out/.tmp_job_golden_short.mp4"
+        ],
+        "timeout": 300.0
+      }
+    ],
+    "leftover_files": [
+      "short.mp4"
+    ],
+    "result": "<TMP>/out/short.mp4"
+  },
+  "cam_crop_mirror_ratio_watermark_chyron": {
+    "calls": [
+      {
+        "argv": [
+          "fake-ffmpeg",
+          "-y",
+          "-t",
+          "30.000",
+          "-i",
+          "<TMP>/source.mp4",
+          "-filter_complex",
+          "[0:v]split=2[cam_src][game_src]; [cam_src]crop=w=iw*0.2800:h=ih*0.4000:x=iw*0.7000:y=ih*0.5500,scale=1080:768:force_original_aspect_ratio=increase,crop=1080:768,hflip,setsar=1,fps=30[cam_panel]; [game_src]scale=1080:1152:force_original_aspect_ratio=increase,crop=1080:1152,setsar=1,fps=30[game_panel]; [cam_panel][game_panel]vstack=inputs=2[stacked]; [stacked]drawtext=text=@streamer:expansion=none:fontcolor=white@0.65:fontsize=32:x=w-tw-60:y=180:shadowcolor=black@0.5:shadowx=2:shadowy=2[watermarked]; color=c=#FFE600:s=1080x12:d=30.00[bar_color]; [watermarked][bar_color]overlay=x='-1080+(1080*t/30.00)':y=762[with_bar]; [with_bar]drawbox=x=60:y=834:w=235:h=40:color=0xDC2626@1.0:t=fill:enable='between(t,0.00,30.00)',drawbox=x=60:y=874:w=960:h=72:color=0xFFFFFF@0.98:t=fill:enable='between(t,0.00,30.00)',drawbox=x=60:y=874:w=8:h=72:color=0xDC2626@1.0:t=fill:enable='between(t,0.00,30.00)',drawtext=text=BREAKING NEWS:expansion=none:fontcolor=white@1.0:fontsize=24:x=74:y=842:enable='between(t,0.00,30.00)',drawtext=text=Clutch of the year:expansion=none:fontcolor=0x111827@1.0:fontsize=36:x=84:y=892:enable='between(t,0.00,30.00)'[with_chyron]; [with_chyron]subtitles='<TMP>/subs.ass':fontsdir='<TMP>/assets/fonts'[outv]; [0:a]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7,alimiter=limit=0.8414:attack=5:release=50:level=disabled[voice]; [voice]alimiter=limit=0.8414:level=disabled[master_a]",
+          "-map",
+          "[outv]",
+          "-map",
+          "[master_a]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          "22",
+          "-threads",
+          "0",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-ar",
+          "44100",
+          "-t",
+          "30.000",
+          "-shortest",
+          "-max_muxing_queue_size",
+          "1024",
+          "-movflags",
+          "+faststart",
+          "<TMP>/out/.tmp_job_golden_short.mp4"
+        ],
+        "timeout": 300.0
+      }
+    ],
+    "leftover_files": [
+      "short.mp4"
+    ],
+    "result": "<TMP>/out/short.mp4"
+  },
+  "cam_crop_seam_bar": {
+    "calls": [
+      {
+        "argv": [
+          "fake-ffmpeg",
+          "-y",
+          "-t",
+          "30.000",
+          "-i",
+          "<TMP>/source.mp4",
+          "-filter_complex",
+          "[0:v]split=2[cam_src][game_src]; [cam_src]crop=w=iw*0.2800:h=ih*0.4000:x=iw*0.7000:y=ih*0.5500,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[cam_panel]; [game_src]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[game_panel]; [cam_panel][game_panel]vstack=inputs=2[stacked]; color=c=#FFE600:s=1080x12:d=30.00[bar_color]; [stacked][bar_color]overlay=x='-1080+(1080*t/30.00)':y=954[with_bar]; [with_bar]subtitles='<TMP>/subs.ass':fontsdir='<TMP>/assets/fonts'[outv]; [0:a]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7,alimiter=limit=0.8414:attack=5:release=50:level=disabled[voice]; [voice]alimiter=limit=0.8414:level=disabled[master_a]",
+          "-map",
+          "[outv]",
+          "-map",
+          "[master_a]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          "22",
+          "-threads",
+          "0",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-ar",
+          "44100",
+          "-t",
+          "30.000",
+          "-shortest",
+          "-max_muxing_queue_size",
+          "1024",
+          "-movflags",
+          "+faststart",
+          "<TMP>/out/.tmp_job_golden_short.mp4"
+        ],
+        "timeout": 300.0
+      }
+    ],
+    "leftover_files": [
+      "short.mp4"
+    ],
+    "result": "<TMP>/out/short.mp4"
+  },
+  "cam_file_with_gameplay_rect": {
+    "calls": [
+      {
+        "argv": [
+          "fake-ffmpeg",
+          "-y",
+          "-t",
+          "30.000",
+          "-i",
+          "<TMP>/source.mp4",
+          "-stream_loop",
+          "-1",
+          "-t",
+          "30.000",
+          "-i",
+          "<TMP>/cam.mp4",
+          "-filter_complex",
+          "[1:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[cam_panel]; [0:v]crop=w=iw*0.7500:h=ih*1.0000:x=iw*0.0000:y=ih*0.0000,scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[game_panel]; [cam_panel][game_panel]vstack=inputs=2[stacked]; color=c=#FFE600:s=1080x12:d=30.00[bar_color]; [stacked][bar_color]overlay=x='-1080+(1080*t/30.00)':y=954[with_bar]; [with_bar]subtitles='<TMP>/subs.ass':fontsdir='<TMP>/assets/fonts'[outv]; [0:a]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7,alimiter=limit=0.8414:attack=5:release=50:level=disabled[voice]; [voice]alimiter=limit=0.8414:level=disabled[master_a]",
+          "-map",
+          "[outv]",
+          "-map",
+          "[master_a]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          "22",
+          "-threads",
+          "0",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-ar",
+          "44100",
+          "-t",
+          "30.000",
+          "-shortest",
+          "-max_muxing_queue_size",
+          "1024",
+          "-movflags",
+          "+faststart",
+          "<TMP>/out/.tmp_job_golden_short.mp4"
+        ],
+        "timeout": 300.0
+      }
+    ],
+    "leftover_files": [
+      "short.mp4"
+    ],
+    "result": "<TMP>/out/short.mp4"
+  },
+  "cam_no_region_falls_back_to_split": {
+    "calls": [
+      {
+        "argv": [
+          "fake-ffmpeg",
+          "-y",
+          "-t",
+          "30.000",
+          "-i",
+          "<TMP>/source.mp4",
+          "-f",
+          "lavfi",
+          "-t",
+          "30.000",
+          "-i",
+          "color=c=0x16213e:s=1080x960:r=30:d=30.000",
+          "-filter_complex",
+          "[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[top_scaled]; [1:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1,fps=30[bottom]; [top_scaled][bottom]vstack=inputs=2[stacked]; color=c=#FFE600:s=1080x12:d=30.00[bar_color]; [stacked][bar_color]overlay=x='-1080+(1080*t/30.00)':y=954[with_bar]; [with_bar]subtitles='<TMP>/subs.ass':fontsdir='<TMP>/assets/fonts'[outv]; [0:a]highpass=f=85,equalizer=f=3200:width_type=o:width=1.5:g=3.5,loudnorm=I=-14:TP=-1.0:LRA=7,alimiter=limit=0.8414:attack=5:release=50:level=disabled[voice]; [voice]alimiter=limit=0.8414:level=disabled[master_a]",
+          "-map",
+          "[outv]",
+          "-map",
+          "[master_a]",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryfast",
+          "-crf",
+          "22",
+          "-threads",
+          "0",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-ar",
+          "44100",
+          "-t",
+          "30.000",
+          "-shortest",
+          "-max_muxing_queue_size",
+          "1024",
+          "-movflags",
+          "+faststart",
+          "<TMP>/out/.tmp_job_golden_short.mp4"
+        ],
+        "timeout": 300.0
+      }
+    ],
+    "leftover_files": [
+      "short.mp4"
+    ],
+    "result": "<TMP>/out/short.mp4"
+  }
+}

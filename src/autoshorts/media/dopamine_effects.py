@@ -24,7 +24,9 @@ from pathlib import Path
 
 from autoshorts.core.models import EditDecisionList, JumpCut, ZoomPunchIn
 from autoshorts.core.paths import escape_ffmpeg_filter_path, get_assets_dir
+from autoshorts.core.render_spec import CAM_GAMEPLAY_LAYOUT, CamLayoutSpec
 from autoshorts.media.audio_master import build_loudnorm_filter
+from autoshorts.media.cam_layout import build_cam_gameplay_stages, panel_heights
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +399,7 @@ def build_progress_bar_filter(
     position: str = "top",
     total_height: int = 1920,
     layout_mode: str = "split_50_50",
+    seam_y: int | None = None,
 ) -> tuple[str, str]:
     """Generate dynamic progress bar overlay moving across the video duration.
 
@@ -410,7 +413,9 @@ def build_progress_bar_filter(
     if pos == "bottom":
         y_coord = total_height - height
     elif pos == "seam":
-        if layout_mode == "split_70_30":
+        if seam_y is not None:
+            y_coord = seam_y - height // 2
+        elif layout_mode == "split_70_30":
             y_coord = int(total_height * 0.70) - height // 2
         else:
             y_coord = total_height // 2 - height // 2
@@ -596,6 +601,7 @@ def build_complex_filtergraph(
     chyron_badge: str | None = None,
     chyron_text: str | None = None,
     chyron_style: str = "broadcast_red",
+    cam_layout: CamLayoutSpec | None = None,
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -605,12 +611,15 @@ def build_complex_filtergraph(
     - 'full_blur_bg': Single-source blurred background + centered 16:9 foreground
     - 'full_center_crop': Single-source full vertical center crop
     - 'pip_gameplay': Full vertical speaker + Picture-in-Picture gameplay box
+    - 'cam_gameplay': Streamer camera (top, cropped from the source or input 1) + gameplay
+      (bottom, from the source). Needs ``cam_layout``; without it the default split is built.
 
     Returns:
         (filter_complex_string, out_video_label, out_audio_label)
     """
     filter_stages: list[str] = []
     mode = (layout_mode or "split_50_50").strip().lower()
+    cam_seam_y: int | None = None
 
     # Pre-extract valid jump cuts
     valid_cuts = (
@@ -740,6 +749,50 @@ def build_complex_filtergraph(
                 input_label=current_v,
                 output_label="stacked_sep",
                 seam_y=top_h,
+                width=width,
+                duration_sec=duration_sec,
+                style=eff_sep,
+            )
+            filter_stages.append(sep_str)
+            current_v = sep_out
+
+    elif mode == CAM_GAMEPLAY_LAYOUT and cam_layout is not None:
+        # Streamer camera on top, gameplay below; both come from the source unless a separate
+        # camera file is input 1. Jump cuts are applied to every video stream before panelling.
+        cam_from_file = cam_layout.cam_source == "file"
+        cuts_cond = "+".join(f"between(t,{c.cut_start:.2f},{c.cut_end:.2f})" for c in valid_cuts)
+        src_v, cam_v = "0:v", ("1:v" if cam_from_file else None)
+        if valid_cuts:
+            if source_clip_has_audio:
+                jc_filter, src_v, current_a = build_jumpcut_select_filter(
+                    valid_cuts, v_in="0:v", v_out="v_base", a_in="0:a", a_out="a_cut"
+                )
+                filter_stages.append(jc_filter)
+            else:
+                filter_stages.append(
+                    f"[0:v]select='not({cuts_cond})',setpts=N/FRAME_RATE/TB[v_base]"
+                )
+                src_v = "v_base"
+            if cam_from_file:
+                filter_stages.append(
+                    f"[1:v]select='not({cuts_cond})',setpts=N/FRAME_RATE/TB[cam_base]"
+                )
+                cam_v = "cam_base"
+        cam_stages, current_v = build_cam_gameplay_stages(
+            cam_layout,
+            source_label=src_v,
+            cam_label=cam_v,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+        filter_stages.extend(cam_stages)
+        cam_seam_y = panel_heights(height, cam_layout.top_ratio)[0]
+        if eff_sep != "none":
+            sep_str, sep_out = build_split_separator_filter(
+                input_label=current_v,
+                output_label="stacked_sep",
+                seam_y=cam_seam_y,
                 width=width,
                 duration_sec=duration_sec,
                 style=eff_sep,
@@ -1011,6 +1064,7 @@ def build_complex_filtergraph(
             position=progress_bar_position,
             total_height=height,
             layout_mode=mode,
+            seam_y=cam_seam_y,
         )
         filter_stages.append(bar_filter)
         current_v = bar_out
@@ -1021,24 +1075,22 @@ def build_complex_filtergraph(
     eff_chyron_text = (chyron_text or "").strip()
     preset_enable_chyron = getattr(dopamine_preset, "enable_chyron", False)
     should_enable_chyron = (
-        bool(enable_chyron)
-        or bool(preset_enable_chyron)
-        or bool(eff_chyron_text)
+        bool(enable_chyron) or bool(preset_enable_chyron) or bool(eff_chyron_text)
     )
     if should_enable_chyron:
         from autoshorts.media.chyron_overlay import ChyronData, build_chyron_filter
 
         eff_badge = (
-            chyron_badge
-            or getattr(dopamine_preset, "chyron_badge", None)
-            or "BREAKING NEWS"
+            chyron_badge or getattr(dopamine_preset, "chyron_badge", None) or "BREAKING NEWS"
         )
         eff_style = (
             chyron_style
             if (chyron_style and chyron_style != "broadcast_red")
             else (getattr(dopamine_preset, "chyron_style", None) or chyron_style or "broadcast_red")
         )
-        pos = "seam" if mode in ("split_50_50", "split_70_30") else "lower_third"
+        pos = (
+            "seam" if mode in ("split_50_50", "split_70_30", CAM_GAMEPLAY_LAYOUT) else "lower_third"
+        )
         chyron_obj = ChyronData(
             category_badge=eff_badge,
             headline_text=eff_chyron_text,
