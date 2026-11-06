@@ -745,6 +745,8 @@ class RaeaBackend:
                 *self.config.extra_args,
             ]
             self._run_render(cmd, work, timeout)
+            if props.get("sourceHasAudio", True):
+                self._remux_audio_aac(tmp_out)
             info = self._validate_output(tmp_out, props)
             os.replace(tmp_out, out)
             if self.config.run_check:
@@ -799,6 +801,26 @@ class RaeaBackend:
         if proc.returncode != 0:
             detail = summarize_failure(proc.stderr or "", proc.stdout or "")
             raise RenderFailedError(f"raea render exited {proc.returncode}: {detail}")
+
+    def _remux_audio_aac(self, video: Path) -> None:
+        """Copy the video and re-encode audio to AAC (raea's Windows build writes Opus in mp4).
+
+        Best effort and cheap (no video re-encode): on any failure the raea file is kept as is.
+        """
+        if not video.is_file():
+            return
+        tmp = video.with_name(f"{video.stem}.aac{video.suffix}")
+        cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(video)]
+        cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-movflags", "+faststart", str(tmp)]
+        try:
+            proc = run_command_with_cleanup(cmd, timeout=120.0)
+            if proc.returncode == 0 and tmp.is_file() and tmp.stat().st_size > 0:
+                os.replace(tmp, video)
+        except Exception as exc:  # keep raea's own file
+            logger.warning("raea: AAC remux skipped (%s)", exc)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _validate_output(self, path: Path, props: dict[str, Any]) -> dict[str, Any]:
         if not path.is_file() or path.stat().st_size == 0:

@@ -206,7 +206,7 @@ def test_render_success_is_atomic_and_cli_is_exact(
     assert result.method_used is RenderMethod.RAEA
     assert result.output_path.read_bytes() == b"mp4data"
     assert list(result.output_path.parent.iterdir()) == [result.output_path]  # no tmp left
-    cmd = cmds[-1]
+    cmd = [c for c in cmds if c[1] == "render"][-1]
     assert cmd[1] == "render" and cmd[cmd.index("--composition") + 1] == "short"
     assert cmd[cmd.index("--w") + 1] == "1080" and cmd[cmd.index("--h") + 1] == "1920"
     assert "--fps" in cmd and cmd[cmd.index("-o") + 1] != str(request_.output_path)
@@ -452,7 +452,7 @@ def test_render_stages_mezzanines_with_window_and_cleans_up(
     assert by["src.mp4"]["start"] == 4.0 and by["src.mp4"]["duration"] == 10.0
     assert by["src.mp4"]["audio"] is True
     assert by["bg.mp4"]["audio"] is False and "start" not in by["bg.mp4"]
-    work = Path(cmds[-1][2]).parent
+    work = Path([c for c in cmds if c[1] == "render"][-1][2]).parent
     assert not work.exists()  # work dir (mezzanines included) removed
 
 
