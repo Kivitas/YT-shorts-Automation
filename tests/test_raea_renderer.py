@@ -105,22 +105,24 @@ def test_unavailable_when_no_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert rr.RaeaBackend().is_available() is False
 
 
-def test_available_via_config_and_version_probe_cached(
+def test_available_is_cheap_cached_and_never_runs_raea(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     exe = tmp_path / "raea.exe"
     exe.write_bytes(b"")
-    calls: list[list[str]] = []
 
-    def fake_run(cmd: list[str], timeout: float | None = None, **kw: Any):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "raea 0.1.0\n", "")
+    def boom(*_a: Any, **_k: Any):
+        raise AssertionError("is_available must not spawn a process (raea has no --version)")
 
-    monkeypatch.setattr(rr, "run_command_with_cleanup", fake_run)
+    monkeypatch.setattr(rr, "run_command_with_cleanup", boom)
     backend = rr.RaeaBackend(RaeaConfig(binary=str(exe)))
     assert backend.is_available() and backend.is_available()
-    assert len(calls) == 1 and calls[0][1] == "--version"
-    assert backend.version == "raea 0.1.0"
+    assert backend.version is None
+    exe.unlink()  # binary removed later -> re-resolved, never raises
+    monkeypatch.delenv(rr.ENV_BINARY, raising=False)
+    monkeypatch.setattr(rr.shutil, "which", lambda *_a, **_k: None)
+    monkeypatch.setattr(rr.Path, "home", classmethod(lambda cls: tmp_path))
+    assert backend.is_available() is False
 
 
 def test_env_var_and_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -156,6 +158,7 @@ def _backend_with_fake(
     exe = tmp_path / "raea"
     exe.write_bytes(b"")
     cmds: list[list[str]] = []
+    mezz_calls: list[dict[str, Any]] = []
 
     def fake_run(cmd: list[str], timeout: float | None = None, **kw: Any):
         cmds.append(cmd)
@@ -165,7 +168,9 @@ def _backend_with_fake(
                 raise subprocess.TimeoutExpired(cmd, timeout or 0)
             if behaviour == "fail":
                 out.write_bytes(b"partial")
-                return subprocess.CompletedProcess(cmd, 3, "", "boom: shader")
+                return subprocess.CompletedProcess(
+                    cmd, 3, "", "WARN noise\nREFUSED: boom: B-frames, use an edit mezzanine\nmore"
+                )
             if behaviour != "nofile":
                 out.write_bytes(b"mp4data")
             # the generated composition must exist with baked props while raea runs
@@ -177,10 +182,20 @@ def _backend_with_fake(
             return subprocess.CompletedProcess(cmd, 1, "P1 clipped text", "")
         return subprocess.CompletedProcess(cmd, 0, "raea 1.0", "")
 
+    def fake_prepare(self: rr.MezzanineCache, src: Path, **kw: Any) -> Path:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        dest = self.directory / f"mezz_{src.stem}.mp4"
+        dest.write_bytes(b"mezz")
+        mezz_calls.append({"src": src.name, **kw})
+        return dest
+
+    monkeypatch.setattr(rr.MezzanineCache, "prepare", fake_prepare)
     monkeypatch.setattr(rr, "run_command_with_cleanup", fake_run)
     cfg = config or RaeaConfig(binary=str(exe))
     cfg.binary = str(exe)
-    return rr.RaeaBackend(cfg), cmds
+    backend = rr.RaeaBackend(cfg)
+    backend.mezz_calls = mezz_calls  # type: ignore[attr-defined]
+    return backend, cmds
 
 
 def test_render_success_is_atomic_and_cli_is_exact(
@@ -214,14 +229,15 @@ def test_extra_args_and_timeout_scaling(
     monkeypatch.setattr(rr, "run_command_with_cleanup", spy)
     backend.render(request_)
     assert seen["cmd"][-2:] == ["--quality", "high"]
-    assert seen["timeout"] == pytest.approx(120.0)
+    # clip is 10s: max(120, 10 * 12 + 60 startup)
+    assert seen["timeout"] == pytest.approx(180.0)
 
 
 def test_nonzero_exit_fails_and_leaves_nothing(
     monkeypatch: pytest.MonkeyPatch, request_: RenderRequest, tmp_path: Path
 ) -> None:
     backend, _ = _backend_with_fake(monkeypatch, tmp_path, "fail")
-    with pytest.raises(RenderFailedError, match="boom"):
+    with pytest.raises(RenderFailedError, match="REFUSED: boom"):
         backend.render(request_)
     assert not request_.output_path.exists()
     assert list(request_.output_path.parent.iterdir()) == []
@@ -420,3 +436,91 @@ def test_config_defaults_and_settings_field() -> None:
     assert cfg.enabled and cfg.binary is None and not cfg.run_check and cfg.extra_args == []
     assert cfg.timeout_sec_per_clip_sec > 0
     assert Settings.model_fields["raea"].annotation is RaeaConfig
+
+
+# ---------------------------------------------------------------- mezzanine / failures
+
+
+def test_render_stages_mezzanines_with_window_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, request_: RenderRequest, tmp_path: Path
+) -> None:
+    request_.extras.update({"start_sec": 4.0, "duration_sec": 10.0})
+    backend, cmds = _backend_with_fake(monkeypatch, tmp_path)
+    backend.render(request_)
+    calls = backend.mezz_calls  # type: ignore[attr-defined]
+    by = {c["src"]: c for c in calls}
+    assert by["src.mp4"]["start"] == 4.0 and by["src.mp4"]["duration"] == 10.0
+    assert by["src.mp4"]["audio"] is True
+    assert by["bg.mp4"]["audio"] is False and "start" not in by["bg.mp4"]
+    work = Path(cmds[-1][2]).parent
+    assert not work.exists()  # work dir (mezzanines included) removed
+
+
+def test_segments_relative_to_trimmed_media(request_: RenderRequest) -> None:
+    request_.extras.update({"start_sec": 4.0, "duration_sec": 6.0})
+    request_.edl = {"jump_cuts": [{"cut_start": 6.0, "cut_end": 7.0}]}
+    props = rr.build_props(request_, probe=fake_probe, trim_window=True)
+    assert props["segments"] == [
+        {"start": 0.0, "end": 2.0, "outStart": 0.0},
+        {"start": 3.0, "end": 6.0, "outStart": 2.0},
+    ]
+
+
+def test_mezzanine_command_is_raea_safe_and_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    src = tmp_path / "a.mov"
+    src.write_bytes(b"x")
+    cmds: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: float | None = None, **kw: Any):
+        cmds.append(cmd)
+        Path(cmd[-1]).write_bytes(b"mezz")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(rr, "run_command_with_cleanup", fake_run)
+    monkeypatch.setattr(rr, "get_ffmpeg_path", lambda: "ffmpeg")
+    cache = rr.MezzanineCache(tmp_path / "mezz", 30)
+    out = cache.prepare(src, start=2.0, duration=5.0)
+    assert cache.prepare(src, start=2.0, duration=5.0) == out and len(cmds) == 1
+    cmd = cmds[0]
+    assert cmd[cmd.index("-bf") + 1] == "0" and cmd[cmd.index("-pix_fmt") + 1] == "yuv420p"
+    assert cmd[cmd.index("-c:v") + 1] == "libx264" and "-c:a" in cmd
+    assert cmd[cmd.index("-ss") + 1] == "2.000" and cmd[cmd.index("-t") + 1] == "5.000"
+    assert src.read_bytes() == b"x"  # original untouched
+    cache.prepare(src, start=3.0, duration=5.0)  # different window -> new encode
+    assert len(cmds) == 2
+
+
+def test_mezzanine_failure_is_render_failed(
+    monkeypatch: pytest.MonkeyPatch, request_: RenderRequest, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        rr,
+        "run_command_with_cleanup",
+        lambda cmd, timeout=None, **kw: subprocess.CompletedProcess(cmd, 1, "", "bad codec"),
+    )
+    exe = tmp_path / "raea"
+    exe.write_bytes(b"")
+    with pytest.raises(RenderFailedError, match="mezzanine"):
+        rr.RaeaBackend(RaeaConfig(binary=str(exe))).render(request_)
+    assert not request_.output_path.exists()
+
+
+def test_summarize_failure_prefers_refused_over_noise() -> None:
+    err = "WARN missing bin/assets\nWARN WebAssetPlugin\nREFUSED: no video track (.mov)\n"
+    assert "REFUSED: no video track" in rr.summarize_failure(err, "")
+    assert "WARN" not in rr.summarize_failure(err, "")
+    assert rr.summarize_failure("a\nb", "") == "a\nb"
+
+
+def test_silent_source_does_not_require_output_audio(
+    monkeypatch: pytest.MonkeyPatch, request_: RenderRequest, tmp_path: Path
+) -> None:
+    backend, _ = _backend_with_fake(monkeypatch, tmp_path)
+
+    def probe(path: Path) -> dict[str, Any]:
+        return {**fake_probe(path), "has_audio": False}
+
+    monkeypatch.setattr(rr, "probe_video_stream_info", probe)
+    assert backend.render(request_).output_path.exists()
