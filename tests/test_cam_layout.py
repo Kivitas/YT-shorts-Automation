@@ -238,9 +238,9 @@ def _fake_frames(n: int, w: int = 640, h: int = 360) -> list[tuple[int, int, str
 
 
 def test_detect_expands_corner_face_to_snapped_cam_rect():
-    # Face in the bottom-right corner overlay of a 640x360 frame.
+    # Face in the bottom-right corner overlay of a 640x360 frame (the box is shifted in-frame).
     def detector(_f: Any) -> list[tuple[int, int, int, int]]:
-        return [(520, 230, 60, 60), (5, 5, 10, 10)]
+        return [(550, 280, 60, 60), (5, 5, 10, 10)]
 
     rect = cam_detect.find_facecam_rect(_fake_frames(8), detector, 8)
     assert rect is not None

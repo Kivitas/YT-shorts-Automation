@@ -27,11 +27,18 @@ FrameProvider = Callable[[Path, int], Iterable[Frame]]
 # Returns face boxes in pixels: (x, y, w, h).
 FaceDetector = Callable[[Any], Sequence[tuple[int, int, int, int]]]
 
-SAMPLE_WIDTH = 640
-_FACE_TO_CAM_SCALE = 2.4  # webcam overlay box vs. the face box
-_FACE_DOWN_SHIFT = 0.12  # face sits slightly above the overlay center (fraction of face h)
-_EDGE_SNAP = 0.06  # overlays hugging a frame edge are extended to it
+SAMPLE_WIDTH = 960  # a small corner overlay's face is only ~50px wide here; 640 misses it
+# Webcam overlay vs. the Haar face box, measured on real webcam footage: the overlay is about
+# 3.5x the face width but only 2.3x its height (webcam boxes are wider than tall), face centered.
+_FACE_TO_CAM_W = 3.4
+_FACE_TO_CAM_H = 2.4
+_FACE_DOWN_SHIFT = 0.0  # face sits at the overlay center (fraction of face h)
+_EDGE_SNAP = 0.03  # overlays hugging a frame edge are extended to it
 _MIN_SIDE = 0.12
+# Edge refinement: a side snaps to a straight edge that spans this much of the overlay's length.
+_EDGE_COVERAGE_MIN = 0.55
+_EDGE_STEP = 12  # luma difference that counts as an edge pixel
+_EDGE_SEARCH = 0.30  # how far (fraction of the overlay size) a side may move
 _STABLE_RADIUS = 0.08  # detections farther than this from the median center are noise
 
 _SAMPLE_TIMEOUT_SEC = 20
@@ -53,14 +60,14 @@ def clamp_rect(rect: NormRect) -> NormRect:
 def expand_face_to_cam_rect(face: NormRect) -> NormRect:
     """Grow a normalized face box into the webcam overlay rectangle around it.
 
-    The box is scaled around the face, shifted so the face sits a little above center, shifted
+    The box is scaled around the face (wider than tall, like real webcam boxes), shifted
     (not shrunk) back into the frame and extended to any frame edge it nearly touches, since
     webcam overlays are usually pinned to a corner. A face that already fills most of the frame
     (a plain talking-head shot) yields the whole frame.
     """
     fx, fy, fw, fh = face
-    w = min(1.0, max(_MIN_SIDE, fw * _FACE_TO_CAM_SCALE))
-    h = min(1.0, max(_MIN_SIDE, fh * _FACE_TO_CAM_SCALE))
+    w = min(1.0, max(_MIN_SIDE, fw * _FACE_TO_CAM_W))
+    h = min(1.0, max(_MIN_SIDE, fh * _FACE_TO_CAM_H))
     cx = fx + fw / 2
     cy = fy + fh / 2 + fh * _FACE_DOWN_SHIFT
     x = min(max(cx - w / 2, 0.0), 1.0 - w)
@@ -111,16 +118,110 @@ def find_facecam_rect(
 ) -> NormRect | None:
     """Pure core: detect the largest face per frame, aggregate, expand to the facecam rect."""
     boxes: list[NormRect] = []
+    pixels: list[Any] = []
     for width, height, data in frames:
         if width <= 0 or height <= 0:
             continue
+        pixels.append(data)
         faces = [f for f in detector(data) if f[2] > 0 and f[3] > 0]
         if not faces:
             continue
         x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
         boxes.append(clamp_rect((x / width, y / height, w / width, h / height)))
     face = aggregate_face_boxes(boxes, samples)
-    return expand_face_to_cam_rect(face) if face is not None else None
+    if face is None:
+        return None
+    rect = expand_face_to_cam_rect(face)
+    if rect != (0.0, 0.0, 1.0, 1.0):
+        rect = refine_rect_to_edges(pixels, rect, face)
+    return rect
+
+
+def _coverage_profile(frames: Sequence[Any], axis: int, lo: int, hi: int, a: int, b: int) -> Any:
+    """Per-position share of lines (in [lo, hi)) with a sharp luma step, averaged over frames.
+
+    ``axis=1`` scans columns x in [a, b) over rows [lo, hi): a vertical edge shows as a column
+    where most rows step. ``axis=0`` is the same for rows. A straight overlay border steps along
+    its whole length; edges inside the webcam or the game cover only part of it.
+    """
+    import numpy as np
+
+    total = None
+    for data in frames:
+        g = np.asarray(data, dtype=np.int16)
+        if axis == 1:
+            band = g[lo:hi, :]
+            step = np.abs(band[:, a + 2 : b + 2] - band[:, a - 2 : b - 2]) > _EDGE_STEP
+            cov = step.mean(axis=0)
+        else:
+            band = g[:, lo:hi]
+            step = np.abs(band[a + 2 : b + 2, :] - band[a - 2 : b - 2, :]) > _EDGE_STEP
+            cov = step.mean(axis=1)
+        total = cov if total is None else total + cov
+    return total / max(1, len(frames))
+
+
+def refine_rect_to_edges(frames: Sequence[Any], rect: NormRect, face: NormRect) -> NormRect:
+    """Snap each side of the estimated overlay rect to the straight edge nearest to it.
+
+    Edges are averaged over all sampled frames: the overlay border is static while the game
+    behind it changes, so the border stands out. A side with no convincing edge keeps its
+    estimate. Needs numpy frames; any other frame data (tests with fake detectors) is returned
+    untouched.
+    """
+    try:
+        import numpy as np
+
+        arrays = [f for f in frames if isinstance(f, np.ndarray) and f.ndim == 2]
+        if not arrays or len(arrays) < len(frames):
+            return rect
+        height, width = arrays[0].shape
+        x, y, w, h = rect
+        fx, fy, fw, fh = face
+        px0, py0, px1, py1 = (
+            round(v * k) for v, k in ((x, width), (y, height), (x + w, width), (y + h, height))
+        )
+        # the sides stay clear of the face box
+        face_l, face_r = round(fx * width), round((fx + fw) * width)
+        face_t, face_b = round(fy * height), round((fy + fh) * height)
+        sx = max(4, round(_EDGE_SEARCH * (px1 - px0)))
+        sy = max(4, round(_EDGE_SEARCH * (py1 - py0)))
+        # rows/columns of the central band, away from rounded corners
+        rl, rh = py0 + (py1 - py0) // 5, py1 - (py1 - py0) // 5
+        cl, ch = px0 + (px1 - px0) // 5, px1 - (px1 - px0) // 5
+
+        def snap(
+            est: int, search: int, lo_limit: int, hi_limit: int, axis: int, a: int, b: int
+        ) -> int:
+            lo = max(est - search, lo_limit, 3)
+            hi = min(est + search, hi_limit, (width if axis == 1 else height) - 3)
+            if hi - lo < 3:
+                return est
+            prof = _coverage_profile(arrays, axis, a, b, lo, hi)
+            # The nearest convincing edge, not the strongest: an edge inside the webcam image
+            # (hair, shelf, doorframe) can out-score a low-contrast overlay border.
+            hits = np.flatnonzero(prof >= _EDGE_COVERAGE_MIN)
+            if hits.size == 0:
+                return est
+            return lo + int(hits[np.argmin(np.abs(lo + hits - est))])
+
+        nx0 = snap(px0, sx, 0, face_l - 2, 1, rl, rh)
+        nx1 = snap(px1, sx, face_r + 2, width, 1, rl, rh)
+        ny0 = snap(py0, sy, 0, face_t - 2, 0, cl, ch)
+        ny1 = snap(py1, sy, face_b + 2, height, 0, cl, ch)
+        if nx1 - nx0 < 0.5 * (px1 - px0) or ny1 - ny0 < 0.5 * (py1 - py0):
+            return rect  # the edges disagree with the face-based estimate: keep the estimate
+        return clamp_rect(
+            (
+                round(nx0 / width, 4),
+                round(ny0 / height, 4),
+                round((nx1 - nx0) / width, 4),
+                round((ny1 - ny0) / height, 4),
+            )
+        )
+    except Exception as exc:  # refinement is best effort, never a reason to lose the detection
+        logger.debug("Facecam edge refinement skipped: %s", exc)
+        return rect
 
 
 def sample_timestamps(duration: float, samples: int) -> list[float]:
@@ -317,5 +418,6 @@ __all__ = [
     "detect_facecam_rect",
     "expand_face_to_cam_rect",
     "find_facecam_rect",
+    "refine_rect_to_edges",
     "sample_timestamps",
 ]
