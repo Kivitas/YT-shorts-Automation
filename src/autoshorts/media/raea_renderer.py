@@ -9,6 +9,10 @@ CLI used (verified against the raea repo, see raea/README.md):
     raea render JOB.tsx -o OUT.mp4 --composition short --w 1080 --h 1920 --fps 30 [extra_args]
     raea check OUT.mp4 --shape 9:16 --platform shorts -o OUT.check.json   (optional)
 
+Verified against the real raea binary: it REFUSES sources with B-frames and ProRes/.mov, so every
+input (source, cam file, background) is first re-encoded to an "edit mezzanine" (H.264 ``-bf 0``,
+yuv420p, AAC) in the job work dir, trimmed to the EDL window. ``raea --version`` does not exist.
+
 Props are embedded into the generated composition file as a constant instead of using
 ``--input``, because ``--input`` is documented only as the input-timeline file for games.
 
@@ -41,6 +45,7 @@ from autoshorts.core.render_spec import (
     RenderUnavailableError,
 )
 from autoshorts.media.downloader import probe_video_stream_info, run_command_with_cleanup
+from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +58,12 @@ RAEA_DIR = Path(__file__).resolve().parents[3] / "raea"
 TEMPLATE_PATH = RAEA_DIR / "short.tsx"
 COMPOSITION_ID = "short"
 ENV_BINARY = "AUTOSHORTS_RAEA_BIN"
-MIN_TIMEOUT_SEC = 60.0
-VERSION_PROBE_TIMEOUT_SEC = 10.0
+MIN_TIMEOUT_SEC = 120.0
+STARTUP_SEC = 60.0  # raea needs ~20-50s to start even for a 2s clip
 CHECK_TIMEOUT_SEC = 120.0
+MEZZ_MIN_TIMEOUT_SEC = 60.0
+MEZZ_MAX_LONG_EDGE = 2560
+MEZZ_BACKGROUND_MAX_SEC = 120.0  # background footage loops, no need to keep more
 DEFAULT_DURATION_SEC = 30.0
 DURATION_TOLERANCE_SEC = 1.5
 PROPS_CONST = "__SHORTS_PROPS__"
@@ -351,6 +359,20 @@ def _keep_segments(
     return segments or [{"start": start, "end": end, "outStart": 0.0}]
 
 
+def _segments_for_media(segments: list[dict[str, float]], offset: float) -> list[dict[str, float]]:
+    """Shift source-time segments by ``-offset`` (media trimmed to start at ``offset``)."""
+    if not offset:
+        return segments
+    return [
+        {
+            "start": round(s["start"] - offset, 4),
+            "end": round(s["end"] - offset, 4),
+            "outStart": s["outStart"],
+        }
+        for s in segments
+    ]
+
+
 def _load_caption_plan(path: Path | None) -> dict[str, Any]:
     if not path or not Path(path).is_file():
         return {}
@@ -445,10 +467,13 @@ def build_props(
     *,
     probe: Callable[[Path], dict[str, Any]] | None = None,
     media_mode: str = "static",
+    trim_window: bool = False,
 ) -> dict[str, Any]:
     """Convert a RenderRequest into the JSON props consumed by raea/short.tsx.
 
-    Pure apart from the ffprobe calls (injectable through ``probe``).
+    Pure apart from the ffprobe calls (injectable through ``probe``). With ``trim_window`` the
+    staged media are already trimmed to ``[start_sec, start_sec + duration]`` (the mezzanine),
+    so segment times are expressed relative to the window start.
     """
     probe = probe or probe_video_stream_info
     if media_mode not in MEDIA_MODES:
@@ -515,7 +540,9 @@ def build_props(
         "layout": mode,
         "mediaMode": media_mode,
         "media": media,
-        "segments": _keep_segments(request.edl, start, duration),
+        "segments": _segments_for_media(
+            _keep_segments(request.edl, start, duration), start if trim_window else 0.0
+        ),
         "panels": panels,
         "seamY": seam_y,
         "captions": _caption_props(request, plan),
@@ -557,6 +584,84 @@ def _link_or_copy(src: Path, dst: Path) -> None:
 
 
 # --------------------------------------------------------------------------------------
+# Edit mezzanine (raea refuses B-frames and ProRes/.mov sources)
+# --------------------------------------------------------------------------------------
+
+
+class MezzanineCache:
+    """Per-job cache of raea-safe H.264 (``-bf 0``) copies, keyed (path, mtime, size, window).
+
+    Lives in the job work dir, so the original media is never touched and everything is removed
+    with the work dir.
+    """
+
+    def __init__(self, directory: Path, fps: int) -> None:
+        self.directory = directory
+        self.fps = fps
+        self._done: dict[tuple[Any, ...], Path] = {}
+
+    def prepare(
+        self,
+        src: Path,
+        *,
+        start: float = 0.0,
+        duration: float | None = None,
+        audio: bool = True,
+    ) -> Path:
+        st = src.stat()
+        key = (str(src.resolve()), st.st_mtime_ns, st.st_size, round(start, 3), duration, audio)
+        hit = self._done.get(key)
+        if hit is not None and hit.is_file():
+            return hit
+        self.directory.mkdir(parents=True, exist_ok=True)
+        dest = self.directory / f"mezz_{len(self._done)}.mp4"
+        tmp = dest.with_suffix(".part.mp4")
+        cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error"]
+        if start > 0:
+            cmd += ["-ss", f"{start:.3f}"]
+        cmd += ["-i", str(src)]
+        if duration:
+            cmd += ["-t", f"{duration:.3f}"]
+        scale = f"scale='min({MEZZ_MAX_LONG_EDGE},iw)':-2"
+        cmd += ["-map", "0:v:0", "-vf", scale, "-fps_mode", "cfr", "-r", str(self.fps)]
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-bf", "0", "-g", "30"]
+        cmd += ["-pix_fmt", "yuv420p"]
+        if audio:
+            cmd += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
+        else:
+            cmd += ["-an"]
+        cmd += ["-movflags", "+faststart", str(tmp)]
+        timeout = max(MEZZ_MIN_TIMEOUT_SEC, (duration or 60.0) * 4 + 60)
+        try:
+            proc = run_command_with_cleanup(cmd, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            tmp.unlink(missing_ok=True)
+            raise RenderFailedError(f"raea: mezzanine encode of {src.name} timed out") from exc
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise RenderFailedError(f"raea: cannot run ffmpeg for mezzanine: {exc}") from exc
+        if proc.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
+            tmp.unlink(missing_ok=True)
+            tail = (proc.stderr or "").strip()[-600:]
+            raise RenderFailedError(f"raea: mezzanine encode of {src.name} failed: {tail}")
+        os.replace(tmp, dest)
+        self._done[key] = dest
+        return dest
+
+
+def summarize_failure(stderr: str, stdout: str, limit: int = 1500) -> str:
+    """Pick the meaningful lines from raea output (REFUSED/error), else the tail.
+
+    raea stderr always carries harmless noise (missing assets dir, WebAssetPlugin...), so text
+    alone never signals failure; this is only used after a non-zero exit.
+    """
+    lines = [ln.strip() for ln in (stderr + "\n" + stdout).splitlines() if ln.strip()]
+    key = [ln for ln in lines if "refus" in ln.lower() or "error" in ln.lower()]
+    picked = key[:8] if key else lines[-12:]
+    return "\n".join(picked)[-limit:]
+
+
+# --------------------------------------------------------------------------------------
 # Backend
 # --------------------------------------------------------------------------------------
 
@@ -568,34 +673,32 @@ class RaeaBackend:
 
     def __init__(self, config: RaeaConfig | None = None) -> None:
         self.config = config or RaeaConfig()
-        self._version: str | None = None
-        self._version_probed = False
+        self._version: str | None = None  # raea has no --version flag; kept for result extras
+        self._binary_cache: tuple[bool, str | None, Path | None] | None = None
         self.last_diagnostics: dict[str, Any] = {}
 
     # -- availability -------------------------------------------------------------
     def binary(self) -> Path | None:
         if not self.config.enabled:
             return None
-        return find_raea_binary(self.config.binary)
+        key = (self.config.enabled, self.config.binary)
+        cached = self._binary_cache
+        if cached and (cached[0], cached[1]) == key and (cached[2] is None or cached[2].is_file()):
+            return cached[2]
+        try:
+            found = find_raea_binary(self.config.binary)
+        except Exception as exc:  # never raise from availability checks
+            logger.debug("raea binary lookup failed: %s", exc)
+            found = None
+        self._binary_cache = (key[0], key[1], found)
+        return found
 
     def is_available(self) -> bool:
-        """True when raea is enabled and its binary exists (``--version`` probed once)."""
-        binary = self.binary()
-        if binary is None:
+        """Cheap, cached "binary exists" check. raea has no ``--version`` so nothing is run."""
+        try:
+            return self.binary() is not None
+        except Exception:
             return False
-        if not self._version_probed:
-            self._version_probed = True
-            try:
-                proc = run_command_with_cleanup(
-                    [str(binary), "--version"], timeout=VERSION_PROBE_TIMEOUT_SEC
-                )
-                if proc.returncode == 0:
-                    self._version = (proc.stdout or "").strip() or None
-                else:
-                    logger.warning("raea --version exited %s; treating as present", proc.returncode)
-            except Exception as exc:
-                logger.warning("raea --version probe failed (%s); treating as present", exc)
-        return True
 
     @property
     def version(self) -> str | None:
@@ -610,19 +713,20 @@ class RaeaBackend:
             raise RenderUnavailableError(f"raea unavailable: {why}")
 
         media_mode = str(request.extras.get("raea_media_mode", "static"))
-        props = build_props(request, media_mode=media_mode)
         out = Path(request.output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
         tmp_out = out.with_name(f".{out.stem}.raea-{os.getpid()}.tmp{out.suffix or '.mp4'}")
-        timeout = max(MIN_TIMEOUT_SEC, props["durationSec"] * self.config.timeout_sec_per_clip_sec)
-
         work = Path(tempfile.mkdtemp(prefix=f"raea_{request.job_id}_"))
         try:
-            for info in props["media"].values():
-                _link_or_copy(Path(info["path"]), work / "media" / info["static"])
+            props = build_props(request, media_mode=media_mode, trim_window=True)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            self._stage_media(request, props, work)
             comp = write_job_composition(props, work / "job.tsx")
             (work / "props.json").write_text(
                 json.dumps(props, ensure_ascii=False), encoding="utf-8"
+            )
+            timeout = max(
+                MIN_TIMEOUT_SEC,
+                props["durationSec"] * self.config.timeout_sec_per_clip_sec + STARTUP_SEC,
             )
             cmd = [
                 str(binary),
@@ -641,6 +745,8 @@ class RaeaBackend:
                 *self.config.extra_args,
             ]
             self._run_render(cmd, work, timeout)
+            if props.get("sourceHasAudio", True):
+                self._remux_audio_aac(tmp_out)
             info = self._validate_output(tmp_out, props)
             os.replace(tmp_out, out)
             if self.config.run_check:
@@ -662,6 +768,26 @@ class RaeaBackend:
             duration_sec=float(info.get("duration") or time.monotonic() - started),
         )
 
+    def _stage_media(self, request: RenderRequest, props: dict[str, Any], work: Path) -> None:
+        """Build the edit mezzanines and place them in ``work/media`` under their static names."""
+        fps = int(props["fps"])
+        start = float(request.extras.get("start_sec", 0.0) or 0.0)
+        duration = float(props["durationSec"])
+        cache = MezzanineCache(work / "mezz", fps)
+        for key, info in props["media"].items():
+            src = Path(info["path"])
+            if key == "background":
+                mezz = cache.prepare(src, duration=MEZZ_BACKGROUND_MAX_SEC, audio=False)
+            else:
+                # source/cam are trimmed to the clip window; only the source carries sound
+                mezz = cache.prepare(src, start=start, duration=duration, audio=(key == "source"))
+            probed = probe_video_stream_info(mezz)
+            info["path"] = str(mezz).replace("\\", "/")
+            info["hasAudio"] = bool(probed.get("has_audio"))
+            info["durationSec"] = round(float(probed.get("duration") or 0.0), 3)
+            _link_or_copy(mezz, work / "media" / info["static"])
+        props["sourceHasAudio"] = bool(props["media"].get("source", {}).get("hasAudio"))
+
     def _run_render(self, cmd: list[str], work: Path, timeout: float) -> None:
         env = {**os.environ, "RAEA_OFFLINE": os.environ.get("RAEA_OFFLINE", "1")}
         try:
@@ -673,8 +799,28 @@ class RaeaBackend:
         except OSError as exc:
             raise RenderUnavailableError(f"raea could not be started: {exc}") from exc
         if proc.returncode != 0:
-            tail = ((proc.stderr or "") + "\n" + (proc.stdout or "")).strip()[-1500:]
-            raise RenderFailedError(f"raea render exited {proc.returncode}: {tail}")
+            detail = summarize_failure(proc.stderr or "", proc.stdout or "")
+            raise RenderFailedError(f"raea render exited {proc.returncode}: {detail}")
+
+    def _remux_audio_aac(self, video: Path) -> None:
+        """Copy the video and re-encode audio to AAC (raea's Windows build writes Opus in mp4).
+
+        Best effort and cheap (no video re-encode): on any failure the raea file is kept as is.
+        """
+        if not video.is_file():
+            return
+        tmp = video.with_name(f"{video.stem}.aac{video.suffix}")
+        cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(video)]
+        cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-movflags", "+faststart", str(tmp)]
+        try:
+            proc = run_command_with_cleanup(cmd, timeout=120.0)
+            if proc.returncode == 0 and tmp.is_file() and tmp.stat().st_size > 0:
+                os.replace(tmp, video)
+        except Exception as exc:  # keep raea's own file
+            logger.warning("raea: AAC remux skipped (%s)", exc)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _validate_output(self, path: Path, props: dict[str, Any]) -> dict[str, Any]:
         if not path.is_file() or path.stat().st_size == 0:
@@ -688,7 +834,7 @@ class RaeaBackend:
             raise RenderFailedError(
                 f"raea output is {got[0]}x{got[1]}, expected {want[0]}x{want[1]}"
             )
-        if not info.get("has_audio"):
+        if props.get("sourceHasAudio", True) and not info.get("has_audio"):
             raise RenderFailedError("raea output has no audio stream")
         dur = float(info.get("duration") or 0.0)
         if abs(dur - props["durationSec"]) > max(

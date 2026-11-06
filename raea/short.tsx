@@ -21,8 +21,8 @@ import {
   useVideoConfig,
 } from "raea";
 
-declare const __SHORTS_PROPS__: ShortProps | undefined;
-
+// __SHORTS_PROPS__ is NOT declared here: the job file prepends `const __SHORTS_PROPS__ = {...}`
+// and raea's bundler rejects a second declaration (`declare const` counts as one).
 type Box = { x: number; y: number; w: number; h: number };
 type Placement = { left: number; top: number; width: number; height: number };
 type Panel = {
@@ -122,6 +122,7 @@ const DEFAULT_PROPS: ShortProps = {
   watermark: { text: "@channel", position: "top_right", opacity: 0.65 },
 };
 
+// @ts-ignore  (injected by the backend; undeclared when the template is previewed on its own)
 const P: ShortProps = typeof __SHORTS_PROPS__ !== "undefined" && __SHORTS_PROPS__ ? __SHORTS_PROPS__ : DEFAULT_PROPS;
 
 const src = (key: string): string | null => {
