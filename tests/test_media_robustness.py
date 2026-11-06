@@ -214,7 +214,7 @@ def test_shared_transcript_cache_roundtrip(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(pipeline_mod, "get_work_dir", lambda: tmp_path)
     path = si._shared_transcript_path("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-    assert path is not None and path.name == "dQw4w9WgXcQ.json"
+    assert path is not None and path.name.startswith("dQw4w9WgXcQ.")
     assert si._load_shared_transcript(path) == []  # miss
     si._store_shared_transcript(path, [{"start": 0.0, "end": 1.0, "text": "hi"}])
     assert si._load_shared_transcript(path)[0]["text"] == "hi"

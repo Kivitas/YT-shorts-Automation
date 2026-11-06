@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import logging
+import math
 import os
-import threading
+import re
+import time
+import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -67,8 +72,28 @@ def _load_performance_prior(state_manager: Any, settings: Any, job: Job) -> Any:
     return prior
 
 
-def _shared_transcript_path(source_url: str) -> Path | None:
-    """Per-video transcript cache path under the work dir, or None when the id is unknown."""
+# The shared cache holds FULL-VIDEO transcripts (absolute timestamps from 0), never a section's.
+# The file name carries everything that changes the transcript's content, so a different
+# language preference or Whisper model can never be served another configuration's result.
+_TRANSCRIPT_CACHE_VERSION = 2
+_TRANSCRIPT_CACHE_MAX_BYTES = 25 * 1024 * 1024  # a 10h video is well under 5 MB
+_TRANSCRIPT_CACHE_MAX_FILES = 500
+_TRANSCRIPT_CACHE_MAX_AGE_SEC = 60 * 24 * 3600
+# Captions/Whisper may overrun the container duration by a little (trailing padding).
+_TRANSCRIPT_DURATION_SLACK_SEC = 15.0
+
+
+def _shared_transcript_path(
+    source_url: str,
+    *,
+    languages: Sequence[str] = (),
+    model: str = "",
+) -> Path | None:
+    """Per-video transcript cache path under the work dir, or None when the id is unknown.
+
+    The name is ``<video_id>.<sig>.json`` where ``sig`` hashes the cache version, the caption
+    language preference and the Whisper model.
+    """
     import autoshorts.pipeline as pipeline_mod
     from autoshorts.discovery.url_validator import extract_video_id
 
@@ -76,31 +101,70 @@ def _shared_transcript_path(source_url: str) -> Path | None:
         video_id = extract_video_id(source_url)
     except Exception:
         return None
-    if not video_id:
-        return None
-    return pipeline_mod.get_work_dir() / "_transcript_cache" / f"{video_id}.json"
+    if not video_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(video_id)):
+        return None  # also keeps any path separator or ".." out of the file name
+    raw = f"v{_TRANSCRIPT_CACHE_VERSION}|{','.join(languages)}|{model}"
+    sig = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]  # noqa: S324 - cache key only
+    return pipeline_mod.get_work_dir() / "_transcript_cache" / f"{video_id}.{sig}.json"
 
 
-def _load_shared_transcript(path: Path) -> list[dict[str, Any]]:
-    """Read a cached transcript; any problem (missing, corrupt, empty) is a cache miss."""
+def _segments_look_valid(data: Any, duration: float | None) -> bool:
+    if not isinstance(data, list) or not data:
+        return False
+    max_end = 0.0
+    for item in data:
+        if not isinstance(item, dict):
+            return False
+        try:
+            start, end = float(item["start"]), float(item["end"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not (math.isfinite(start) and math.isfinite(end)) or start < 0 or end < start:
+            return False
+        max_end = max(max_end, end)
+    # A transcript that runs far past the video is another video's (or a section's) transcript.
+    return not (duration and duration > 0 and max_end > duration + _TRANSCRIPT_DURATION_SLACK_SEC)
+
+
+def _load_shared_transcript(path: Path, *, duration: float | None = None) -> list[dict[str, Any]]:
+    """Read a cached transcript; any problem (missing, corrupt, oversized, implausible) is a miss."""
     try:
+        if path.stat().st_size > _TRANSCRIPT_CACHE_MAX_BYTES:
+            return []
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
+    if not _segments_look_valid(data, duration):
         return []
     return data
+
+
+def _prune_transcript_cache(directory: Path) -> None:
+    """Bound the cache: drop entries older than the age limit, then the oldest beyond the cap."""
+    try:
+        entries = [(p.stat().st_mtime, p) for p in directory.glob("*.json")]
+    except OSError:
+        return
+    cutoff = time.time() - _TRANSCRIPT_CACHE_MAX_AGE_SEC
+    entries.sort(key=lambda item: item[0], reverse=True)
+    for idx, (mtime, entry) in enumerate(entries):
+        if mtime < cutoff or idx >= _TRANSCRIPT_CACHE_MAX_FILES:
+            try:
+                entry.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _store_shared_transcript(path: Path, segments: list[dict[str, Any]]) -> None:
     """Atomically write the shared transcript cache; best effort, never raises."""
 
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(segments), encoding="utf-8")
         os.replace(tmp, path)
-    except OSError as exc:
+        _prune_transcript_cache(path.parent)
+    except (OSError, TypeError, ValueError) as exc:
         logger.debug("shared transcript cache write skipped: %s", exc)
     finally:
         tmp.unlink(missing_ok=True)
@@ -173,11 +237,30 @@ class IngestMixin:
 
         local_src: Path | None = self._resolve_local_source(job)
         # Cross-job cache: reruns and variants of the same video reuse the (expensive) transcript.
-        shared_cache = None if local_src else _shared_transcript_path(job.source_url)
+        shared_cache = None
+        known_duration: float | None = None
+        if not local_src:
+            fetcher_langs = tuple(getattr(self.transcript_fetcher, "languages", ()) or ())
+            whisper_model = str(getattr(getattr(self.config, "media", None), "whisper_model", ""))
+            shared_cache = _shared_transcript_path(
+                job.source_url, languages=fetcher_langs, model=whisper_model
+            )
+            meta = getattr(job, "video_metadata", None)
+            try:
+                known_duration = float(getattr(meta, "duration", 0) or 0) or None
+            except (TypeError, ValueError):
+                known_duration = None
 
+        # Parallel jobs on the same video would each run the (expensive) Whisper fallback: the
+        # second one waits here and then hits the cache the first one wrote.
+        from autoshorts.media.downloader import _key_lock
+
+        key_guard = _key_lock(f"transcript|{shared_cache}") if shared_cache is not None else None
+        if key_guard is not None:
+            key_guard.__enter__()
         try:
             if shared_cache is not None:
-                segments = _load_shared_transcript(shared_cache)
+                segments = _load_shared_transcript(shared_cache, duration=known_duration)
                 if segments:
                     logger.info("Job %s: reusing cached transcript %s", job.id, shared_cache.name)
 
@@ -255,6 +338,9 @@ class IngestMixin:
                 stage_id, status="FAILED", artifacts={"error": str(e)}
             )
             raise
+        finally:
+            if key_guard is not None:
+                key_guard.__exit__(None, None, None)
 
     def _load_transcript_segments(self: Any, job: Job) -> list[dict[str, Any]]:
         import autoshorts.pipeline as pipeline_mod

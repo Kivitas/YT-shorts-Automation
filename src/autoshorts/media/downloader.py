@@ -7,6 +7,7 @@ timeouts, and optional browser cookies.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -284,11 +285,19 @@ _FATAL_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 _PERMANENT_YTDLP_ERROR_RE = re.compile("|".join(r.pattern for _, r, _ in _FATAL_RULES), re.I)
 
 # Transient failures: always worth another attempt (with longer backoff for rate limits).
-_RATE_LIMIT_RE = re.compile(r"HTTP Error 429|Too Many Requests|rate[- ]limit", re.IGNORECASE)
+_RATE_LIMIT_RE = re.compile(
+    r"HTTP Error 429|Too Many Requests|rate[- ]limit|try again later", re.IGNORECASE
+)
+# YouTube answers an IP-throttled session with "Video unavailable. This content isn't available,
+# try again later." That is a soft block, not a removed video, so it must not match the fatal
+# "removed" rule below.
+_SOFT_BLOCK_RE = re.compile(
+    r"try again later|this content isn'?t available|content isn'?t available", re.IGNORECASE
+)
 _TRANSIENT_RE = re.compile(
     r"HTTP Error 5\d\d|Service Unavailable|Bad Gateway|Gateway Time-?out|timed out|Timeout"
     r"|Connection (reset|refused|aborted)|Temporary failure|Network is unreachable"
-    r"|Unable to download|Read error|IncompleteRead|SSL|HTTP Error 403|Sign in to confirm",
+    r"|Unable to download|Read error|IncompleteRead|\bSSL\b|HTTP Error 403|Sign in to confirm",
     re.IGNORECASE,
 )
 _FORMAT_UNAVAILABLE_RE = re.compile(r"Requested format is not available", re.IGNORECASE)
@@ -312,7 +321,10 @@ def classify_download_error(exc_or_text: BaseException | str) -> tuple[str, str,
     if isinstance(exc_or_text, subprocess.TimeoutExpired):
         return ("retryable", "timeout", "")
     text = str(exc_or_text)
+    soft_block = bool(_SOFT_BLOCK_RE.search(text))
     for kind, pattern, hint in _FATAL_RULES:
+        if soft_block and kind == "removed":
+            continue
         if pattern.search(text):
             return ("fatal", kind, hint)
     if _FORMAT_UNAVAILABLE_RE.search(text):
@@ -417,6 +429,18 @@ def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
             logger.debug("Failed to kill PID %s: %s", pid, exc)
 
 
+def _reap(proc: subprocess.Popen) -> None:
+    """Collect a killed child's pipes and exit status so no zombie or open handle is left."""
+    try:
+        proc.communicate(timeout=5.0)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=5.0)
+        except Exception:
+            pass
+
+
 def run_command_with_cleanup(
     cmd: list[str],
     timeout: float | None = None,
@@ -458,13 +482,11 @@ def run_command_with_cleanup(
         return subprocess.CompletedProcess(cmd, retcode, stdout, stderr)
     except subprocess.TimeoutExpired:
         terminate_process_tree(proc.pid)
-        try:
-            proc.communicate(timeout=0.5)
-        except Exception:
-            pass
+        _reap(proc)
         raise
-    except Exception:
+    except BaseException:  # includes KeyboardInterrupt: never orphan a yt-dlp/ffmpeg tree
         terminate_process_tree(proc.pid)
+        _reap(proc)
         raise
 
 
@@ -580,27 +602,87 @@ def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
     return info
 
 
-_KEY_LOCKS: dict[str, threading.Lock] = {}
+_KEY_LOCKS: dict[str, list] = {}  # key -> [lock, holders]; removed when the last holder leaves
 _KEY_LOCKS_GUARD = threading.Lock()
 _CACHE_MAX_AGE_SEC = 7 * 24 * 3600
 _STALE_TEMP_AGE_SEC = 2 * 3600
 
 
-def _key_lock(key: str) -> threading.Lock:
-    """One lock per cache key so identical concurrent downloads run once."""
+@contextlib.contextmanager
+def _key_lock(key: str):
+    """One lock per cache key so identical concurrent downloads run once.
+
+    The registry entry is reference counted and dropped when the last holder leaves, so the
+    table cannot grow with every distinct section a long-running process ever downloads.
+    """
     with _KEY_LOCKS_GUARD:
-        return _KEY_LOCKS.setdefault(key, threading.Lock())
+        entry = _KEY_LOCKS.setdefault(key, [threading.Lock(), 0])
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _KEY_LOCKS_GUARD:
+            entry[1] -= 1
+            if entry[1] <= 0 and _KEY_LOCKS.get(key) is entry:
+                del _KEY_LOCKS[key]
 
 
-def _prune_cache(cache_dir: Path, max_age_sec: float = _CACHE_MAX_AGE_SEC) -> None:
-    """Delete cache entries older than ``max_age_sec``."""
+# Section-cache size bound (each cached cut duplicates the section on disk).
+DEFAULT_CACHE_MAX_BYTES = 2 * 1024**3
+
+
+def _prune_cache(
+    cache_dir: Path,
+    max_age_sec: float = _CACHE_MAX_AGE_SEC,
+    max_bytes: int | None = DEFAULT_CACHE_MAX_BYTES,
+    keep: Path | None = None,
+) -> None:
+    """Delete cache entries older than ``max_age_sec``, then least-recently-used ones until the
+    total is within ``max_bytes`` (``None`` disables the size cap). ``keep`` is never removed.
+
+    Recency is the file mtime, which cache hits refresh (see ``_touch``), so mtime is LRU order.
+    Another thread or process may delete or open entries at any moment; every OS error is
+    ignored (on Windows an entry that is being copied cannot be unlinked and simply stays).
+    """
     cutoff = time.time() - max_age_sec
+    live: list[tuple[float, int, Path]] = []
     for entry in cache_dir.glob("*.mp4"):
         try:
-            if entry.stat().st_mtime < cutoff:
+            st = entry.stat()
+            if st.st_mtime < cutoff and entry != keep:
                 entry.unlink(missing_ok=True)
+            else:
+                live.append((st.st_mtime, st.st_size, entry))
         except OSError:
             pass
+    if max_bytes is None:
+        return
+    total = sum(size for _, size, _ in live)
+    for _mtime, size, entry in sorted(live, key=lambda item: item[0]):
+        if total <= max_bytes:
+            break
+        if entry == keep:
+            continue
+        try:
+            entry.unlink(missing_ok=True)
+            total -= size
+        except OSError:
+            pass
+
+
+def _touch(path: Path) -> None:
+    """Refresh a cache entry's recency; best effort."""
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
+
+
+# Temp tokens of downloads running in this process: stale-file cleanup must never touch them,
+# however old their files look (a stalled but live download keeps its token registered).
+_ACTIVE_TEMP_TOKENS: set[str] = set()
+_ACTIVE_TOKENS_GUARD = threading.Lock()
 
 
 def cleanup_stale_temp_files(directory: Path, max_age_sec: float = _STALE_TEMP_AGE_SEC) -> int:
@@ -616,7 +698,11 @@ def cleanup_stale_temp_files(directory: Path, max_age_sec: float = _STALE_TEMP_A
         entries += list(directory.glob("*.ytdl"))
     except OSError:
         return 0
+    with _ACTIVE_TOKENS_GUARD:
+        active = tuple(_ACTIVE_TEMP_TOKENS)
     for entry in entries:
+        if any(token in entry.name for token in active):
+            continue
         try:
             if entry.is_file() and entry.stat().st_mtime < cutoff:
                 entry.unlink(missing_ok=True)
@@ -624,6 +710,23 @@ def cleanup_stale_temp_files(directory: Path, max_age_sec: float = _STALE_TEMP_A
         except OSError:
             pass
     return removed
+
+
+def _validate_cookies_spec(spec: str | None) -> str | None:
+    """Return a safe ``--cookies-from-browser`` value, or None when unset.
+
+    The value is passed as a separate argv item, so shell injection is impossible, but a value
+    starting with ``-`` could still be read as another yt-dlp option (for example ``--exec``)
+    and control characters never belong in a browser spec.
+    """
+    if spec is None:
+        return None
+    value = str(spec).strip()
+    if not value:
+        return None
+    if value.startswith("-") or any(ord(ch) < 32 for ch in value):
+        raise ValueError("cookies_from_browser must be a browser name such as 'chrome'")
+    return value
 
 
 class Downloader:
@@ -647,6 +750,7 @@ class Downloader:
         section_cache: bool = True,
         cache_dir: Path | None = None,
         min_free_bytes: int = 256 * 1024 * 1024,
+        cache_max_bytes: int | None = DEFAULT_CACHE_MAX_BYTES,
     ) -> None:
         """Initialize Downloader.
 
@@ -665,6 +769,8 @@ class Downloader:
                 start, end and format) instead of downloading it again.
             cache_dir: Section cache location (default: ``<dest dir>/.section_cache``).
             min_free_bytes: Disk-space floor checked before a download starts.
+            cache_max_bytes: Size cap per section-cache directory; least recently used
+                entries are evicted beyond it (``None`` disables the cap).
         """
         self.settings = settings or load_config()
         self.yt_dlp_binary = resolve_yt_dlp_binary(yt_dlp_binary)
@@ -677,6 +783,7 @@ class Downloader:
         self.section_cache = section_cache
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.min_free_bytes = max(0, int(min_free_bytes))
+        self.cache_max_bytes = None if cache_max_bytes is None else max(0, int(cache_max_bytes))
         # Populated by the most recent download_section() call (success or failure).
         self.last_download_diagnostics: dict[str, Any] = {}
 
@@ -689,7 +796,7 @@ class Downloader:
             )
         if not resolved_cookies and hasattr(self.settings, "media"):
             resolved_cookies = getattr(self.settings.media, "cookies_from_browser", None)
-        self.cookies_from_browser = resolved_cookies
+        self.cookies_from_browser = _validate_cookies_spec(resolved_cookies)
 
         self._metadata_fetcher = MetadataFetcher(
             yt_dlp_binary=self.yt_dlp_binary,
@@ -727,7 +834,8 @@ class Downloader:
             )
         try:
             key = self._section_cache_key(url, start_sec, end_sec)
-        except Exception:  # invalid URL/range: let the real path raise its precise error
+        except (ValueError, OverflowError, TypeError):
+            # invalid URL/range: let the real path raise its precise error
             return self._download_section_uncached(
                 url, start_sec, end_sec, output_path, diagnostics
             )
@@ -763,6 +871,7 @@ class Downloader:
             if not validation.ok:
                 cached.unlink(missing_ok=True)
                 return False
+            _touch(cached)  # LRU: a hit keeps the entry alive
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(f".tmp_cache_{uuid4().hex[:8]}{dest.suffix}")
             try:
@@ -798,7 +907,7 @@ class Downloader:
                 os.replace(tmp, cached)
             finally:
                 tmp.unlink(missing_ok=True)
-            _prune_cache(cached.parent)
+            _prune_cache(cached.parent, max_bytes=self.cache_max_bytes, keep=cached)
         except OSError as exc:
             logger.debug("section cache store skipped: %s", exc)
 
@@ -823,6 +932,31 @@ class Downloader:
         end_sec: float,
         output_path: Path,
         diagnostics: dict[str, Any] | None = None,
+    ) -> Path:
+        """Run one section download with its temp token registered as active.
+
+        The registration keeps ``cleanup_stale_temp_files`` (run by concurrent downloads in
+        the same directory) away from this download's files for as long as it is running.
+        """
+        token = uuid4().hex[:8]
+        with _ACTIVE_TOKENS_GUARD:
+            _ACTIVE_TEMP_TOKENS.add(token)
+        try:
+            return self._download_section_attempts(
+                url, start_sec, end_sec, output_path, diagnostics, token
+            )
+        finally:
+            with _ACTIVE_TOKENS_GUARD:
+                _ACTIVE_TEMP_TOKENS.discard(token)
+
+    def _download_section_attempts(
+        self,
+        url: str,
+        start_sec: float,
+        end_sec: float,
+        output_path: Path,
+        diagnostics: dict[str, Any] | None,
+        unique_token: str,
     ) -> Path:
         """Download strictly the requested timestamp slice using yt-dlp --download-sections.
 
@@ -857,7 +991,7 @@ class Downloader:
 
         try:
             section_arg = format_section_arg(start_sec, end_sec)
-        except ValueError as exc:
+        except (ValueError, OverflowError) as exc:
             raise DownloadError(f"Invalid section for {canonical_url}: {exc}") from exc
         # Fail fast on a full disk and sweep long-dead partials from earlier crashed runs.
         self._check_disk_space(dest.parent, float(end_sec) - float(start_sec))
@@ -865,7 +999,6 @@ class Downloader:
 
         # The token makes every download's temp names unique, so concurrent jobs sharing a
         # directory can never pick up or delete each other's partial files.
-        unique_token = uuid4().hex[:8]
         temp_template = dest.parent / f".tmp_{unique_token}_%(ext)s"
 
         base_cmd = [
@@ -1132,8 +1265,19 @@ class Downloader:
             Resolved Path of the downloaded audio file.
 
         Raises:
-            DownloadError: If yt-dlp audio extraction fails.
+            DownloadError: If yt-dlp audio extraction fails (``FatalDownloadError`` when
+                retrying cannot help, ``RetryableDownloadError`` when attempts ran out).
         """
+        token = uuid4().hex[:8]
+        with _ACTIVE_TOKENS_GUARD:
+            _ACTIVE_TEMP_TOKENS.add(token)
+        try:
+            return self._download_audio_attempts(url, output_path, token)
+        finally:
+            with _ACTIVE_TOKENS_GUARD:
+                _ACTIVE_TEMP_TOKENS.discard(token)
+
+    def _download_audio_attempts(self, url: str, output_path: Path, unique_token: str) -> Path:
         canonical_url = normalize_youtube_url(url)
         vid = extract_video_id(url)
 
@@ -1141,7 +1285,6 @@ class Downloader:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         self._check_disk_space(dest.parent, 0.0)
-        unique_token = uuid4().hex[:8]
         temp_template = dest.parent / f".tmp_audio_{unique_token}_%(ext)s"
 
         cmd = [
@@ -1175,6 +1318,7 @@ class Downloader:
         logger.info("Downloading audio-only stream for %s -> %s", vid, dest)
 
         last_error: Exception | None = None
+        last_severity, last_kind, last_hint = "retryable", "", ""
         for attempt in range(1, self.max_retries + 1):
             try:
                 proc = run_command_with_cleanup(
@@ -1212,7 +1356,8 @@ class Downloader:
                         f.unlink(missing_ok=True)
                     except OSError:
                         pass
-                severity = classify_download_error(exc)[0]
+                severity, kind, hint = classify_download_error(exc)
+                last_severity, last_kind, last_hint = severity, kind, hint
                 if severity == "fatal":
                     break
                 if attempt < self.max_retries:
@@ -1222,9 +1367,15 @@ class Downloader:
                         )
                     )
 
-        raise DownloadError(
-            f"Failed to download audio for {canonical_url} after {self.max_retries} attempts: {last_error}"
-        ) from last_error
+        message = (
+            f"Failed to download audio for {canonical_url} after {self.max_retries} attempts: "
+            f"{last_error}"
+        )
+        if last_severity == "fatal":
+            raise FatalDownloadError(
+                f"{message}\nAction: {last_hint}", reason=last_kind, hint=last_hint
+            ) from last_error
+        raise RetryableDownloadError(message) from last_error
 
 
 YtDlpDownloader = Downloader

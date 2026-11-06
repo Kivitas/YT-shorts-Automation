@@ -349,7 +349,11 @@ class SemIfDecider(Decider):
         if performance_prior is not None and performance_prior.active:
             active_prior = performance_prior
         if active_prior is not None:
-            candidates = active_prior.apply(candidates)
+            try:
+                candidates = active_prior.apply(candidates)
+            except Exception as err:  # advisory signal: a prior bug must never block selection
+                logger.warning("Performance prior skipped: %s", err)
+                active_prior = None
 
         chosen_candidates = select_non_overlapping_candidates(candidates, count=count)
         selections: list[ClipSelection] = []
@@ -375,20 +379,23 @@ class SemIfDecider(Decider):
             )
 
             if active_prior is not None:
-                prior_adj = active_prior.score_adjustment(cand.duration, cand.text)
-                record_decision(
-                    DecisionRecord(
-                        job_id=job_id,
-                        name="performance_prior",
-                        value=f"{prior_adj.value:+.4f}",
-                        reason=(
-                            "matched " + ", ".join(prior_adj.matched)
-                            if prior_adj.matched
-                            else "no matching historical group"
-                        ),
-                        source="analytics",
+                try:
+                    prior_adj = active_prior.score_adjustment(cand.duration, cand.text)
+                    record_decision(
+                        DecisionRecord(
+                            job_id=job_id,
+                            name="performance_prior",
+                            value=f"{prior_adj.value:+.4f}",
+                            reason=(
+                                "matched " + ", ".join(prior_adj.matched)
+                                if prior_adj.matched
+                                else "no matching historical group"
+                            ),
+                            source="analytics",
+                        )
                     )
-                )
+                except Exception as err:  # audit trail only; never block the selection
+                    logger.debug("Performance prior decision record skipped: %s", err)
 
             # 2. Generate hook text
             hook_text = self.generate_hook(cand.text)

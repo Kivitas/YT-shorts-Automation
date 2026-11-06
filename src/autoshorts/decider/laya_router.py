@@ -8,6 +8,12 @@ Provides:
     Score < 70.0: 'rejected' (triggers regeneration or argmax fallback)
 - Fast hook sentence patching to elevate borderline hooks into approved viral status.
 - Zero-dependency pure Python execution with optional ModernBERT / transformer bridge.
+
+Production status: the 80.0 / 70.0 thresholds here are NOT part of the clip-selection or hook
+generation path (``decision/orchestrator.py`` does not call ``LayaRouter``). Only
+``decider/performance_prior.py`` instantiates it, to score historical hooks and report
+*advisory* thresholds; those recommendations are recorded in the job diagnostics and never
+enforced. Changing a threshold here therefore does not change which clips are selected.
 """
 
 from __future__ import annotations
