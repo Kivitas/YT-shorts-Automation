@@ -13,7 +13,9 @@ is tried), so lock ordering is always global -> one method and cannot deadlock.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -106,8 +108,14 @@ class MethodLimiter:
 
     def __init__(self, limits: Mapping[str, int] | None = None) -> None:
         merged = dict(DEFAULT_MAX_PARALLEL if limits is None else limits)
+        known = {m.value for m in RenderMethod}
+        for key in merged:
+            if str(key).lower() not in known:
+                logger.warning("render.max_parallel_per_method: unknown method '%s' ignored", key)
         self._sems: dict[str, threading.Semaphore] = {
-            str(k).lower(): threading.Semaphore(max(1, int(v))) for k, v in merged.items()
+            str(k).lower(): threading.Semaphore(max(1, int(v)))
+            for k, v in merged.items()
+            if str(k).lower() in known
         }
 
     @contextlib.contextmanager
@@ -223,12 +231,15 @@ class RemotionBackend:
             kwargs.setdefault("cam_layout", request.cam_layout)
         started = time.monotonic()
         try:
+            # The caption track is rendered BEFORE the base composition: it only needs the
+            # plan, so when Remotion fails nothing expensive has run yet and the fallback
+            # method does not repeat a full composition.
+            track = Path(plan).with_suffix(".webm")
+            render_caption_overlay(Path(plan), track, project_dir=self.project_dir)
             res = self.compositor.compose(**kwargs)
             base = _result_path(res, request.output_path)
             if not base.is_file() and request.output_path.is_file():
                 base = request.output_path
-            track = Path(plan).with_suffix(".webm")
-            render_caption_overlay(Path(plan), track, project_dir=self.project_dir)
             captioned = base.with_name(f"{base.stem}_captioned{base.suffix}")
             overlay_captions(base, track, captioned, ffmpeg_path=self._ffmpeg())
         except RemotionUnavailableError as exc:
@@ -293,14 +304,44 @@ def _output_ok(path: Path) -> bool:
         return False
 
 
-def _cleanup_partial(request: RenderRequest, existed_before: bool) -> None:
+def _captioned_name(path: Path) -> Path:
+    return path.with_name(f"{path.stem}_captioned{path.suffix}")
+
+
+def _cleanup_partial(request: RenderRequest, existed_before: bool, captioned_existed: bool) -> None:
+    """Delete only files THIS attempt created; anything that pre-existed is left alone."""
     out = request.output_path
-    targets = [out.with_name(f"{out.stem}_captioned{out.suffix}")]
+    targets: list[Path] = []
+    if not captioned_existed:
+        targets.append(_captioned_name(out))
     if not existed_before:
         targets.append(out)
     for target in targets:
         with contextlib.suppress(OSError):
             target.unlink(missing_ok=True)
+
+
+def _cleanup_attempt(
+    request: RenderRequest, tmp: Path | None, existed_before: bool, captioned_existed: bool
+) -> None:
+    if tmp is not None:  # request.output_path is the temp file: always ours to delete
+        _cleanup_partial(request, False, False)
+    else:
+        _cleanup_partial(request, existed_before, captioned_existed)
+
+
+def _promote_temp(result: RenderResult, tmp: Path, final: Path) -> None:
+    """Atomically move a temp render over ``final`` (and its ``_captioned`` sibling)."""
+    produced = Path(result.output_path)
+    if produced == tmp:
+        os.replace(tmp, final)
+        result.output_path = final
+    elif produced == _captioned_name(tmp):
+        target = _captioned_name(final)
+        os.replace(produced, target)
+        result.output_path = target
+        if tmp.is_file():  # keep the un-captioned base current too (previews are cut from it)
+            os.replace(tmp, final)
 
 
 def render_with_fallback(
@@ -337,22 +378,30 @@ def render_with_fallback(
             attempts.append((candidate, "unavailable: backend not ready on this machine"))
             logger.info("Render %s: %s unavailable, trying next", request.job_id, candidate.value)
             continue
-        existed_before = request.output_path.exists()
+        out = request.output_path
+        existed_before = out.exists()
+        captioned_existed = _captioned_name(out).exists()
+        # A render that replaces an existing master is written next to it and swapped in only
+        # on success, so a crash mid-render can never leave the previous output corrupted.
+        tmp = out.with_name(f"{out.stem}.rendering{out.suffix}") if existed_before else None
+        attempt_request = dataclasses.replace(request, output_path=tmp) if tmp else request
         try:
             slot = limiter.slot(candidate) if limiter else contextlib.nullcontext()
             with slot:
-                result = backend.render(request)
+                result = backend.render(attempt_request)
             if getattr(backend, "strict_output", True) and not _output_ok(Path(result.output_path)):
                 raise RenderFailedError(f"{candidate.value} produced no valid output file")
+            if tmp is not None:
+                _promote_temp(result, tmp, out)
         except RenderUnavailableError as exc:
             attempts.append((candidate, f"unavailable: {exc}"))
             logger.info("Render %s: %s unavailable: %s", request.job_id, candidate.value, exc)
-            _cleanup_partial(request, existed_before)
+            _cleanup_attempt(attempt_request, tmp, existed_before, captioned_existed)
             continue
         except Exception as exc:  # every failure falls through to the next method
             attempts.append((candidate, f"failed: {exc}"))
             logger.warning("Render %s: %s failed: %s", request.job_id, candidate.value, exc)
-            _cleanup_partial(request, existed_before)
+            _cleanup_attempt(attempt_request, tmp, existed_before, captioned_existed)
             continue
         attempts.append((candidate, None))
         result.attempts = attempts

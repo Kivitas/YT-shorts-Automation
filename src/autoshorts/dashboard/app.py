@@ -311,6 +311,21 @@ async def scheduler_worker(
 # -----------------------------------------------------------------------------
 
 
+def _validate_layout_mode(value: str | None) -> None:
+    """400 on a layout the renderers do not know (None/empty means "not provided")."""
+    if value is None or value == "":
+        return
+    from typing import get_args
+
+    from autoshorts.core.config import LayoutMode
+
+    valid = get_args(LayoutMode)
+    if value not in valid:
+        raise HTTPException(
+            status_code=400, detail=f"layout_mode must be one of: {', '.join(valid)}"
+        )
+
+
 def set_job_attr(job: Job, attr: str, val: Any) -> None:
     """Safely set an attribute on a Job instance, supporting dynamic fallback."""
     try:
@@ -927,6 +942,8 @@ def create_app(
             req_method_list = parse_methods(req.render_methods) if req.render_methods else []
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        if req.render_strategy is not None:
+            req.render_strategy = req.render_strategy.strip().lower() or None
         if req.render_strategy and req.render_strategy not in (
             "single",
             "round_robin",
@@ -936,6 +953,7 @@ def create_app(
                 status_code=400,
                 detail="render_strategy must be single, round_robin or variants",
             )
+        _validate_layout_mode(req.layout_mode)
 
         if req.upload_mode:
             cfg.upload.mode = req.upload_mode
@@ -1355,6 +1373,7 @@ def create_app(
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
+        _validate_layout_mode(req.layout_mode)
         if req.custom_instructions is not None:
             job.custom_instructions = req.custom_instructions
 
@@ -3292,9 +3311,7 @@ def create_app(
         for job in jobs:
             job.style_preset = payload.recommended_studio_profile
             job.layout_mode = (
-                "split_50_50"
-                if payload.recommended_studio_profile == "hormozi"
-                else "podcast_70_30"
+                "split_50_50" if payload.recommended_studio_profile == "hormozi" else "split_70_30"
             )
             set_job_attr(job, "background_category", payload.recommended_background)
             if job.selected_clips:

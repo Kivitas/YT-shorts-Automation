@@ -296,6 +296,8 @@ def test_load_raea_backend_uses_real_backend_with_settings_raea(monkeypatch) -> 
 
     monkeypatch.setenv("AUTOSHORTS_RAEA_BIN", "")
     monkeypatch.setenv("PATH", "")
+    # A real raea install (~/.raea/bin) must not leak into this hermetic test.
+    monkeypatch.setattr("autoshorts.media.raea_renderer.find_raea_binary", lambda *a, **k: None)
     settings = Settings()
     backend = load_raea_backend(settings)
     assert isinstance(backend, RaeaBackend)
@@ -333,3 +335,63 @@ def test_render_config_defaults_and_validation() -> None:
     with pytest.raises(ValueError):
         RenderConfig(methods=["raea", "nope"])
     assert RenderConfig(method=" FFmpeg ").method == "ffmpeg"
+
+
+def test_failed_render_never_corrupts_existing_output(request_: RenderRequest) -> None:
+    """A backend that writes a partial file then fails must not clobber the previous master."""
+    request_.output_path.write_bytes(b"previous master")
+    b = _backends(raea="fail", ffmpeg="ok")
+    res = render_with_fallback(request_, RenderMethod.RAEA, b)
+    assert res.method_used == RenderMethod.FFMPEG
+    assert request_.output_path.read_bytes() == b"video"  # replaced only by a good render
+    leftovers = [p.name for p in request_.output_path.parent.iterdir() if "rendering" in p.name]
+    assert leftovers == []
+
+
+def test_all_backends_failing_keeps_previous_output_and_leaves_no_temp(
+    request_: RenderRequest,
+) -> None:
+    request_.output_path.write_bytes(b"previous master")
+    with pytest.raises(RenderExhaustedError):
+        render_with_fallback(request_, RenderMethod.AUTO, _backends(raea="fail", ffmpeg="fail"))
+    assert request_.output_path.read_bytes() == b"previous master"
+    assert sorted(p.name for p in request_.output_path.parent.iterdir()) == ["out.mp4"]
+
+
+def test_successful_rerender_swaps_in_new_file_and_reports_final_path(
+    request_: RenderRequest,
+) -> None:
+    request_.output_path.write_bytes(b"previous master")
+    res = render_with_fallback(request_, RenderMethod.FFMPEG, _backends(ffmpeg="ok"))
+    assert res.output_path == request_.output_path
+    assert request_.output_path.read_bytes() == b"video"
+
+
+def test_failed_attempt_keeps_preexisting_captioned_sibling(request_: RenderRequest) -> None:
+    captioned = request_.output_path.with_name("out_captioned.mp4")
+    captioned.write_bytes(b"old captioned")
+    with pytest.raises(RenderExhaustedError):
+        render_with_fallback(
+            request_, RenderMethod.FFMPEG, _backends(ffmpeg="fail"), fallback=False
+        )
+    assert captioned.read_bytes() == b"old captioned"
+
+
+def test_load_raea_backend_available_with_fake_binary(monkeypatch, tmp_path: Path) -> None:
+    """Machine-independent 'installed' case: a tmp fake binary and a stubbed version probe."""
+    import types
+
+    from autoshorts.core.config import Settings
+
+    fake = tmp_path / "raea.exe"
+    fake.write_bytes(b"")
+    monkeypatch.setattr("autoshorts.media.raea_renderer.find_raea_binary", lambda *a, **k: fake)
+    monkeypatch.setattr(
+        "autoshorts.media.raea_renderer.run_command_with_cleanup",
+        lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="raea 9.9\n", stderr=""),
+    )
+    settings = Settings()
+    backend = load_raea_backend(settings)
+    assert backend is not None and backend.is_available() is True
+    settings.raea.enabled = False
+    assert load_raea_backend(settings).is_available() is False

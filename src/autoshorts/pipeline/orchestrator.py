@@ -467,7 +467,7 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         custom_instructions: str | None = None,
         style_preset: str | None = None,
         privacy_status: str | None = None,
-        enable_chyron: bool = False,
+        enable_chyron: bool | None = None,
         chyron_badge: str | None = None,
         chyron_text: str | None = None,
         render_method: str | None = None,
@@ -482,7 +482,7 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
           parallel, each bounded by ``render.max_parallel_per_method``.
         - ``variants``: every job renders once per method; ``render_methods[0]`` is the primary
           (``job.rendered_video_path``, the file the upload step uses) and the others are written
-          to ``output/<job>/<method>.mp4``.
+          to ``output/<job>_master_<method>.mp4``.
         """
         if isinstance(jobs_or_links, (str, Path)) or (
             isinstance(jobs_or_links, Sequence)
@@ -497,13 +497,13 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
 
         for j in jobs:
             if enable_chyron or chyron_badge is not None or chyron_text is not None:
-                if hasattr(j, "enable_chyron"):
+                if hasattr(j, "enable_chyron") and enable_chyron is not None:
                     j.enable_chyron = enable_chyron
                 if hasattr(j, "chyron_badge") and chyron_badge is not None:
                     j.chyron_badge = chyron_badge
                 if hasattr(j, "chyron_text") and chyron_text is not None:
                     j.chyron_text = chyron_text
-                chyron_dict: dict[str, Any] = {"enable_chyron": enable_chyron}
+                chyron_dict: dict[str, Any] = {"enable_chyron": bool(enable_chyron)}
                 if chyron_badge is not None:
                     chyron_dict["chyron_badge"] = chyron_badge
                 if chyron_text is not None:
@@ -564,8 +564,9 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
             if render_methods
             else (cfg_methods if isinstance(cfg_methods, list) else None)
         )
-        if render_method and not methods:
-            methods = parse_methods(render_method)[:1]
+        if render_method and (strategy == "single" or not methods):
+            # An explicit single method always wins over a configured/passed list for 'single'.
+            methods = parse_methods(render_method)[:1] or methods
         if not methods or (strategy == "single" and not render_method and not render_methods):
             return
         if strategy == "single":

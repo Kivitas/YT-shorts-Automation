@@ -270,8 +270,8 @@ def test_variants_render_each_method_in_parallel_into_job_folder(tmp_path: Path)
     )
     out = MediaMixin._render_variants(stub, job, req, tmp_path)  # type: ignore[arg-type]
     assert set(out) == {"raea", "remotion"}
-    assert out["raea"]["ok"] and out["raea"]["path"] == str(tmp_path / "vjob" / "raea.mp4")
-    assert (tmp_path / "vjob" / "remotion.mp4").is_file()
+    assert out["raea"]["ok"] and out["raea"]["path"] == str(tmp_path / "vjob_master_raea.mp4")
+    assert (tmp_path / "vjob_master_remotion.mp4").is_file()
     assert out["remotion"]["method_used"] == "remotion"
     assert all(fallback is False for _, fallback in dispatch_log)  # strict per-method files
 
@@ -422,3 +422,65 @@ def test_dashboard_submit_without_render_fields_does_not_assign(client_and_pipe)
     res = client.post("/api/jobs/submit", json={"links": "https://youtube.com/watch?v=1234567890a"})
     assert res.status_code == 200
     pipe._assign_render_methods.assert_not_called()
+
+
+def test_single_strategy_explicit_method_beats_methods_list() -> None:
+    jobs = _jobs(2)
+    ShortsPipeline._assign_render_methods(
+        _stub_pipeline(), jobs, "ffmpeg", ["raea", "remotion"], "single"
+    )
+    assert [j.render_method for j in jobs] == ["ffmpeg", "ffmpeg"]
+
+
+def test_process_batch_does_not_reset_job_chyron_flag() -> None:
+    job = Job(id="c1", source_url="https://youtu.be/c1")
+    job.enable_chyron = True
+    seen: dict[str, Any] = {}
+    pipe = ShortsPipeline.__new__(ShortsPipeline)
+    pipe.config = Settings()
+    pipe.state_manager = MagicMock()
+    pipe.concurrency = 1
+
+    def process_job(j: Job, **kw: Any) -> Job:
+        seen.update(kw)
+        return j
+
+    pipe.process_job = process_job  # type: ignore[method-assign]
+    pipe.process_batch([job])
+    assert seen["enable_chyron"] is None  # None = "leave the job's own setting alone"
+
+
+def test_unknown_method_limit_keys_are_ignored_and_zero_is_clamped() -> None:
+    limiter = MethodLimiter({"raea": 0, "bogus": 3})
+    with limiter.slot(RenderMethod.RAEA):
+        pass
+    assert "bogus" not in limiter._sems
+
+
+def test_dashboard_submit_rejects_unknown_layout_and_normalises_strategy(client_and_pipe) -> None:
+    client, pipe = client_and_pipe
+    link = "https://youtube.com/watch?v=1234567890a"
+    bad = client.post("/api/jobs/submit", json={"links": link, "layout_mode": "sideways"})
+    assert bad.status_code == 400
+    pipe.submit_links.assert_not_called()
+    ok = client.post(
+        "/api/jobs/submit",
+        json={"links": link, "render_strategy": " Round_Robin ", "render_methods": "raea,ffmpeg"},
+    )
+    assert ok.status_code == 200, ok.text
+    assert pipe._assign_render_methods.call_args.args[3] == "round_robin"
+
+
+def test_cli_render_flags_are_case_insensitive() -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--links",
+            "https://youtu.be/x",
+            "--render-method",
+            "RAEA",
+            "--layout",
+            "Cam_Gameplay",
+        ]
+    )
+    assert args.render_method == "raea" and args.layout == "cam_gameplay"
