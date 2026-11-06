@@ -26,7 +26,11 @@ from autoshorts.core.models import EditDecisionList, JumpCut, ZoomPunchIn
 from autoshorts.core.paths import escape_ffmpeg_filter_path, get_assets_dir
 from autoshorts.core.render_spec import CAM_GAMEPLAY_LAYOUT, CamLayoutSpec
 from autoshorts.media.audio_master import build_loudnorm_filter
-from autoshorts.media.cam_layout import build_cam_gameplay_stages, panel_heights
+from autoshorts.media.cam_layout import (
+    build_cam_gameplay_stages,
+    panel_heights,
+    remap_punch_ins_for_cuts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -602,6 +606,7 @@ def build_complex_filtergraph(
     chyron_text: str | None = None,
     chyron_style: str = "broadcast_red",
     cam_layout: CamLayoutSpec | None = None,
+    chyron_in_subtitles: bool = False,
 ) -> tuple[str, str, str]:
     """Construct the complete FFmpeg -filter_complex string for 9:16 Shorts compositing.
 
@@ -613,6 +618,9 @@ def build_complex_filtergraph(
     - 'pip_gameplay': Full vertical speaker + Picture-in-Picture gameplay box
     - 'cam_gameplay': Streamer camera (top, cropped from the source or input 1) + gameplay
       (bottom, from the source). Needs ``cam_layout``; without it the default split is built.
+
+    ``chyron_in_subtitles``: the ASS file already carries the chyron badge/headline events, so
+    the drawbox/drawtext chyron is skipped (otherwise both would be drawn on top of each other).
 
     Returns:
         (filter_complex_string, out_video_label, out_audio_label)
@@ -778,6 +786,11 @@ def build_complex_filtergraph(
                     f"[1:v]select='not({cuts_cond})',setpts=N/FRAME_RATE/TB[cam_base]"
                 )
                 cam_v = "cam_base"
+        cam_punches = (
+            remap_punch_ins_for_cuts(edl.zoom_punch_ins, valid_cuts)
+            if (dopamine_preset.enable_zoom_punch_ins and edl and edl.zoom_punch_ins)
+            else []
+        )
         cam_stages, current_v = build_cam_gameplay_stages(
             cam_layout,
             source_label=src_v,
@@ -785,6 +798,8 @@ def build_complex_filtergraph(
             width=width,
             height=height,
             fps=fps,
+            punch_ins=cam_punches,
+            crop_focus=crop_focus,
         )
         filter_stages.extend(cam_stages)
         cam_seam_y = panel_heights(height, cam_layout.top_ratio)[0]
@@ -1077,7 +1092,7 @@ def build_complex_filtergraph(
     should_enable_chyron = (
         bool(enable_chyron) or bool(preset_enable_chyron) or bool(eff_chyron_text)
     )
-    if should_enable_chyron:
+    if should_enable_chyron and not chyron_in_subtitles:
         from autoshorts.media.chyron_overlay import ChyronData, build_chyron_filter
 
         eff_badge = (
@@ -1106,6 +1121,7 @@ def build_complex_filtergraph(
             height=height,
             layout_mode=mode,
             duration_sec=duration_sec,
+            seam_y=cam_seam_y,
         )
         if chyron_filter:
             filter_stages.append(chyron_filter)
@@ -1183,8 +1199,13 @@ def build_complex_filtergraph(
         out_audio_label = "[master_a]"
     else:
         # Generate silent audio if source has no audio track
+        # Jump cuts shorten the picture, so the silence must be as short or the encoder holds
+        # the last video frame until the (longer) silent track ends.
+        silent_sec = max(
+            1.0, duration_sec - sum(c.cut_end - c.cut_start for c in valid_cuts)
+        )
         filter_stages.append(
-            f"anullsrc=channel_layout=stereo:sample_rate=44100:d={duration_sec:.2f}[outa]"
+            f"anullsrc=channel_layout=stereo:sample_rate=44100:d={silent_sec:.2f}[outa]"
         )
         out_audio_label = "[outa]"
 

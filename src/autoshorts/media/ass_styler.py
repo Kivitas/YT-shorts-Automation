@@ -629,6 +629,9 @@ def build_ass_script(
     - [Script Info] for 1080x1920
     - [V4+ Styles] supporting 7 presets ('neon', 'minimal', 'pill', 'hormozi', 'mrbeast', 'cyberpunk', 'cinematic')
     - [Events] with active-word pop animation, safe-zone positioning, typography transforms, and hook card
+
+    Extra keyword arguments: ``layout_mode="cam_gameplay"`` with ``cam_top_ratio`` moves the
+    default (center) captions to just below the cam/gameplay seam.
     """
     if config is None:
         config = SubtitlesConfig()
@@ -674,6 +677,14 @@ def build_ass_script(
             margin_v = max(350, int(sub_pos))
         except (ValueError, TypeError):
             margin_v = max(350, config.safe_zone_margin_v)
+    if kwargs.get("layout_mode") == "cam_gameplay" and sub_pos == "center":
+        # Streamer cam on top, gameplay below: captions go just under the seam in the gameplay
+        # panel, never on the seam or over the streamer's face (follows the cam top_ratio).
+        from autoshorts.media.cam_layout import caption_margin_v
+
+        margin_v = caption_margin_v(
+            float(kwargs.get("cam_top_ratio") or 0.5), int(resolved_font_size)
+        )
 
     margin_r = 150
     margin_l = 80

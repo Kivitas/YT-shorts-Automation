@@ -34,8 +34,10 @@ _EDGE_SNAP = 0.06  # overlays hugging a frame edge are extended to it
 _MIN_SIDE = 0.12
 _STABLE_RADIUS = 0.08  # detections farther than this from the median center are noise
 
+_SAMPLE_TIMEOUT_SEC = 20
 _cache: dict[tuple[str, int, int], NormRect | None] = {}
 _cache_lock = threading.Lock()
+_no_cv2_logged = False
 
 
 def clamp_rect(rect: NormRect) -> NormRect:
@@ -155,6 +157,23 @@ def _build_haar_detector(cv2: Any) -> FaceDetector | None:
     return _detect
 
 
+def _display_size(stream: dict[str, Any]) -> tuple[int, int]:
+    """Frame size as ffmpeg decodes it: width/height swapped for 90/270 degree rotation metadata."""
+    width, height = int(stream.get("width") or 0), int(stream.get("height") or 0)
+    rotations: list[Any] = [(stream.get("tags") or {}).get("rotate")]
+    rotations.extend(
+        sd.get("rotation") for sd in (stream.get("side_data_list") or []) if isinstance(sd, dict)
+    )
+    for raw in rotations:
+        try:
+            angle = int(round(float(raw)))
+        except (TypeError, ValueError):
+            continue
+        if angle % 180 != 0:
+            return height, width
+    return width, height
+
+
 def _ffmpeg_frame_provider(ffmpeg: str = "ffmpeg") -> FrameProvider:
     """Frame provider sampling grayscale frames through ffmpeg (needs numpy, shipped with cv2)."""
 
@@ -169,7 +188,7 @@ def _ffmpeg_frame_provider(ffmpeg: str = "ffmpeg") -> FrameProvider:
         if payload:
             for stream in _ffprobe_streams(payload):
                 if stream.get("codec_type") == "video":
-                    vw, vh = int(stream.get("width") or 0), int(stream.get("height") or 0)
+                    vw, vh = _display_size(stream)
                     break
             try:
                 duration = float((payload.get("format") or {}).get("duration") or 0.0)
@@ -199,7 +218,9 @@ def _ffmpeg_frame_provider(ffmpeg: str = "ffmpeg") -> FrameProvider:
                 "-",
             ]
             try:
-                proc = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+                proc = subprocess.run(
+                    cmd, capture_output=True, timeout=_SAMPLE_TIMEOUT_SEC, check=False
+                )
             except (OSError, subprocess.SubprocessError):
                 continue
             if proc.returncode != 0 or len(proc.stdout) != w * h:
@@ -247,21 +268,43 @@ def detect_facecam_rect(
     if detector is None:
         cv2 = _import_cv2()
         if cv2 is None:
-            logger.info("Facecam auto-detect skipped: OpenCV (cv2) is not installed.")
+            global _no_cv2_logged
+            if not _no_cv2_logged:
+                _no_cv2_logged = True
+                logger.info("Facecam auto-detect unavailable: OpenCV (cv2) is not installed.")
             return None
         detector = _build_haar_detector(cv2)
         if detector is None:
             logger.info("Facecam auto-detect skipped: OpenCV face cascade unavailable.")
             return None
-    provider = frame_provider or _ffmpeg_frame_provider(ffmpeg_binary)
+    if frame_provider is None:
+        from autoshorts.media.encoder_probe import get_ffmpeg_path
+
+        # Same binary the renders use (the bundled build is preferred over whatever is on PATH).
+        provider = _ffmpeg_frame_provider(
+            get_ffmpeg_path() if ffmpeg_binary == "ffmpeg" else ffmpeg_binary
+        )
+    else:
+        provider = frame_provider
+
+    frames_seen = 0
+
+    def _counted(frames: Iterable[Frame]) -> Iterable[Frame]:
+        nonlocal frames_seen
+        for frame in frames:
+            frames_seen += 1
+            yield frame
 
     try:
-        rect = find_facecam_rect(provider(path, max(1, samples)), detector, max(1, samples))
+        rect = find_facecam_rect(
+            _counted(provider(path, max(1, samples))), detector, max(1, samples)
+        )
     except Exception as exc:
         logger.warning("Facecam auto-detect failed for %s: %s", path.name, exc)
         return None
 
-    if key is not None:
+    # A run that decoded no frame at all (ffmpeg hiccup) is not a verdict about the video.
+    if key is not None and frames_seen > 0:
         with _cache_lock:
             _cache[key] = rect
     return rect

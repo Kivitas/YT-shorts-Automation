@@ -308,6 +308,7 @@ def calculate_chyron_y(
     layout_mode: str = "split_50_50",
     height: int = 1920,
     banner_height: int = 72,
+    seam_y: int | None = None,
 ) -> tuple[int, int]:
     """Calculate vertical (banner_top_y, badge_bottom_y) for chyron placement.
 
@@ -316,6 +317,9 @@ def calculate_chyron_y(
     - 'split_70_30' (seam): sits right above seam_y=1344 (around Y=1240-1335)
     - 'lower_third' or full-frame crop: sits at standard lower-third (around Y=1450)
     - 'top': sits near top safe area (around Y=220)
+
+    ``seam_y`` is the real seam row for layouts whose split is not at 50% or 70% (cam_gameplay
+    with a custom top_ratio); when given, a seam-positioned chyron sits right above it.
 
     Returns:
         (banner_top_y, badge_bottom_y)
@@ -329,7 +333,9 @@ def calculate_chyron_y(
     elif pos == "lower_third" or mode in ("full_center_crop", "full_blur_bg", "full", "single"):
         banner_y = int(1450 * sy)
     elif pos == "seam":
-        if mode == "split_70_30":
+        if seam_y is not None:
+            banner_y = max(0, int(seam_y) - banner_height - int(14 * sy))
+        elif mode == "split_70_30":
             seam_y = int(height * 0.70)  # 1344 for 1920
             banner_y = seam_y - banner_height - int(12 * sy)
         else:
@@ -354,6 +360,7 @@ def build_chyron_ass(
     width: int = 1080,
     height: int = 1920,
     layout_mode: str = "split_50_50",
+    seam_y: int | None = None,
 ) -> str:
     """Generate a complete ASS document with styled category badge and headline banner.
 
@@ -376,6 +383,7 @@ def build_chyron_ass(
         layout_mode=layout_mode,
         height=height,
         banner_height=banner_h,
+        seam_y=seam_y,
     )
 
     # Timing calculation
@@ -466,6 +474,7 @@ def merge_chyron_into_ass(
     width: int = 1080,
     height: int = 1920,
     layout_mode: str = "split_50_50",
+    seam_y: int | None = None,
 ) -> str:
     """Merge chyron overlay styles and dialogues directly into an existing caption ASS document."""
     overlay = build_chyron_ass(
@@ -474,8 +483,43 @@ def merge_chyron_into_ass(
         width=width,
         height=height,
         layout_mode=layout_mode,
+        seam_y=seam_y,
     )
     return merge_ass_documents(base_ass_text, overlay)
+
+
+_CHYRON_STYLE_NAMES = ("ChyronBadge", "ChyronHeadline")
+_CHYRON_POS_RE = re.compile(r"(\\pos\(\s*)(-?\d+)(\s*,\s*)(-?\d+)(\s*\))")
+
+
+def _is_chyron_event(line: str) -> bool:
+    return line.startswith("Dialogue:") and any(f",{name}," in line for name in _CHYRON_STYLE_NAMES)
+
+
+def has_chyron_events(ass_text: str) -> bool:
+    """True when an ASS document already carries the chyron badge/headline Dialogue events."""
+    return any(_is_chyron_event(line) for line in ass_text.splitlines())
+
+
+def retarget_chyron_ass(ass_text: str, delta_y: int) -> str:
+    """Shift the chyron events' pos rows by ``delta_y`` px (other events are untouched).
+
+    Used when the ASS was generated for a 50/50 seam but the final layout's seam sits elsewhere
+    (cam_gameplay with a custom top_ratio).
+    """
+    if not delta_y:
+        return ass_text
+
+    def _shift(match: re.Match[str]) -> str:
+        y = max(0, int(match.group(4)) + delta_y)
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}{y}{match.group(5)}"
+
+    out: list[str] = []
+    for line in ass_text.split("\n"):
+        if _is_chyron_event(line):
+            line = _CHYRON_POS_RE.sub(_shift, line, count=1)
+        out.append(line)
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +550,7 @@ def build_chyron_filter(
     layout_mode: str = "split_50_50",
     duration_sec: float = 30.0,
     fontfile: str | None = None,
+    seam_y: int | None = None,
 ) -> tuple[str, str]:
     """Generate an FFmpeg drawbox + drawtext filtergraph chain for broadcast chyron overlay.
 
@@ -533,6 +578,7 @@ def build_chyron_filter(
         layout_mode=layout_mode,
         height=height,
         banner_height=banner_h,
+        seam_y=seam_y,
     )
 
     badge_h = int(40 * sy)
@@ -630,6 +676,8 @@ __all__ = [
     "calculate_chyron_y",
     "derive_automated_chyron",
     "escape_ffmpeg_drawtext",
+    "has_chyron_events",
     "merge_ass_documents",
     "merge_chyron_into_ass",
+    "retarget_chyron_ass",
 ]
