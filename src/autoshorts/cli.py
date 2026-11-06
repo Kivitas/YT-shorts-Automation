@@ -136,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser.add_argument(
         "--render-method",
-        type=str,
+        type=str.lower,
         default=None,
         choices=["auto", "raea", "remotion", "ffmpeg"],
         help="Renderer: auto (raea -> remotion -> ffmpeg), raea, remotion, or ffmpeg",
@@ -149,14 +149,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--render-strategy",
-        type=str,
+        type=str.lower,
         default=None,
         choices=["single", "round_robin", "variants"],
         help="single | round_robin (one method per job) | variants (every method per clip)",
     )
     run_parser.add_argument(
         "--layout",
-        type=str,
+        type=str.lower,
         default=None,
         choices=LAYOUT_CHOICES,
         help="Output layout (cam_gameplay = streamer cam on top, gameplay below)",

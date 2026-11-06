@@ -43,6 +43,25 @@ class RerenderMixin:
         if job.status == JobStatus.FAILED:
             job.error_message = None
 
+        # Validate render overrides before touching the job, so a bad value changes nothing.
+        from typing import get_args
+
+        from autoshorts.core.config import LayoutMode
+        from autoshorts.media.render_dispatch import parse_methods
+
+        layout_override = overrides.get("layout_mode")
+        if layout_override is not None and layout_override not in get_args(LayoutMode):
+            raise AutoShortsError(
+                f"Unknown layout_mode '{layout_override}'. Valid: {', '.join(get_args(LayoutMode))}"
+            )
+        method_override: str | None = None
+        if overrides.get("render_method"):
+            try:
+                parsed = parse_methods(str(overrides["render_method"]))
+            except ValueError as exc:
+                raise AutoShortsError(str(exc)) from exc
+            method_override = parsed[0].value if parsed else None
+
         # Apply overrides
         for key in (
             "layout_mode",
@@ -65,6 +84,11 @@ class RerenderMixin:
                 except (ValueError, AttributeError):
                     if hasattr(job, "__dict__"):
                         job.__dict__[key] = overrides[key]
+
+        if method_override is not None:
+            # A one-off method for this re-render; variants of the original batch are dropped.
+            job.render_method = method_override
+            job.render_variants = []
 
         if "hook_text" in overrides and overrides["hook_text"] is not None:
             ht = str(overrides["hook_text"])

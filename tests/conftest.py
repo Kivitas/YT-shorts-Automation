@@ -99,3 +99,19 @@ def _hide_ffprobe_by_default(monkeypatch):
     ffmpeg -i fallback, which is what the mocked subprocess outputs in those tests expect.
     """
     monkeypatch.setattr("autoshorts.media.compositor.get_ffprobe_path", lambda: None, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _pin_render_backends_to_ffmpeg_only(monkeypatch: pytest.MonkeyPatch):
+    """Keep the suite independent of a locally installed raea or Remotion.
+
+    The AUTO render chain is raea -> remotion -> ffmpeg; on a dev machine with both installed,
+    tests that mock the compositor would otherwise reach real renderers (and call the mock
+    several times). Tests that need them inject fake backends (``pipe.render_backends``) or
+    patch these two names themselves, which overrides this fixture.
+    """
+    monkeypatch.setattr("autoshorts.media.render_dispatch.load_raea_backend", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "autoshorts.media.remotion_overlay.is_remotion_ready", lambda *a, **k: False
+    )
+    monkeypatch.setattr("autoshorts.pipeline.stages_media.is_remotion_ready", lambda *a, **k: False)

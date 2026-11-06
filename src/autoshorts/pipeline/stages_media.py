@@ -817,7 +817,10 @@ class MediaMixin:
     def _render_variants(
         self: Any, job: Job, request: RenderRequest, output_dir: Path
     ) -> dict[str, Any]:
-        """Render the extra methods of strategy 'variants' in parallel into output/<job>/.
+        """Render the extra methods of strategy 'variants' in parallel next to the master.
+
+        Files are named ``<job>_master_<method>.mp4`` so the per-job cleanup (which owns every
+        ``<job>_*master*`` file in output/) applies the same retention policy to them.
 
         Each variant is strict (no fallback) so the file really comes from its method; a
         failing variant is recorded and never fails the job.
@@ -829,15 +832,14 @@ class MediaMixin:
         results: dict[str, Any] = {}
         if not extra:
             return results
-        var_dir = output_dir / job.id
-        var_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         def _one(name: str) -> tuple[str, dict[str, Any]]:
             kwargs = dict(request.extras.get("compose_kwargs") or {})
             kwargs["job_id"] = f"{job.id}_{name}"
             req = dataclasses.replace(
                 request,
-                output_path=var_dir / f"{name}.mp4",
+                output_path=output_dir / f"{job.id}_master_{name}.mp4",
                 extras={**request.extras, "compose_kwargs": kwargs},
             )
             try:
@@ -1093,6 +1095,7 @@ class MediaMixin:
                 or getattr(self.config.media, "layout_mode", "split_50_50")
             )
             cam_layout = None
+            requested_layout = layout_mode
             if layout_mode == CAM_GAMEPLAY_LAYOUT:
                 # Resolve the camera region once, here, so every render backend (raea,
                 # Remotion, FFmpeg) sees the same final layout. No region -> split layout.
@@ -1154,6 +1157,21 @@ class MediaMixin:
                 comp_kwargs["background_path"] = None
                 comp_kwargs["subtitles_path"] = ranking_subs
                 layout_mode = "full_center_crop"
+                cam_layout = None
+                bg_file, bg_offset = None, None
+
+            # The layout that is actually rendered, for diagnostics and analytics.
+            job.record_diagnostic(
+                "render_layout",
+                requested=requested_layout,
+                final=layout_mode,
+                cam_fallback=requested_layout == CAM_GAMEPLAY_LAYOUT
+                and layout_mode != CAM_GAMEPLAY_LAYOUT,
+            )
+            if requested_layout == CAM_GAMEPLAY_LAYOUT and layout_mode == "split_50_50":
+                # No usable camera region: the job really is a split layout now.
+                job.layout_mode = "split_50_50"
+                job.record_diagnostic("style", layout_mode="split_50_50")
 
             chyron_subs, chyron_info = self._prepare_chyron_overlay(
                 job,
@@ -1247,36 +1265,49 @@ class MediaMixin:
                 import threading
 
                 def _run_variants() -> None:
-                    variant_results.update(self._render_variants(job, render_request, output_dir))
+                    try:
+                        variant_results.update(
+                            self._render_variants(job, render_request, output_dir)
+                        )
+                    except Exception as var_err:  # never lose the primary render over a variant
+                        logger.warning("Job %s: variant rendering failed: %s", job.id, var_err)
 
                 variant_thread = threading.Thread(target=_run_variants, daemon=True)
                 variant_thread.start()
 
-            render_res = self._dispatch_render(render_request, render_method, render_fallback)
-            composed_res = render_res.output_path
-            # A master that does not decode must never reach review: re-render once, then stop.
-            for attempt in range(2):
-                check_path = (
-                    Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
-                )
-                if not check_path.is_file():
-                    break
-                decode_errors = pipeline_mod.count_decode_errors(check_path)
-                if decode_errors == 0:
-                    break
-                logger.warning(
-                    "Job %s: composited master failed decode check (%d error lines), attempt %d/2",
-                    job.id,
-                    decode_errors,
-                    attempt + 1,
-                )
-                if attempt == 1:
-                    raise AutoShortsError(
-                        f"Composited master for job {job.id} does not decode cleanly "
-                        f"({decode_errors} error lines). Rerun the job; the output was not sent to review."
-                    )
+            try:
                 render_res = self._dispatch_render(render_request, render_method, render_fallback)
                 composed_res = render_res.output_path
+                # A master that does not decode must never reach review: re-render once, then stop.
+                for attempt in range(2):
+                    check_path = (
+                        Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
+                    )
+                    if not check_path.is_file():
+                        break
+                    decode_errors = pipeline_mod.count_decode_errors(check_path)
+                    if decode_errors == 0:
+                        break
+                    logger.warning(
+                        "Job %s: composited master failed decode check (%d error lines), attempt %d/2",
+                        job.id,
+                        decode_errors,
+                        attempt + 1,
+                    )
+                    if attempt == 1:
+                        raise AutoShortsError(
+                            f"Composited master for job {job.id} does not decode cleanly "
+                            f"({decode_errors} error lines). Rerun the job; the output was not sent to review."
+                        )
+                    render_res = self._dispatch_render(
+                        render_request, render_method, render_fallback
+                    )
+                    composed_res = render_res.output_path
+            except BaseException:
+                # No stray variant render may keep writing files after the job has failed.
+                if variant_thread is not None:
+                    variant_thread.join()
+                raise
             final_path = (
                 Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
             )
@@ -1299,20 +1330,13 @@ class MediaMixin:
             if variant_thread is not None:
                 variant_thread.join()
                 if final_path.is_file():
-                    import shutil
-
-                    primary_copy = output_dir / job.id / f"{render_res.method_used.value}.mp4"
-                    primary_copy.parent.mkdir(parents=True, exist_ok=True)
-                    try:
-                        shutil.copy2(final_path, primary_copy)
-                        variant_results[render_res.method_used.value] = {
-                            "ok": True,
-                            "path": str(primary_copy),
-                            "method_used": render_res.method_used.value,
-                            "primary": True,
-                        }
-                    except OSError as copy_err:
-                        logger.warning("Job %s: primary variant copy failed: %s", job.id, copy_err)
+                    # The primary is the file the upload step uses; it is not copied again.
+                    variant_results[render_res.method_used.value] = {
+                        "ok": True,
+                        "path": str(final_path),
+                        "method_used": render_res.method_used.value,
+                        "primary": True,
+                    }
                 job.record_diagnostic("render_variants", **variant_results)
             job.rendered_video_path = str(final_path)
             # Informational only: the ffmpeg-skill delivery check never changes the job status.
@@ -1362,7 +1386,7 @@ class MediaMixin:
             if self.config.media.generate_lowres_preview:
                 preview_path = output_dir / f"{job.id}_preview.mp4"
                 prev_kwargs: dict[str, Any] = {
-                    "source_clip": master_path,
+                    "source_clip": final_path if final_path.is_file() else master_path,
                     "output_path": preview_path,
                 }
                 try:
