@@ -90,6 +90,32 @@ class DownloadError(MediaError):
     """Raised when yt-dlp precision section downloading fails."""
 
 
+class FatalDownloadError(DownloadError):
+    """A download failure that retrying cannot fix (private, removed, age-gated, geo-blocked).
+
+    ``reason`` is a short machine-readable kind (e.g. ``"private"``); ``hint`` is an actionable
+    message for the operator. It subclasses ``DownloadError`` so existing handlers still match.
+    """
+
+    def __init__(self, message: str, *, reason: str = "fatal", hint: str = "") -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.hint = hint
+
+
+class RetryableDownloadError(DownloadError):
+    """A transient download failure (network, HTTP 429/5xx, timeout) that exhausted its retries."""
+
+
+class InsufficientDiskSpaceError(FatalDownloadError):
+    """Raised by the disk-space preflight before a download starts."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message, reason="disk_space", hint="Free disk space or point the work dir elsewhere."
+        )
+
+
 class TranscribeError(MediaError):
     """Raised when Whisper speech recognition or word alignment fails."""
 

@@ -7,13 +7,17 @@ timeouts, and optional browser cookies.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 import os
+import random
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +25,12 @@ from typing import Any
 from uuid import uuid4
 
 from autoshorts.core.config import Settings, load_config
-from autoshorts.core.exceptions import DownloadError
+from autoshorts.core.exceptions import (
+    DownloadError,
+    FatalDownloadError,
+    InsufficientDiskSpaceError,
+    RetryableDownloadError,
+)
 from autoshorts.core.models import (
     HeatmapPoint,
     SponsorSegment,
@@ -229,22 +238,107 @@ def format_section_arg(start_sec: float, end_sec: float) -> str:
     return f"*{start_text}-{end_text}"
 
 
-# Failures that retrying cannot fix (private/removed/members-only/age-gated/geo-blocked
-# uploads and upcoming premieres). Matched against yt-dlp's stderr text.
-_PERMANENT_YTDLP_ERROR_RE = re.compile(
-    r"Private video|This video is private|has been removed|no longer available"
-    r"|account associated with this video has been terminated"
-    r"|Sign in to confirm your age|members[- ]only|Join this channel to get access"
-    r"|not available in your country|This live event will begin|Premieres in",
+# Failures that retrying cannot fix, with an actionable hint per kind. Matched against
+# yt-dlp's stderr text, first match wins.
+_FATAL_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    (
+        "private",
+        re.compile(r"Private video|This video is private", re.IGNORECASE),
+        "The video is private. Pick another source or use cookies from an account with access.",
+    ),
+    (
+        "removed",
+        re.compile(
+            r"has been removed|no longer available|Video unavailable"
+            r"|account associated with this video has been terminated",
+            re.IGNORECASE,
+        ),
+        "The video was removed or is unavailable. Choose a different source video.",
+    ),
+    (
+        "age_gated",
+        re.compile(
+            r"Sign in to confirm your age|age[- ]restricted|confirm your age", re.IGNORECASE
+        ),
+        "The video is age-gated. Set media.cookies_from_browser to a logged-in browser profile.",
+    ),
+    (
+        "members_only",
+        re.compile(r"members[- ]only|Join this channel to get access", re.IGNORECASE),
+        "The video is members-only. Use cookies from a member account or pick another video.",
+    ),
+    (
+        "geo_blocked",
+        re.compile(
+            r"available in your country|blocked it in your country|geo[- ]?restrict",
+            re.IGNORECASE,
+        ),
+        "The video is geo-blocked. Use a different region/network or another source video.",
+    ),
+    (
+        "not_live_yet",
+        re.compile(r"This live event will begin|Premieres in", re.IGNORECASE),
+        "The video is an upcoming premiere/live event. Retry after it starts.",
+    ),
+)
+_PERMANENT_YTDLP_ERROR_RE = re.compile("|".join(r.pattern for _, r, _ in _FATAL_RULES), re.I)
+
+# Transient failures: always worth another attempt (with longer backoff for rate limits).
+_RATE_LIMIT_RE = re.compile(r"HTTP Error 429|Too Many Requests|rate[- ]limit", re.IGNORECASE)
+_TRANSIENT_RE = re.compile(
+    r"HTTP Error 5\d\d|Service Unavailable|Bad Gateway|Gateway Time-?out|timed out|Timeout"
+    r"|Connection (reset|refused|aborted)|Temporary failure|Network is unreachable"
+    r"|Unable to download|Read error|IncompleteRead|SSL|HTTP Error 403|Sign in to confirm",
     re.IGNORECASE,
 )
+_FORMAT_UNAVAILABLE_RE = re.compile(r"Requested format is not available", re.IGNORECASE)
+
+# Last-resort selector used when the preferred ladder reports "format not available".
+FALLBACK_FORMAT_SPEC = "best[height<=1080]/best"
+# Player-client ladder: attempt 1 uses yt-dlp defaults, later attempts widen the pool.
+PLAYER_CLIENT_LADDER: tuple[str, ...] = ("default", "android,web", "ios,web")
+
+MAX_BACKOFF_SEC = 60.0
+
+
+def classify_download_error(exc_or_text: BaseException | str) -> tuple[str, str, str]:
+    """Classify a yt-dlp failure as ``(severity, kind, hint)``.
+
+    ``severity`` is ``"fatal"`` (retrying cannot help), ``"rate_limited"``, ``"retryable"``
+    (network/5xx/timeout/unknown), or ``"format"`` (selector mismatch; retry with a fallback).
+    """
+    if isinstance(exc_or_text, FileNotFoundError):
+        return ("fatal", "missing_binary", "yt-dlp was not found. Install it or set its path.")
+    if isinstance(exc_or_text, subprocess.TimeoutExpired):
+        return ("retryable", "timeout", "")
+    text = str(exc_or_text)
+    for kind, pattern, hint in _FATAL_RULES:
+        if pattern.search(text):
+            return ("fatal", kind, hint)
+    if _FORMAT_UNAVAILABLE_RE.search(text):
+        return ("format", "format_unavailable", "")
+    if _RATE_LIMIT_RE.search(text):
+        return ("rate_limited", "http_429", "")
+    if _TRANSIENT_RE.search(text):
+        return ("retryable", "network", "")
+    return ("retryable", "unknown", "")
 
 
 def _is_non_retryable(exc: BaseException) -> bool:
     """True when another attempt cannot succeed: missing binary or a permanent video state."""
-    if isinstance(exc, FileNotFoundError):
-        return True
-    return bool(_PERMANENT_YTDLP_ERROR_RE.search(str(exc)))
+    return classify_download_error(exc)[0] == "fatal"
+
+
+def compute_backoff(
+    attempt: int, base_sec: float, *, rate_limited: bool = False, jitter: float = 0.25
+) -> float:
+    """Exponential backoff with +/- ``jitter`` fraction of random spread, capped at 60s.
+
+    ``attempt`` is the 1-based attempt that just failed. Rate limits wait 4x longer.
+    """
+    delay = base_sec * (2 ** max(0, attempt - 1)) * (4.0 if rate_limited else 1.0)
+    delay *= 1.0 + random.uniform(-jitter, jitter)  # noqa: S311 - not security sensitive
+    return max(0.0, min(delay, MAX_BACKOFF_SEC))
 
 
 def _select_downloaded_file(candidates: list[Path], prefix: str) -> Path | None:
@@ -280,6 +374,12 @@ def _select_audio_file(candidates: list[Path], prefix: str) -> Path | None:
     return finished[0] if finished else None
 
 
+_KILL_TIMEOUT_SEC = 10.0
+# Upper bound for run_command_with_cleanup when the caller passes no timeout, so a wedged
+# child can never block a pipeline thread forever.
+DEFAULT_COMMAND_TIMEOUT_SEC = 3600.0
+
+
 def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
     """Cleanly terminate process and all child processes across Windows, macOS, and Linux."""
     if proc is None:
@@ -293,6 +393,7 @@ def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True,
                 check=False,
+                timeout=_KILL_TIMEOUT_SEC,
             )
         except Exception as exc:
             logger.debug("taskkill failed for PID %s: %s", pid, exc)
@@ -304,6 +405,7 @@ def terminate_process_tree(proc: subprocess.Popen | int | None) -> None:
                     ["pkill", "-P", str(pid)],
                     capture_output=True,
                     check=False,
+                    timeout=_KILL_TIMEOUT_SEC,
                 )
             except Exception:
                 pass
@@ -320,7 +422,12 @@ def run_command_with_cleanup(
     timeout: float | None = None,
     **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
-    """Execute command with full process tree termination on timeout or failure."""
+    """Execute command with full process tree termination on timeout or failure.
+
+    ``timeout=None`` is replaced by ``DEFAULT_COMMAND_TIMEOUT_SEC`` so no call is unbounded.
+    """
+    if timeout is None:
+        timeout = DEFAULT_COMMAND_TIMEOUT_SEC
     if "Mock" in type(subprocess.run).__name__ or hasattr(subprocess.run, "mock_calls"):
         try:
             proc = subprocess.run(cmd, timeout=timeout, **kwargs)
@@ -473,6 +580,52 @@ def probe_video_stream_info(video_path: Path) -> dict[str, Any]:
     return info
 
 
+_KEY_LOCKS: dict[str, threading.Lock] = {}
+_KEY_LOCKS_GUARD = threading.Lock()
+_CACHE_MAX_AGE_SEC = 7 * 24 * 3600
+_STALE_TEMP_AGE_SEC = 2 * 3600
+
+
+def _key_lock(key: str) -> threading.Lock:
+    """One lock per cache key so identical concurrent downloads run once."""
+    with _KEY_LOCKS_GUARD:
+        return _KEY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _prune_cache(cache_dir: Path, max_age_sec: float = _CACHE_MAX_AGE_SEC) -> None:
+    """Delete cache entries older than ``max_age_sec``."""
+    cutoff = time.time() - max_age_sec
+    for entry in cache_dir.glob("*.mp4"):
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def cleanup_stale_temp_files(directory: Path, max_age_sec: float = _STALE_TEMP_AGE_SEC) -> int:
+    """Remove ``.tmp_*``/``.part``/``.ytdl`` leftovers older than ``max_age_sec``.
+
+    The age guard keeps files that a concurrent download in the same directory is still
+    writing. Returns the number of files removed.
+    """
+    removed = 0
+    cutoff = time.time() - max_age_sec
+    try:
+        entries = list(directory.glob(".tmp_*")) + list(directory.glob("*.part"))
+        entries += list(directory.glob("*.ytdl"))
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                entry.unlink(missing_ok=True)
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 class Downloader:
     """Downloader implementation compliant with contracts.Downloader.
 
@@ -490,6 +643,10 @@ class Downloader:
         max_retries: int = 3,
         retry_delay_sec: float = 1.0,
         require_audio_stream: bool = True,
+        concurrent_fragments: int = 4,
+        section_cache: bool = True,
+        cache_dir: Path | None = None,
+        min_free_bytes: int = 256 * 1024 * 1024,
     ) -> None:
         """Initialize Downloader.
 
@@ -503,6 +660,11 @@ class Downloader:
             retry_delay_sec: Initial delay between retries.
             require_audio_stream: Treat a section without an audio stream as a failed
                 download instead of silently accepting it.
+            concurrent_fragments: Parallel fragment downloads for DASH/HLS (yt-dlp -N).
+            section_cache: Reuse a previously downloaded identical section (same video,
+                start, end and format) instead of downloading it again.
+            cache_dir: Section cache location (default: ``<dest dir>/.section_cache``).
+            min_free_bytes: Disk-space floor checked before a download starts.
         """
         self.settings = settings or load_config()
         self.yt_dlp_binary = resolve_yt_dlp_binary(yt_dlp_binary)
@@ -511,6 +673,10 @@ class Downloader:
         self.max_retries = max(1, max_retries)
         self.retry_delay_sec = max(0.1, retry_delay_sec)
         self.require_audio_stream = require_audio_stream
+        self.concurrent_fragments = max(1, int(concurrent_fragments))
+        self.section_cache = section_cache
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.min_free_bytes = max(0, int(min_free_bytes))
         # Populated by the most recent download_section() call (success or failure).
         self.last_download_diagnostics: dict[str, Any] = {}
 
@@ -542,6 +708,115 @@ class Downloader:
         return meta
 
     def download_section(
+        self,
+        url: str,
+        start_sec: float,
+        end_sec: float,
+        output_path: Path,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> Path:
+        """Download a section, reusing an identical cached cut when one exists.
+
+        The cache key is (video_id, start, end, format selector, audio requirement). Identical
+        concurrent requests are serialised so the second one is a cache hit rather than a
+        duplicate download. See ``_download_section_uncached`` for the download semantics.
+        """
+        if not self.section_cache:
+            return self._download_section_uncached(
+                url, start_sec, end_sec, output_path, diagnostics
+            )
+        try:
+            key = self._section_cache_key(url, start_sec, end_sec)
+        except Exception:  # invalid URL/range: let the real path raise its precise error
+            return self._download_section_uncached(
+                url, start_sec, end_sec, output_path, diagnostics
+            )
+        dest = Path(output_path).resolve()
+        cached = self._cache_root(dest) / f"{key}.mp4"
+        with _key_lock(key):
+            if self._restore_from_cache(cached, dest, diagnostics, url):
+                return dest
+            result = self._download_section_uncached(
+                url, start_sec, end_sec, output_path, diagnostics
+            )
+            self._store_in_cache(result, cached)
+            return result
+
+    def _section_cache_key(self, url: str, start_sec: float, end_sec: float) -> str:
+        vid = extract_video_id(url)
+        s_ms = max(0, _timestamp_ms(start_sec, round_up=False))
+        e_ms = _timestamp_ms(end_sec, round_up=True)
+        raw = f"{vid}|{s_ms}|{e_ms}|{self.format_spec}|{int(self.require_audio_stream)}"
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]  # noqa: S324 - cache key only
+
+    def _cache_root(self, dest: Path) -> Path:
+        return self.cache_dir or (dest.parent / ".section_cache")
+
+    def _restore_from_cache(
+        self, cached: Path, dest: Path, diagnostics: dict[str, Any] | None, url: str
+    ) -> bool:
+        """Copy a valid cached section to ``dest``; drop the entry if it no longer validates."""
+        if not cached.is_file():
+            return False
+        try:
+            validation = validate_section_output(cached, require_audio=self.require_audio_stream)
+            if not validation.ok:
+                cached.unlink(missing_ok=True)
+                return False
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(f".tmp_cache_{uuid4().hex[:8]}{dest.suffix}")
+            try:
+                shutil.copy2(cached, tmp)
+                os.replace(tmp, dest)
+            finally:
+                tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug("section cache restore failed (%s); downloading instead", exc)
+            return False
+        trace = {
+            "attempts": [],
+            "attempt_count": 0,
+            "cache_hit": True,
+            "validation": validation.as_dict(),
+            "url": url,
+            "ok": True,
+        }
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update(trace)
+        self.last_download_diagnostics = trace
+        logger.info("Section cache hit: %s -> %s", cached.name, dest)
+        return True
+
+    def _store_in_cache(self, result: Path, cached: Path) -> None:
+        """Best-effort copy of a finished section into the cache; never raises."""
+        try:
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cached.with_name(f".{cached.name}.{uuid4().hex[:6]}.tmp")
+            try:
+                shutil.copy2(result, tmp)
+                os.replace(tmp, cached)
+            finally:
+                tmp.unlink(missing_ok=True)
+            _prune_cache(cached.parent)
+        except OSError as exc:
+            logger.debug("section cache store skipped: %s", exc)
+
+    def _check_disk_space(self, directory: Path, duration_sec: float) -> None:
+        """Fail fast (fatal) when the target volume cannot hold the section."""
+        try:
+            free = shutil.disk_usage(directory).free
+        except OSError:
+            return
+        # ~4 MB/s covers a 1080p video+audio pair; the floor covers merge scratch space.
+        needed = self.min_free_bytes + int(max(0.0, duration_sec) * 4 * 1024 * 1024)
+        if free < needed:
+            raise InsufficientDiskSpaceError(
+                f"Only {free // (1024 * 1024)} MiB free in {directory}; "
+                f"need about {needed // (1024 * 1024)} MiB for this download."
+            )
+
+    def _download_section_uncached(
         self,
         url: str,
         start_sec: float,
@@ -584,6 +859,12 @@ class Downloader:
             section_arg = format_section_arg(start_sec, end_sec)
         except ValueError as exc:
             raise DownloadError(f"Invalid section for {canonical_url}: {exc}") from exc
+        # Fail fast on a full disk and sweep long-dead partials from earlier crashed runs.
+        self._check_disk_space(dest.parent, float(end_sec) - float(start_sec))
+        cleanup_stale_temp_files(dest.parent)
+
+        # The token makes every download's temp names unique, so concurrent jobs sharing a
+        # directory can never pick up or delete each other's partial files.
         unique_token = uuid4().hex[:8]
         temp_template = dest.parent / f".tmp_{unique_token}_%(ext)s"
 
@@ -592,6 +873,15 @@ class Downloader:
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
+            "--continue",
+            "--concurrent-fragments",
+            str(self.concurrent_fragments),
+            "--retries",
+            "3",
+            "--fragment-retries",
+            "5",
+            "--socket-timeout",
+            "30",
             "--download-sections",
             section_arg,
             "--force-keyframes-at-cuts",
@@ -625,6 +915,7 @@ class Downloader:
         )
 
         last_error: Exception | None = None
+        fatal_kind, fatal_hint = "", ""
         total_attempts = max(2, self.max_retries) if self.max_retries == 1 else self.max_retries
 
         # Every attempt (command failure *and* wrong-output-class) is recorded here so a
@@ -638,13 +929,18 @@ class Downloader:
                 except OSError:
                     pass
 
+        use_fallback_format = False
+        last_severity = "retryable"
         for attempt in range(1, total_attempts + 1):
             attempt_cmd = list(base_cmd)
+            if use_fallback_format:
+                # The preferred selector reported "format not available": drop to the
+                # permissive ladder so a odd upload still yields a muxed clip.
+                attempt_cmd[attempt_cmd.index("-f") + 1] = FALLBACK_FORMAT_SPEC
             # First attempt uses yt-dlp's default client selection. Retries widen the
             # client pool, which is what actually recovers from 403s on section capping.
-            player_client = "default"
-            if attempt > 1:
-                player_client = "android,web"
+            player_client = PLAYER_CLIENT_LADDER[min(attempt - 1, len(PLAYER_CLIENT_LADDER) - 1)]
+            if player_client != "default":
                 attempt_cmd.extend(["--extractor-args", f"youtube:player_client={player_client}"])
             # "--" stops option parsing so the URL can never be read as a flag.
             attempt_cmd.extend(["--", canonical_url])
@@ -736,7 +1032,7 @@ class Downloader:
                     dest.unlink(missing_ok=True)
                     _cleanup_temps()
                     if attempt < total_attempts:
-                        time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
+                        time.sleep(compute_backoff(attempt, self.retry_delay_sec))
                     continue
 
                 err_msg = (proc.stderr or proc.stdout or "").strip()
@@ -769,15 +1065,26 @@ class Downloader:
                 )
                 _cleanup_temps()
                 dest.unlink(missing_ok=True)
-                if _is_non_retryable(exc):
+                last_severity, fail_kind, fail_hint = classify_download_error(exc)
+                if last_severity == "fatal":
                     logger.error(
-                        "Stopping section retries for %s: failure is not retryable (%s)",
+                        "Stopping section retries for %s: failure is not retryable (%s: %s)",
                         vid,
-                        exc,
+                        fail_kind,
+                        fail_hint or exc,
                     )
+                    fatal_kind, fatal_hint = fail_kind, fail_hint
                     break
+                if last_severity == "format":
+                    use_fallback_format = True
                 if attempt < total_attempts:
-                    time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
+                    time.sleep(
+                        compute_backoff(
+                            attempt,
+                            self.retry_delay_sec,
+                            rate_limited=last_severity == "rate_limited",
+                        )
+                    )
 
         failure_trace = {
             "attempts": attempt_log,
@@ -798,10 +1105,17 @@ class Downloader:
                 " The selected formats were missing a required stream; the site likely "
                 "only served audio or an incomplete pair for this section."
             )
-        raise DownloadError(
+        message = (
             f"Failed to download section {section_arg} for {canonical_url} after "
             f"{attempt} attempt(s).{hint}\nAttempt trace:\n{_summarize_attempts(attempt_log)}"
-        ) from last_error
+        )
+        if fatal_kind:
+            raise FatalDownloadError(
+                f"{message}\nAction: {fatal_hint}", reason=fatal_kind, hint=fatal_hint
+            ) from last_error
+        if last_severity in ("retryable", "rate_limited") and last_error is not None:
+            raise RetryableDownloadError(message) from last_error
+        raise DownloadError(message) from last_error
 
     def download_audio_only(
         self,
@@ -826,6 +1140,7 @@ class Downloader:
         dest = Path(output_path).resolve()
         dest.parent.mkdir(parents=True, exist_ok=True)
 
+        self._check_disk_space(dest.parent, 0.0)
         unique_token = uuid4().hex[:8]
         temp_template = dest.parent / f".tmp_audio_{unique_token}_%(ext)s"
 
@@ -833,6 +1148,9 @@ class Downloader:
             self.yt_dlp_binary,
             "--no-playlist",
             "--no-warnings",
+            "--continue",
+            "--socket-timeout",
+            "30",
             "-f",
             "bestaudio/best",
             "-x",
@@ -894,10 +1212,15 @@ class Downloader:
                         f.unlink(missing_ok=True)
                     except OSError:
                         pass
-                if _is_non_retryable(exc):
+                severity = classify_download_error(exc)[0]
+                if severity == "fatal":
                     break
                 if attempt < self.max_retries:
-                    time.sleep(self.retry_delay_sec * (2 ** (attempt - 1)))
+                    time.sleep(
+                        compute_backoff(
+                            attempt, self.retry_delay_sec, rate_limited=severity == "rate_limited"
+                        )
+                    )
 
         raise DownloadError(
             f"Failed to download audio for {canonical_url} after {self.max_retries} attempts: {last_error}"
@@ -908,7 +1231,10 @@ YtDlpDownloader = Downloader
 
 
 __all__ = [
+    "DEFAULT_COMMAND_TIMEOUT_SEC",
     "DEFAULT_FORMAT_SPEC",
+    "FALLBACK_FORMAT_SPEC",
+    "PLAYER_CLIENT_LADDER",
     "SECTION_EMPTY",
     "SECTION_MISSING",
     "SECTION_NO_AUDIO",
@@ -923,6 +1249,9 @@ __all__ = [
     "VideoChapter",
     "VideoMetadata",
     "YtDlpDownloader",
+    "classify_download_error",
+    "cleanup_stale_temp_files",
+    "compute_backoff",
     "fetch_sponsor_segments",
     "format_section_arg",
     "probe_video_stream_info",

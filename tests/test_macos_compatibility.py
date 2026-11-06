@@ -157,7 +157,9 @@ def test_terminate_process_tree_unix_darwin():
     ):
         terminate_process_tree(mock_proc)
         mock_proc.kill.assert_called_once()
-        mock_run.assert_called_once_with(["pkill", "-P", "1234"], capture_output=True, check=False)
+        mock_run.assert_called_once_with(
+            ["pkill", "-P", "1234"], capture_output=True, check=False, timeout=10.0
+        )
 
 
 def test_terminate_process_tree_windows():
@@ -171,7 +173,7 @@ def test_terminate_process_tree_windows():
     ):
         terminate_process_tree(mock_proc)
         mock_run.assert_called_once_with(
-            ["taskkill", "/F", "/T", "/PID", "5678"], capture_output=True, check=False
+            ["taskkill", "/F", "/T", "/PID", "5678"], capture_output=True, check=False, timeout=10.0
         )
 
 

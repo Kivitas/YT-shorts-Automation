@@ -12,10 +12,13 @@ import logging
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
+from autoshorts.media.downloader import run_command_with_cleanup
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
@@ -38,8 +41,66 @@ def _limiter(true_peak_db: float) -> str:
     return f"alimiter=limit={limit:.4f}:attack=5:release=50:level=disabled"
 
 
+# Measurements are cached by (path, mtime_ns, size, target, ceiling, lra): the same file is often
+# measured by the pre-check and again by a later stage. A rewritten file changes mtime/size and
+# therefore misses. Only non-empty results are cached.
+_MEASURE_CACHE: dict[tuple, dict] = {}
+_MEASURE_LOCK = threading.Lock()
+_MEASURE_CACHE_MAX = 256
+
+# Skip the audio re-encode when the file is already this close (in LU) to the target and its
+# true peak is under the ceiling: a second lossy AAC encode would cost more than it gains.
+DEFAULT_TOLERANCE_LU = 1.0
+
+
+def clear_measurement_cache() -> None:
+    """Forget cached loudness measurements (test isolation)."""
+    with _MEASURE_LOCK:
+        _MEASURE_CACHE.clear()
+
+
+def _measure_timeout(path: Path) -> float:
+    """Bound for the analysis pass: scales with media length, never unbounded."""
+    try:
+        from autoshorts.media.ffmpeg_tools import probe_duration_cached
+
+        duration = probe_duration_cached(path)
+    except Exception:
+        duration = 0.0
+    return min(1800.0, max(120.0, duration * 4.0 + 60.0))
+
+
 def measure_loudness(
     path: Path, target_lufs: float = -14.0, true_peak_db: float = -1.0, lra: float = 7.0
+) -> dict:
+    """Cached wrapper around :func:`_measure_loudness_uncached` (see its docstring)."""
+    try:
+        st = Path(path).stat()
+        key = (
+            str(Path(path).resolve()),
+            st.st_mtime_ns,
+            st.st_size,
+            target_lufs,
+            true_peak_db,
+            lra,
+        )
+    except OSError:
+        return {}
+    with _MEASURE_LOCK:
+        hit = _MEASURE_CACHE.get(key)
+    if hit is not None:
+        return dict(hit)
+    result = _measure_loudness_uncached(Path(path), target_lufs, true_peak_db, lra)
+    if result:
+        with _MEASURE_LOCK:
+            if len(_MEASURE_CACHE) >= _MEASURE_CACHE_MAX:
+                _MEASURE_CACHE.pop(next(iter(_MEASURE_CACHE)), None)
+            _MEASURE_CACHE[key] = dict(result)
+    return result
+
+
+def _measure_loudness_uncached(
+    path: Path, target_lufs: float, true_peak_db: float, lra: float
 ) -> dict:
     """Measure integrated loudness (``input_i``), true peak (``input_tp``), LRA, threshold.
 
@@ -68,7 +129,7 @@ def measure_loudness(
             encoding="utf-8",
             errors="replace",
             check=False,
-            timeout=600,
+            timeout=_measure_timeout(path),
         )
         match = _JSON_BLOCK.search(proc.stderr or "")
         if proc.returncode != 0 or match is None:
@@ -103,43 +164,93 @@ def build_loudnorm_filter(
     return f"{chain},{_limiter(true_peak_db)}"
 
 
-def normalize_two_pass(src: Path, dst: Path, target_lufs: float) -> Path:
-    """Two-pass EBU R128 normalise ``src`` into ``dst``; the video stream is copied.
-
-    Measures ``src``, re-encodes only the audio with the measured linear loudnorm and the limiter,
-    writes to a temp file beside ``dst`` and then ``os.replace``s it into place. If measurement
-    fails, it falls back to the single-pass filter. Raises ``RuntimeError`` if ffmpeg fails.
-    """
-    src, dst = Path(src), Path(dst)
-    measured = measure_loudness(src, target_lufs=target_lufs)
+def _within_tolerance(
+    measured: dict, target_lufs: float, true_peak_db: float, tolerance_lu: float
+) -> bool:
+    """True when the measured file already meets the target and needs no re-encode."""
     if not measured:
-        logger.warning("two-pass measurement unavailable for %s; using single-pass loudnorm", src)
-    af = build_loudnorm_filter(measured or None, target_lufs)
+        return False
+    return (
+        abs(measured["input_i"] - target_lufs) <= tolerance_lu
+        and measured["input_tp"] <= true_peak_db + 0.05
+    )
 
-    suffix = dst.suffix.lower()
-    cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-nostdin", "-i", str(src)]
-    if suffix in _VIDEO_SUFFIXES:
-        cmd += ["-map", "0:v?", "-c:v", "copy"]
-    cmd += ["-map", "0:a:0", "-af", af, *_AUDIO_CODECS.get(suffix, _DEFAULT_AUDIO_CODEC)]
-    cmd += ["-ar", "48000"]
-    if suffix in (".mp4", ".mov", ".m4v"):
-        cmd += ["-movflags", "+faststart"]
 
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.stem}.", suffix=dst.suffix, dir=dst.parent)
-    os.close(fd)
-    tmp = Path(tmp_name)
+def _keep_original(src: Path, dst: Path) -> Path:
+    """Make ``dst`` hold the untouched ``src`` content (no-op when they are the same file)."""
+    if src == dst:
+        return dst
+    tmp = dst.with_name(f".{dst.stem}.keep.{os.getpid()}{dst.suffix}")
     try:
-        proc = subprocess.run(
-            [*cmd, str(tmp)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"audio normalisation failed: {proc.stderr.strip()[-800:]}")
+        shutil.copy2(src, tmp)
         os.replace(tmp, dst)
     finally:
         tmp.unlink(missing_ok=True)
     return dst
+
+
+def normalize_two_pass(
+    src: Path,
+    dst: Path,
+    target_lufs: float,
+    *,
+    tolerance_lu: float = DEFAULT_TOLERANCE_LU,
+    true_peak_db: float = -1.0,
+) -> Path:
+    """Two-pass EBU R128 normalise ``src`` into ``dst``; the video stream is copied.
+
+    Measures ``src`` (cached). When the integrated loudness is already within ``tolerance_lu``
+    of ``target_lufs`` and the true peak is under the ceiling, the audio is NOT re-encoded:
+    ``src`` is kept as is. Otherwise only the audio is re-encoded with the measured linear
+    loudnorm plus the limiter, written to a temp file beside ``dst`` and ``os.replace``d into
+    place. If measurement fails, it falls back to the single-pass filter.
+
+    Never fails the job: any error (including an ffmpeg failure or timeout) is logged as a
+    warning and the original audio is kept (copied to ``dst`` when ``dst`` differs from ``src``).
+    """
+    src, dst = Path(src), Path(dst)
+    tmp: Path | None = None
+    try:
+        measured = measure_loudness(src, target_lufs=target_lufs, true_peak_db=true_peak_db)
+        if _within_tolerance(measured, target_lufs, true_peak_db, tolerance_lu):
+            logger.info(
+                "loudness %.1f LUFS already within %.1f LU of %.1f target; skipping re-encode",
+                measured["input_i"],
+                tolerance_lu,
+                target_lufs,
+            )
+            return _keep_original(src, dst)
+        if not measured:
+            logger.warning(
+                "two-pass measurement unavailable for %s; using single-pass loudnorm", src
+            )
+        af = build_loudnorm_filter(measured or None, target_lufs, true_peak_db)
+
+        suffix = dst.suffix.lower()
+        cmd = [get_ffmpeg_path(), "-y", "-hide_banner", "-nostdin", "-i", str(src)]
+        if suffix in _VIDEO_SUFFIXES:
+            cmd += ["-map", "0:v?", "-c:v", "copy"]
+        cmd += ["-map", "0:a:0", "-af", af, *_AUDIO_CODECS.get(suffix, _DEFAULT_AUDIO_CODEC)]
+        cmd += ["-ar", "48000"]
+        if suffix in (".mp4", ".mov", ".m4v"):
+            cmd += ["-movflags", "+faststart"]
+
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{dst.stem}.", suffix=dst.suffix, dir=dst.parent)
+        os.close(fd)
+        tmp = Path(tmp_name)
+        # The whole process tree is killed on timeout; the encode is audio-only so it is fast.
+        proc = run_command_with_cleanup([*cmd, str(tmp)], timeout=_measure_timeout(src))
+        if proc.returncode != 0:
+            raise RuntimeError(f"audio normalisation failed: {(proc.stderr or '').strip()[-800:]}")
+        os.replace(tmp, dst)
+        return dst
+    except Exception as exc:  # loudness is polish: keep the original rather than fail the job
+        logger.warning("audio normalisation failed for %s; keeping original audio: %s", src, exc)
+        try:
+            return _keep_original(src, dst)
+        except OSError as copy_exc:
+            logger.warning("could not preserve original audio at %s: %s", dst, copy_exc)
+            return src
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
