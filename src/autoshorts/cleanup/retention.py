@@ -5,14 +5,16 @@ and returns the files that should go, oldest first, without touching anything.
 ``delete_output_files`` applies such a selection through send2trash (Recycle Bin)
 and defaults to dry-run. Nothing in this module runs automatically.
 
-Only ``{job_id}_master.mp4`` and ``{job_id}_preview.mp4`` files are managed. Any
-other file in output/ is ignored. Files whose job id is in ``protected_job_ids``
+Only top-level ``{job_id}_master.mp4``, ``{job_id}_master_<variant>.mp4`` (render variants and
+the captioned master, e.g. ``_master_raea`` / ``_master_captioned``) and
+``{job_id}_preview.mp4`` files are managed. Any other file in output/ is ignored. Files whose job id is in ``protected_job_ids``
 (jobs not yet uploaded/verified) are never selected.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 _GIB = 1024**3
 _SECONDS_PER_DAY = 86400.0
-_MANAGED_SUFFIXES = ("_master.mp4", "_preview.mp4")
+# Anchored on the whole file name: no path separators can match, and only top-level files of
+# output/ are ever inspected (never a recursive glob).
+_MANAGED_RE = re.compile(r"^(?P<job>[^/\\]+)_(?:master(?:_[A-Za-z0-9_-]+)?|preview)\.mp4$")
+# A file touched this recently may still be being written by a running render.
+ACTIVE_WRITE_GUARD_SEC = 15 * 60.0
 
 
 def job_id_from_output_name(name: str) -> str | None:
@@ -32,10 +38,13 @@ def job_id_from_output_name(name: str) -> str | None:
 
     Job ids may contain underscores, so only the known suffixes are stripped.
     """
-    for suffix in _MANAGED_SUFFIXES:
-        if name.endswith(suffix) and len(name) > len(suffix):
-            return name[: -len(suffix)]
-    return None
+    match = _MANAGED_RE.match(name)
+    if match is None:
+        return None
+    # Greedy-from-the-right: the job id is everything before the LAST "_master"/"_preview" tag
+    # that starts the managed tail, so ids containing underscores still resolve.
+    head = match.group("job")
+    return head or None
 
 
 def select_expired_outputs(
@@ -81,6 +90,7 @@ def select_expired_outputs(
         return []
 
     protected = set(protected_job_ids)
+    protected_recent: set[str] = set()
 
     # (mtime, size, job_id, path) for every managed regular file.
     managed: list[tuple[float, int, str, Path]] = []
@@ -89,9 +99,14 @@ def select_expired_outputs(
         if job_id is None or entry.is_symlink() or not entry.is_file():
             continue
         st = entry.stat()
+        if now.timestamp() - st.st_mtime < ACTIVE_WRITE_GUARD_SEC:
+            # Possibly mid-render: never selected by the age or the size rule, but it still
+            # counts toward the total below.
+            protected_recent.add(job_id)
         managed.append((st.st_mtime, st.st_size, job_id, entry))
 
     # Oldest first; name as a deterministic tie-breaker.
+    protected |= protected_recent
     managed.sort(key=lambda item: (item[0], item[3].name))
 
     selected: set[int] = set()  # indices into `managed`
