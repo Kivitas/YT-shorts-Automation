@@ -245,16 +245,13 @@ class RemotionBackend:
 
 
 def load_raea_backend(settings: Any = None) -> RenderBackend | None:
-    """Import workstream A's backend lazily; ``None`` when the module is missing/unusable."""
+    """Build the raea backend from ``settings.raea``; ``None`` when its module is unusable."""
     try:
         from autoshorts.media.raea_renderer import RaeaBackend
     except ImportError:
         return None
     try:
-        try:
-            return RaeaBackend(settings)
-        except TypeError:
-            return RaeaBackend()
+        return RaeaBackend(getattr(settings, "raea", None))
     except Exception as exc:
         logger.warning("raea backend could not be constructed: %s", exc)
         return None

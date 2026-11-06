@@ -288,19 +288,23 @@ def test_load_raea_backend_missing_module_is_none(monkeypatch) -> None:
     assert load_raea_backend(None) is None
 
 
-def test_load_raea_backend_adapts_constructor_signature(monkeypatch) -> None:
-    import types
+def test_load_raea_backend_uses_real_backend_with_settings_raea(monkeypatch) -> None:
+    """The dispatcher must hand the real RaeaBackend its RaeaConfig, not the whole Settings."""
+    from autoshorts.core.config import Settings
+    from autoshorts.core.render_spec import RenderBackend
+    from autoshorts.media.raea_renderer import RaeaBackend
 
-    class NoArgBackend:
-        method = RenderMethod.RAEA
+    monkeypatch.setenv("AUTOSHORTS_RAEA_BIN", "")
+    monkeypatch.setenv("PATH", "")
+    settings = Settings()
+    backend = load_raea_backend(settings)
+    assert isinstance(backend, RaeaBackend)
+    assert isinstance(backend, RenderBackend)
+    assert backend.config is settings.raea
+    assert backend.is_available() is False  # no raea on PATH -> unavailable, never raises
 
-        def __init__(self) -> None:
-            pass
-
-    mod = types.ModuleType("autoshorts.media.raea_renderer")
-    mod.RaeaBackend = NoArgBackend  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "autoshorts.media.raea_renderer", mod)
-    assert isinstance(load_raea_backend(object()), NoArgBackend)
+    settings.raea.enabled = False
+    assert load_raea_backend(settings).is_available() is False
 
 
 def test_method_limiter_defaults_and_unlimited() -> None:
