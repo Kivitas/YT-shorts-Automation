@@ -116,6 +116,23 @@ if !ERRORLEVEL! neq 0 (
 :deps_ready
 echo %C_GREEN%[ OK ]%C_RESET% Python dependencies ready
 
+rem ----------------------------------------------------------------------------- OpenCV (facecam auto-detect for the cam_gameplay layout)
+rem 'uv sync' installs it from pyproject.toml; this repairs a missing or too-new install
+rem (OpenCV 5.x dropped the Haar face models, so the project pins opencv-python-headless below 5).
+set "CV2_CHECK=import cv2; cv2.CascadeClassifier"
+"%PYTHON_EXE%" -c "%CV2_CHECK%" >nul 2>&1
+if !ERRORLEVEL! equ 0 goto opencv_ready
+echo %C_CYAN%[INFO]%C_RESET% Installing OpenCV for facecam auto-detect - one time...
+"%UV_CMD%" pip install --python "%PYTHON_EXE%" "opencv-python-headless>=4.9.0,<5" >nul 2>&1
+"%PYTHON_EXE%" -c "%CV2_CHECK%" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo %C_YELLOW%[NOTE]%C_RESET% OpenCV could not be installed; set branding.cam_layout.cam_rect by hand for the cam_gameplay layout.
+    goto opencv_done
+)
+:opencv_ready
+echo %C_GREEN%[ OK ]%C_RESET% OpenCV ready
+:opencv_done
+
 rem ----------------------------------------------------------------------------- Remotion (optional captions engine + longform sprites)
 set "REMOTION_BIN=%~dp0remotion\node_modules\.bin\remotion.cmd"
 set "SATORI_DIR=%~dp0remotion\node_modules\satori"
