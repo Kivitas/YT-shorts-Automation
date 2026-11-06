@@ -200,7 +200,13 @@ class MediaMixin:
                             "copy",
                             str(raw_cut_path),
                         ]
-                        res = subprocess.run(trim_cmd, capture_output=True)
+                        try:
+                            # Stream copy is I/O bound; bound it so a hung ffmpeg cannot stall
+                            # a worker thread forever.
+                            res = subprocess.run(trim_cmd, capture_output=True, timeout=600)
+                        except subprocess.TimeoutExpired:
+                            raw_cut_path.unlink(missing_ok=True)
+                            res = subprocess.CompletedProcess(trim_cmd, 124, b"", b"timeout")
                         if res.returncode != 0 or not raw_cut_path.is_file():
                             logger.warning(
                                 "Job %s: Local stream-copy trim failed (code %s); falling back "

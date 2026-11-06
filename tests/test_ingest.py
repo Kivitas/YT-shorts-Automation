@@ -654,6 +654,7 @@ def test_windows_process_tree_cleanup_taskkill():
             ["taskkill", "/F", "/T", "/PID", "99999"],
             capture_output=True,
             check=False,
+            timeout=10.0,
         )
 
 

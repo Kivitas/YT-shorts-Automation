@@ -14,11 +14,13 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 from autoshorts.core.paths import PROJECT_ROOT
 from autoshorts.media.compositor import get_ffprobe_path
+from autoshorts.media.downloader import probe_video_stream_info
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,55 @@ PLATFORM_SAFE_ZONES: dict[str, dict[str, float]] = {
 
 class FfmpegToolError(RuntimeError):
     """Raised when an ffmpeg-skill script cannot be run (bad name, missing file, timeout)."""
+
+
+# --- cached media probe -------------------------------------------------------------------
+# ffprobe is spawned repeatedly for the same file across stages and variants. Results are
+# keyed by (resolved path, mtime_ns, size), so any rewrite of the file invalidates its entry.
+_PROBE_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
+_PROBE_LOCK = threading.Lock()
+_PROBE_CACHE_MAX = 512
+
+
+def clear_probe_cache() -> None:
+    """Drop every cached probe result (test isolation / after external edits)."""
+    with _PROBE_LOCK:
+        _PROBE_CACHE.clear()
+
+
+def probe_media_cached(path: Path | str) -> dict[str, Any]:
+    """Return ``probe_video_stream_info`` for ``path``, cached by (path, mtime, size).
+
+    Thread-safe. Failed probes (no stream, no duration) are never cached, so a file that is
+    still being written is re-probed next time. The returned dict is a private copy.
+    """
+    p = Path(path)
+    try:
+        st = p.stat()
+        key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return probe_video_stream_info(p)
+    with _PROBE_LOCK:
+        hit = _PROBE_CACHE.get(key)
+    if hit is not None:
+        return dict(hit)
+    info = probe_video_stream_info(p)
+    if info.get("has_video") or info.get("has_audio") or float(info.get("duration") or 0) > 0:
+        with _PROBE_LOCK:
+            if len(_PROBE_CACHE) >= _PROBE_CACHE_MAX:
+                _PROBE_CACHE.pop(next(iter(_PROBE_CACHE)), None)
+            _PROBE_CACHE[key] = dict(info)
+    return dict(info)
+
+
+def probe_duration_cached(path: Path | str) -> float:
+    """Cached media duration in seconds (0.0 when unknown)."""
+    return float(probe_media_cached(path).get("duration") or 0.0)
+
+
+def has_audio_stream_cached(path: Path | str) -> bool:
+    """Cached check for whether ``path`` carries at least one audio stream."""
+    return bool(probe_media_cached(path).get("has_audio"))
 
 
 def _child_env() -> dict[str, str]:
@@ -343,7 +394,17 @@ def render_safe_zone_preview(
         "copy",
         str(out),
     ]
-    subprocess.run(cmd, check=True, capture_output=True, env=_child_env())
+    # The preview is a fast ultrafast re-encode; scale the bound with the clip length.
+    duration = probe_duration_cached(video_path)
+    timeout = min(1800.0, max(120.0, duration * 6.0 + 60.0))
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, env=_child_env(), timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        out.unlink(missing_ok=True)
+        raise FfmpegToolError(f"safe-zone preview timed out after {timeout:g}s") from exc
+    except BaseException:
+        out.unlink(missing_ok=True)  # never leave a half-written preview behind
+        raise
     return out
 
 
@@ -356,7 +417,11 @@ __all__ = [
     "detect_black_bars",
     "detect_scenes_and_highlights",
     "detect_speech_silences",
+    "clear_probe_cache",
+    "has_audio_stream_cached",
     "insert_broll_cutaways",
+    "probe_duration_cached",
+    "probe_media_cached",
     "render_safe_zone_preview",
     "run_tool",
 ]

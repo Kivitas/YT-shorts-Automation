@@ -355,6 +355,11 @@ def _concat_audio(
     return out
 
 
+# After the last frame is written and stderr closes, ffmpeg only has to flush/mux. A wedged
+# process here is killed by the cleanup path below instead of blocking the render forever.
+_ENCODE_WAIT_TIMEOUT_SEC = 300.0
+
+
 def _encode(
     sections: list[SectionAudio], title: str, audio: Path, out_path: Path, scenes: tuple[str, ...]
 ) -> None:
@@ -378,7 +383,7 @@ def _encode(
         except (BrokenPipeError, OSError):
             pass
         err = proc.stderr.read().decode("utf-8", "replace")
-        rc = proc.wait()
+        rc = proc.wait(timeout=_ENCODE_WAIT_TIMEOUT_SEC)
     except BaseException:
         # A frame generator error or Ctrl+C must not leave ffmpeg running or the output half-written.
         proc.kill()

@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,45 @@ logger = logging.getLogger("autoshorts.pipeline")
 generate_candidate_windows = getattr(
     _window_slicer, "generate_candidate_windows", slice_transcript_windows
 )
+
+
+def _shared_transcript_path(source_url: str) -> Path | None:
+    """Per-video transcript cache path under the work dir, or None when the id is unknown."""
+    import autoshorts.pipeline as pipeline_mod
+    from autoshorts.discovery.url_validator import extract_video_id
+
+    try:
+        video_id = extract_video_id(source_url)
+    except Exception:
+        return None
+    if not video_id:
+        return None
+    return pipeline_mod.get_work_dir() / "_transcript_cache" / f"{video_id}.json"
+
+
+def _load_shared_transcript(path: Path) -> list[dict[str, Any]]:
+    """Read a cached transcript; any problem (missing, corrupt, empty) is a cache miss."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
+        return []
+    return data
+
+
+def _store_shared_transcript(path: Path, segments: list[dict[str, Any]]) -> None:
+    """Atomically write the shared transcript cache; best effort, never raises."""
+
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(segments), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        logger.debug("shared transcript cache write skipped: %s", exc)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class IngestMixin:
@@ -97,10 +138,17 @@ class IngestMixin:
         segments: list[dict[str, Any]] = []
 
         local_src: Path | None = self._resolve_local_source(job)
+        # Cross-job cache: reruns and variants of the same video reuse the (expensive) transcript.
+        shared_cache = None if local_src else _shared_transcript_path(job.source_url)
 
         try:
+            if shared_cache is not None:
+                segments = _load_shared_transcript(shared_cache)
+                if segments:
+                    logger.info("Job %s: reusing cached transcript %s", job.id, shared_cache.name)
+
             # 1. Try fetching online subtitles via TranscriptFetcher if not a local file
-            if not local_src and self.transcript_fetcher:
+            if not segments and not local_src and self.transcript_fetcher:
                 try:
                     segs, _signal = self.transcript_fetcher.fetch_or_signal(job.source_url)
                     if segs:
@@ -154,6 +202,8 @@ class IngestMixin:
             # Cache transcript to disk
             with open(transcript_cache, "w", encoding="utf-8") as f:
                 json.dump(segments, f, indent=2)
+            if shared_cache is not None:
+                _store_shared_transcript(shared_cache, segments)
 
             job.transition_to(JobStatus.TRANSCRIBED)
             self.state_manager.record_stage_complete(
