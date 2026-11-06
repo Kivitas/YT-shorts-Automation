@@ -192,6 +192,15 @@ render:
   # variants: the first entry of `methods` is the primary file (job.rendered_video_path, used by
   # upload); the other methods are written to output/<job>/<method>.mp4 for comparison.
 
+# raea: primary renderer for finished 9:16 shorts (src/autoshorts/media/raea_renderer.py, raea/ dir).
+# Falls back to Remotion, then FFmpeg when raea is missing or fails. See raea/README.md.
+raea:
+  enabled: true                    # false = never try raea
+  binary: null                     # Path to the raea executable; null = $AUTOSHORTS_RAEA_BIN, PATH, ~/.raea/bin
+  timeout_sec_per_clip_sec: 12.0   # Render timeout = max(60, clip seconds x this)
+  run_check: false                 # Run `raea check` on the output and log its findings
+  extra_args: []                   # Extra `raea render` args, e.g. ["--quality", "high"]
+
 integrations:
   eachlabs:
     enabled: false                 # Enable EachLabs audio and music synthesis
