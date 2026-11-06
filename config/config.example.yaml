@@ -170,6 +170,18 @@ pipeline:
   caption_engine: "ass"            # Caption generator engine ("ass" or "remotion")
   enable_delivery_qc: true         # Run automatic FFmpeg delivery QC checks on completed renders
 
+render:
+  method: "auto"                   # auto (raea -> remotion -> ffmpeg), raea, remotion, or ffmpeg
+  methods: []                      # Methods for multi-method batches, e.g. ["raea", "ffmpeg"]
+  strategy: "single"               # single | round_robin (one method per job) | variants (every method per clip)
+  fallback: true                   # Fall through the chain when the chosen method fails
+  max_parallel_per_method:         # Concurrent renders per method (heavy renderers must not oversubscribe)
+    raea: 1
+    remotion: 1
+    ffmpeg: 2
+  # variants: the first entry of `methods` is the primary file (job.rendered_video_path, used by
+  # upload); the other methods are written to output/<job>/<method>.mp4 for comparison.
+
 integrations:
   eachlabs:
     enabled: false                 # Enable EachLabs audio and music synthesis

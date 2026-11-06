@@ -348,6 +348,13 @@ class Job(BaseModel):
         default=None, description="Target YouTube privacy status override"
     )
     layout_mode: str = "split_50_50"
+    render_method: str | None = Field(
+        default=None, description="Per-job render method override (auto/raea/remotion/ffmpeg)"
+    )
+    render_variants: list[str] = Field(
+        default_factory=list,
+        description="Extra methods rendered side by side (strategy=variants); first is primary",
+    )
     color_grading: str = "none"
     watermark_text: str | None = None
     watermark_position: str = "top_right"
@@ -371,9 +378,7 @@ class Job(BaseModel):
     crop_focus: str = "center"
     auto_trim_silence: bool = True
     skip_sponsors: bool = True
-    thumbnail_path: str | None = Field(
-        default=None, description="Path to custom thumbnail image"
-    )
+    thumbnail_path: str | None = Field(default=None, description="Path to custom thumbnail image")
     is_short: bool = Field(default=True, description="Whether this is a Short or long-form video")
     scheduled_time: datetime | None = Field(default=None, description="Scheduled upload timestamp")
     upload_result: UploadResult | None = Field(default=None, description="Upload outcome")

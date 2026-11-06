@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from autoshorts.core.exceptions import ConfigError
@@ -317,6 +317,57 @@ class CleanupConfig(BaseModel):
     dry_run: bool = False
 
 
+class RenderConfig(BaseModel):
+    """Which renderer(s) produce a short and how many may run at once (see render_dispatch)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    method: str = Field(
+        default="auto",
+        description="auto (raea -> remotion -> ffmpeg), raea, remotion or ffmpeg.",
+    )
+    methods: list[str] = Field(
+        default_factory=list,
+        description="Methods used by multi-method batches (strategy round_robin / variants).",
+    )
+    strategy: str = Field(
+        default="single",
+        description="single | round_robin (one method per job) | variants (every method per clip).",
+    )
+    fallback: bool = Field(
+        default=True, description="Fall through to the rest of the chain when a method fails."
+    )
+    max_parallel_per_method: dict[str, int] = Field(
+        default_factory=lambda: {"raea": 1, "remotion": 1, "ffmpeg": 2},
+        description="Concurrent renders allowed per method (heavy renderers must not oversubscribe).",
+    )
+
+    @field_validator("method")
+    @classmethod
+    def _check_method(cls, v: str) -> str:
+        v = (v or "auto").strip().lower()
+        if v not in {"auto", "raea", "remotion", "ffmpeg"}:
+            raise ValueError("render.method must be auto, raea, remotion or ffmpeg")
+        return v
+
+    @field_validator("methods")
+    @classmethod
+    def _check_methods(cls, v: list[str]) -> list[str]:
+        out = [str(m).strip().lower() for m in v if str(m).strip()]
+        bad = [m for m in out if m not in {"auto", "raea", "remotion", "ffmpeg"}]
+        if bad:
+            raise ValueError(f"render.methods has unknown entries: {bad}")
+        return out
+
+    @field_validator("strategy")
+    @classmethod
+    def _check_strategy(cls, v: str) -> str:
+        v = (v or "single").strip().lower()
+        if v not in {"single", "round_robin", "variants"}:
+            raise ValueError("render.strategy must be single, round_robin or variants")
+        return v
+
+
 class PipelineConfig(BaseModel):
     """Pipeline concurrency, caption engine, and delivery QC parameters."""
 
@@ -390,6 +441,7 @@ class Settings(BaseSettings):
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    render: RenderConfig = Field(default_factory=RenderConfig)
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     analytics_priors: AnalyticsPriorsConfig = Field(default_factory=AnalyticsPriorsConfig)
 

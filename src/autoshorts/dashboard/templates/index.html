@@ -386,7 +386,29 @@
                   <option value="full_blur_bg">Blurred 16:9 Backdrop (No Gameplay)</option>
                   <option value="full_center_crop">Full 9:16 Center Crop</option>
                   <option value="pip_gameplay">PiP Gameplay Box (Reaction)</option>
+                  <option value="cam_gameplay">Streamer Cam + Gameplay (Cam Top)</option>
                 </select>
+              </div>
+
+              <div class="control-group">
+                <label for="render-method-select">Render Method</label>
+                <select id="render-method-select">
+                  <option value="" selected>Default (auto: raea &rarr; Remotion &rarr; FFmpeg)</option>
+                  <option value="raea">raea</option>
+                  <option value="remotion">Remotion</option>
+                  <option value="ffmpeg">FFmpeg only</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="render-strategy-select">Multi-Method Batch</label>
+                <select id="render-strategy-select">
+                  <option value="single" selected>Single method</option>
+                  <option value="round_robin">Round robin (one method per short)</option>
+                  <option value="variants">Variants (every method per short)</option>
+                </select>
+                <input type="text" id="render-methods-input" placeholder="Methods, e.g. raea,remotion,ffmpeg"
+                  title="Comma-separated; used by round robin and variants (first = primary)">
               </div>
 
               <div class="control-group">
@@ -2097,6 +2119,7 @@
                   <option value="full_blur_bg">Blurred 16:9 Backdrop (Zero Gameplay)</option>
                   <option value="full_center_crop">Full 9:16 Center Crop</option>
                   <option value="pip_gameplay">PiP Gameplay Box (Reaction)</option>
+                  <option value="cam_gameplay">Streamer Cam + Gameplay</option>
                 </select>
               </div>
 
@@ -2394,6 +2417,7 @@
                   <option value="full_blur_bg">Blurred 16:9 Backdrop (Zero Gameplay)</option>
                   <option value="full_center_crop">Full 9:16 Center Crop</option>
                   <option value="pip_gameplay">PiP Gameplay Box (Reaction Style)</option>
+                  <option value="cam_gameplay">Streamer Cam + Gameplay</option>
                 </select>
               </div>
 

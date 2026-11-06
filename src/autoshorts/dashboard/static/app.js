@@ -695,12 +695,25 @@ function renderJobs(jobs) {
       }
     }
 
+    // Render method badge: which renderer actually produced the file
+    let renderBadgeHtml = "";
+    const renderInfo = (job.diagnostics && job.diagnostics.render) || {};
+    if (renderInfo.method_used) {
+      const attempts = Array.isArray(renderInfo.attempts)
+        ? renderInfo.attempts.map(a => `${a.method}: ${a.error || "ok"}`).join(" | ")
+        : "";
+      const variants = (job.diagnostics && job.diagnostics.render_variants) || {};
+      const variantTxt = Object.keys(variants).length ? ` (+${Object.keys(variants).join(", ")})` : "";
+      renderBadgeHtml = `<span class="provenance-pill pill-local" title="${escapeHtml(attempts)}">Render: ${escapeHtml(renderInfo.method_used)}${escapeHtml(variantTxt)}</span>`;
+    }
+
     return `
       <div class="job-card" id="job-${job.id}">
         <div class="job-header">
           <span class="job-id">#${job.id}</span>
           <div class="job-header-badges">
             ${qcBadgeHtml}
+            ${renderBadgeHtml}
             ${provenanceHtml}
             <span class="status-badge status-${job.status}">${job.status}</span>
           </div>
@@ -1965,6 +1978,16 @@ async function submitJobs() {
     skip_sponsors: skipSponsors,
     auto_trim_silence: autoTrimSilence,
   };
+  const renderMethodEl = document.getElementById("render-method-select");
+  const renderStrategyEl = document.getElementById("render-strategy-select");
+  const renderMethodsEl = document.getElementById("render-methods-input");
+  if (renderMethodEl && renderMethodEl.value) payload.render_method = renderMethodEl.value;
+  if (renderStrategyEl && renderStrategyEl.value && renderStrategyEl.value !== "single") {
+    payload.render_strategy = renderStrategyEl.value;
+  }
+  if (renderMethodsEl && renderMethodsEl.value.trim()) {
+    payload.render_methods = renderMethodsEl.value.trim();
+  }
 
   const btn = document.getElementById("submit-btn");
   const resultsBox = document.getElementById("links-results");
