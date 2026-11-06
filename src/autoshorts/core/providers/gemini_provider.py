@@ -190,17 +190,31 @@ class GeminiProvider(BaseLLMProvider):
         url = f"{GEMINI_BASE_URL}/models/{model}:generateContent"
         params = {"key": api_key}
 
+        gen_config: dict[str, Any] = {
+            "temperature": kwargs.get("temperature", 0.0),
+            "maxOutputTokens": kwargs.get("max_tokens", 1024),
+        }
+        if kwargs.get("response_mime_type"):
+            gen_config["responseMimeType"] = kwargs["response_mime_type"]
+        if kwargs.get("response_schema"):
+            gen_config["responseSchema"] = kwargs["response_schema"]
+
         payload: dict[str, Any] = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": kwargs.get("temperature", 0.0),
-                "maxOutputTokens": kwargs.get("max_tokens", 1024),
-            },
+            "generationConfig": gen_config,
         }
 
         def _request() -> str:
             self._rate_limit_wait()
             resp = client.post(url, params=params, json=payload)
+            if resp.status_code == 400 and (
+                "responseMimeType" in payload["generationConfig"]
+                or "responseSchema" in payload["generationConfig"]
+            ):
+                payload["generationConfig"].pop("responseMimeType", None)
+                payload["generationConfig"].pop("responseSchema", None)
+                self._rate_limit_wait()
+                resp = client.post(url, params=params, json=payload)
             if resp.status_code == 429:
                 raise ProviderRateLimitError(f"Gemini API rate limit: {resp.text}")
             if resp.status_code != 200:

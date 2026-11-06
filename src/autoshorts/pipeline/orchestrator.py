@@ -321,27 +321,43 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         # slot, one per stage. Metadata, transcript, SemIf and uploads run unthrottled, and
         # no stage holds the slot while calling another stage, so the semaphore is never
         # acquired twice on one thread.
+        from autoshorts.decision.orchestrator import get_decision_coalescer
+
+        coalescer = get_decision_coalescer()
+        needs_semif = job.status in (
+            JobStatus.QUEUED,
+            JobStatus.METADATA_FETCHED,
+            JobStatus.TRANSCRIBED,
+            JobStatus.WINDOWS_SLICED,
+        )
+        if needs_semif:
+            coalescer.register_inflight_job(job.id)
+
         stage = "queued"
         try:
-            # Stage 1: Metadata Fetch
-            if job.status == JobStatus.QUEUED:
-                stage = "metadata"
-                self._run_metadata_stage(job)
+            try:
+                # Stage 1: Metadata Fetch
+                if job.status == JobStatus.QUEUED:
+                    stage = "metadata"
+                    self._run_metadata_stage(job)
 
-            # Stage 2: Transcript Fetch (with Whisper Fallback)
-            if job.status == JobStatus.METADATA_FETCHED:
-                stage = "transcript"
-                self._run_transcript_stage(job)
+                # Stage 2: Transcript Fetch (with Whisper Fallback)
+                if job.status == JobStatus.METADATA_FETCHED:
+                    stage = "transcript"
+                    self._run_transcript_stage(job)
 
-            # Stage 3: Window Slicing
-            if job.status == JobStatus.TRANSCRIBED:
-                stage = "slicing"
-                self._run_slicing_stage(job)
+                # Stage 3: Window Slicing
+                if job.status == JobStatus.TRANSCRIBED:
+                    stage = "slicing"
+                    self._run_slicing_stage(job)
 
-            # Stage 4: SemIf Evaluation & Non-overlapping Selection
-            if job.status == JobStatus.WINDOWS_SLICED:
-                stage = "semif"
-                self._run_semif_stage(job, background_category=background_category)
+                # Stage 4: SemIf Evaluation & Non-overlapping Selection
+                if job.status == JobStatus.WINDOWS_SLICED:
+                    stage = "semif"
+                    self._run_semif_stage(job, background_category=background_category)
+            finally:
+                if needs_semif:
+                    coalescer.unregister_inflight_job(job.id)
 
             # Stage 5: Downloader Precision Cut
             if job.status == JobStatus.SEMIF_EVALUATED:

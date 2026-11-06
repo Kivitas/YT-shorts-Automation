@@ -586,3 +586,258 @@ def test_fuse_candidate_score_nan_is_not_a_perfect_score():
     assert _fuse_candidate_score(float("nan"), 0.0, 0.0) == 0.0
     assert _fuse_candidate_score(float("inf"), 0.5, 0.5) <= 0.3
     assert _fuse_candidate_score(0.8, float("nan"), float("nan")) == 0.8
+
+
+def test_consolidated_single_job_decisions_in_one_call():
+    """Verify score_candidates + select_clips uses 1 structured JSON call instead of separate calls."""
+    import json
+
+    from autoshorts.decision.orchestrator import BatchDecisionCoalescer
+
+    class CountingStructuredProvider(LLMProvider):
+        def __init__(self) -> None:
+            self.complete_calls = 0
+            self.score_options_calls = 0
+            self.last_prompt = ""
+
+        @property
+        def name(self) -> str:
+            return "counting"
+
+        @property
+        def supports_logprobs(self) -> bool:
+            return False
+
+        def list_models(self) -> list[str]:
+            return ["gemini-3.5-flash-lite"]
+
+        def complete(self, prompt: str, **kwargs: Any) -> str:
+            self.complete_calls += 1
+            self.last_prompt = prompt
+            return json.dumps(
+                {
+                    "job_id": "job_single_1",
+                    "selected_window_index": 1,
+                    "background_category": "subway",
+                    "hook_text": "Why Did Nobody Notice This?",
+                    "title": "The Hidden Trick Nobody Saw #Shorts",
+                    "windows": [
+                        {
+                            "index": 0,
+                            "score": 0.42,
+                            "reason": "Slow intro setup",
+                            "background_category": "minecraft",
+                            "hook_text": "How Does This Start?",
+                            "title": "The Setup Explained #Shorts",
+                        },
+                        {
+                            "index": 1,
+                            "score": 0.94,
+                            "reason": "Explosive reveal with complete arc",
+                            "background_category": "subway",
+                            "hook_text": "Why Did Nobody Notice This?",
+                            "title": "The Hidden Trick Nobody Saw #Shorts",
+                        },
+                    ],
+                }
+            )
+
+        def score_options(
+            self,
+            prompt: str,
+            options: Sequence[str] | Mapping[str, str],
+            **kwargs: Any,
+        ) -> dict[str, float]:
+            self.score_options_calls += 1
+            return {"A": 0.5, "B": 0.5}
+
+    provider = CountingStructuredProvider()
+    coalescer = BatchDecisionCoalescer(debounce_sec=0.01, max_wait_sec=1.0)
+    decider = SemIfDecider(provider=provider, coalescer=coalescer)
+
+    candidates = [
+        ClipCandidate(start=0.0, end=40.0, text="First slow intro segment."),
+        ClipCandidate(start=50.0, end=95.0, text="Second explosive reveal segment!"),
+    ]
+
+    decider.set_current_job_context("job_single_1")
+    scored = decider.score_candidates(candidates, instructions="Find the viral reveal")
+    selections = decider.select_clips(scored, count=2, job_id="job_single_1")
+    decider.set_current_job_context(None)
+
+    # Exactly 1 LLM request for the entire job (window scoring + background + hook + title)
+    assert provider.complete_calls == 1
+    assert provider.score_options_calls == 0
+
+    assert scored[0].start == 50.0
+    assert scored[0].score == 0.94
+    assert "SemIf consolidated score" in scored[0].reason
+
+    # select_clips orders chosen non-overlapping clips chronologically (0.0-40.0 then 50.0-95.0)
+    assert len(selections) == 2
+    assert selections[0].background_style == "minecraft"
+    assert selections[0].hook_text == "How Does This Start?"
+    assert selections[0].title == "The Setup Explained #Shorts"
+
+    assert selections[1].background_style == "subway"
+    assert selections[1].hook_text == "Why Did Nobody Notice This?"
+    assert selections[1].title == "The Hidden Trick Nobody Saw #Shorts"
+
+
+def test_parallel_agents_bundled_into_single_llm_request():
+    """Verify multiple parallel job workers doing local work get bundled into 1 LLM call and split back."""
+    import json
+    import threading
+    import time
+
+    from autoshorts.decision.orchestrator import BatchDecisionCoalescer
+
+    class BundledMockProvider(LLMProvider):
+        def __init__(self) -> None:
+            self.complete_calls = 0
+            self.prompts: list[str] = []
+            self._lock = threading.Lock()
+
+        @property
+        def name(self) -> str:
+            return "bundled-mock"
+
+        @property
+        def supports_logprobs(self) -> bool:
+            return False
+
+        def list_models(self) -> list[str]:
+            return ["gemini-3.5-flash-lite"]
+
+        def complete(self, prompt: str, **kwargs: Any) -> str:
+            with self._lock:
+                self.complete_calls += 1
+                self.prompts.append(prompt)
+            return json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "job_id": "job_alpha",
+                            "selected_window_index": 0,
+                            "background_category": "subway",
+                            "hook_text": "Alpha Hook Banner?",
+                            "title": "Alpha Viral Clip #Shorts",
+                            "windows": [
+                                {
+                                    "index": 0,
+                                    "score": 0.91,
+                                    "reason": "Alpha peak",
+                                    "background_category": "subway",
+                                    "hook_text": "Alpha Hook Banner?",
+                                    "title": "Alpha Viral Clip #Shorts",
+                                }
+                            ],
+                        },
+                        {
+                            "job_id": "job_beta",
+                            "selected_window_index": 0,
+                            "background_category": "minecraft",
+                            "hook_text": "Beta Deep Question?",
+                            "title": "Beta Secret Story #Shorts",
+                            "windows": [
+                                {
+                                    "index": 0,
+                                    "score": 0.87,
+                                    "reason": "Beta story",
+                                    "background_category": "minecraft",
+                                    "hook_text": "Beta Deep Question?",
+                                    "title": "Beta Secret Story #Shorts",
+                                }
+                            ],
+                        },
+                        {
+                            "job_id": "job_gamma",
+                            "selected_window_index": 0,
+                            "background_category": "subway",
+                            "hook_text": "Gamma Crazy Clutch?",
+                            "title": "Gamma Clutch Moment #Shorts",
+                            "windows": [
+                                {
+                                    "index": 0,
+                                    "score": 0.95,
+                                    "reason": "Gamma highlight",
+                                    "background_category": "subway",
+                                    "hook_text": "Gamma Crazy Clutch?",
+                                    "title": "Gamma Clutch Moment #Shorts",
+                                }
+                            ],
+                        },
+                    ]
+                }
+            )
+
+        def score_options(
+            self,
+            prompt: str,
+            options: Sequence[str] | Mapping[str, str],
+            **kwargs: Any,
+        ) -> dict[str, float]:
+            raise AssertionError("score_options should not be called in consolidated mode")
+
+    provider = BundledMockProvider()
+    coalescer = BatchDecisionCoalescer(debounce_sec=0.04, max_wait_sec=2.0)
+    decider = SemIfDecider(provider=provider, coalescer=coalescer)
+
+    job_ids = ["job_alpha", "job_beta", "job_gamma"]
+    # Register all 3 jobs as inflight (simulating parallel workers starting local Stages 1-3)
+    for jid in job_ids:
+        coalescer.register_inflight_job(jid)
+
+    results_by_job: dict[str, ClipSelection] = {}
+    errors: list[Exception] = []
+
+    def _worker(jid: str, local_delay: float, start_ts: float) -> None:
+        try:
+            # Simulate staggered local processing (metadata + transcript + window slicing)
+            time.sleep(local_delay)
+            decider.set_current_job_context(jid)
+            cands = [
+                ClipCandidate(
+                    start=start_ts,
+                    end=start_ts + 40.0,
+                    text=f"Transcript excerpt for {jid} with a complete thought.",
+                )
+            ]
+            scored = decider.score_candidates(cands, instructions=f"Focus for {jid}")
+            clips = decider.select_clips(scored, count=1, job_id=jid)
+            results_by_job[jid] = clips[0]
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            coalescer.unregister_inflight_job(jid)
+            decider.set_current_job_context(None)
+
+    threads = [
+        threading.Thread(target=_worker, args=("job_alpha", 0.01, 10.0)),
+        threading.Thread(target=_worker, args=("job_beta", 0.05, 60.0)),
+        threading.Thread(target=_worker, args=("job_gamma", 0.09, 120.0)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+
+    assert not errors
+    # All 3 parallel agents were bundled into 1 single LLM request!
+    assert provider.complete_calls == 1
+    assert set(results_by_job.keys()) == {"job_alpha", "job_beta", "job_gamma"}
+
+    assert results_by_job["job_alpha"].candidate.score == 0.91
+    assert results_by_job["job_alpha"].background_style == "subway"
+    assert results_by_job["job_alpha"].hook_text == "Alpha Hook Banner?"
+    assert results_by_job["job_alpha"].title == "Alpha Viral Clip #Shorts"
+
+    assert results_by_job["job_beta"].candidate.score == 0.87
+    assert results_by_job["job_beta"].background_style == "minecraft"
+    assert results_by_job["job_beta"].hook_text == "Beta Deep Question?"
+    assert results_by_job["job_beta"].title == "Beta Secret Story #Shorts"
+
+    assert results_by_job["job_gamma"].candidate.score == 0.95
+    assert results_by_job["job_gamma"].background_style == "subway"
+    assert results_by_job["job_gamma"].hook_text == "Gamma Crazy Clutch?"
+    assert results_by_job["job_gamma"].title == "Gamma Clutch Moment #Shorts"

@@ -444,18 +444,25 @@ class IngestMixin:
                     else guidance
                 )
 
-            scored = self.decider.score_candidates(job.candidate_windows, instructions=prompt)
-            job.candidate_windows = scored
+            has_job_ctx = "set_current_job_context" in type(self.decider).__dict__
+            if has_job_ctx:
+                self.decider.set_current_job_context(job.id)
+            try:
+                scored = self.decider.score_candidates(job.candidate_windows, instructions=prompt)
+                job.candidate_windows = scored
 
-            select_kwargs: dict[str, Any] = {
-                "count": self.config.job_defaults.clips_per_video,
-                "job_id": job.id,
-            }
-            # Only passed when priors are enabled, so the default call is unchanged.
-            performance_prior = _load_performance_prior(self.state_manager, self.config, job)
-            if performance_prior is not None:
-                select_kwargs["performance_prior"] = performance_prior
-            clips = self.decider.select_clips(scored, **select_kwargs)
+                select_kwargs: dict[str, Any] = {
+                    "count": self.config.job_defaults.clips_per_video,
+                    "job_id": job.id,
+                }
+                # Only passed when priors are enabled, so the default call is unchanged.
+                performance_prior = _load_performance_prior(self.state_manager, self.config, job)
+                if performance_prior is not None:
+                    select_kwargs["performance_prior"] = performance_prior
+                clips = self.decider.select_clips(scored, **select_kwargs)
+            finally:
+                if has_job_ctx:
+                    self.decider.set_current_job_context(None)
 
             if not clips:
                 raise AutoShortsError(f"SemIf decider selected 0 clips for job {job.id}")
