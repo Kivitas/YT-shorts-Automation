@@ -20,7 +20,12 @@ from autoshorts.core.logging_setup import redact, register_secret
 from autoshorts.core.paths import PROJECT_ROOT, get_config_dir
 
 LayoutMode = Literal[
-    "split_50_50", "split_70_30", "full_blur_bg", "full_center_crop", "pip_gameplay"
+    "split_50_50",
+    "split_70_30",
+    "full_blur_bg",
+    "full_center_crop",
+    "pip_gameplay",
+    "cam_gameplay",
 ]
 SubtitlePreset = Literal[
     "neon", "minimal", "pill", "hormozi", "mrbeast", "cyberpunk", "cinematic", "rapid", "kurz"
@@ -223,6 +228,38 @@ class MediaConfig(BaseModel):
     cookies_from_browser: str | None = None
 
 
+def _check_norm_rect(value: tuple[float, float, float, float] | None, name: str):
+    """A normalized (x, y, w, h) rect must lie inside the unit square with positive area."""
+    if value is None:
+        return None
+    x, y, w, h = value
+    if min(x, y) < 0 or w <= 0 or h <= 0 or x + w > 1.0 + 1e-6 or y + h > 1.0 + 1e-6:
+        raise ValueError(f"{name} must be a normalized (x, y, w, h) inside 0..1, got {value}")
+    return value
+
+
+class CamLayoutConfig(BaseModel):
+    """Streamer-cam (top) + gameplay (bottom) layout, used when layout_mode is cam_gameplay."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    top_ratio: float = Field(default=0.5, ge=0.2, le=0.8)
+    cam_source: Literal["crop", "file"] = "crop"
+    cam_rect: tuple[float, float, float, float] | None = None
+    cam_file: str | None = None
+    gameplay_rect: tuple[float, float, float, float] | None = None
+    mirror_cam: bool = False
+    auto_detect: bool = True
+
+    @model_validator(mode="after")
+    def _validate_rects(self) -> CamLayoutConfig:
+        _check_norm_rect(self.cam_rect, "cam_rect")
+        _check_norm_rect(self.gameplay_rect, "gameplay_rect")
+        if self.cam_source == "file" and not self.cam_file and self.cam_rect is None:
+            raise ValueError("cam_source 'file' needs cam_file (or a cam_rect to crop instead)")
+        return self
+
+
 class VisualBrandingConfig(BaseModel):
     """Visual framing, color grading, watermark, and progress bar branding options."""
 
@@ -241,6 +278,7 @@ class VisualBrandingConfig(BaseModel):
     enable_chyron: bool = False
     chyron_badge: str = "BREAKING NEWS"
     chyron_style: str = "broadcast_red"
+    cam_layout: CamLayoutConfig = Field(default_factory=CamLayoutConfig)
 
 
 BrandingConfig = VisualBrandingConfig
@@ -505,6 +543,7 @@ __all__ = [
     "IntegrationsConfig",
     "JobDefaultsConfig",
     "LLMConfig",
+    "CamLayoutConfig",
     "LayoutMode",
     "MediaConfig",
     "PipelineConfig",
