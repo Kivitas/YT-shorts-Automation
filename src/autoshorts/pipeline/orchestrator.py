@@ -7,6 +7,7 @@ import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from autoshorts.cleanup.safety_cleaner import SafetyCleaner
 from autoshorts.core.config import Settings, load_config
@@ -33,6 +34,7 @@ from autoshorts.discovery.url_validator import ParsedLink, parse_links_input
 from autoshorts.edit_planner.multimodal_planner import MultimodalEditPlanner
 from autoshorts.media.compositor import FasterWhisperTranscriber, FFmpegCompositor
 from autoshorts.media.downloader import Downloader as MediaDownloader
+from autoshorts.media.render_dispatch import MethodLimiter, assign_methods, parse_methods
 from autoshorts.pipeline.common import (
     _env_int,
     _is_nonempty_file,
@@ -85,6 +87,14 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         self.concurrency = max(1, resolved_concurrency)
         self._render_lock = threading.Semaphore(self.concurrency)
         self._render_tls = threading.local()
+        # Lock order: _render_lock (global) is always taken first, then at most ONE per-method
+        # slot at a time inside render_with_fallback. Method slots are leaf locks, so
+        # global -> method can never deadlock; the slot is released before falling to the next
+        # method in the chain.
+        render_cfg = getattr(self.config, "render", None)
+        limits = getattr(render_cfg, "max_parallel_per_method", None)
+        self._method_limiter = MethodLimiter(limits if isinstance(limits, dict) else None)
+        self.render_backends: dict[Any, Any] | None = None  # built lazily; tests may inject
 
         # Quota tracker
         self.quota_tracker = quota_tracker or QuotaTracker(
@@ -460,8 +470,20 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
         enable_chyron: bool = False,
         chyron_badge: str | None = None,
         chyron_text: str | None = None,
+        render_method: str | None = None,
+        render_methods: Sequence[str] | str | None = None,
+        render_strategy: str | None = None,
     ) -> list[Job]:
-        """Process a batch of links or Job objects sequentially."""
+        """Process a batch of links or Job objects, concurrently when concurrency > 1.
+
+        Render strategies (``render_strategy`` / ``render.strategy``):
+        - ``single`` (default): every job uses ``render_method`` (default ``render.method``).
+        - ``round_robin``: job i uses ``render_methods[i % len]``; different methods render in
+          parallel, each bounded by ``render.max_parallel_per_method``.
+        - ``variants``: every job renders once per method; ``render_methods[0]`` is the primary
+          (``job.rendered_video_path``, the file the upload step uses) and the others are written
+          to ``output/<job>/<method>.mp4``.
+        """
         if isinstance(jobs_or_links, (str, Path)) or (
             isinstance(jobs_or_links, Sequence)
             and len(jobs_or_links) > 0
@@ -470,6 +492,8 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
             jobs = self.submit_links(jobs_or_links, custom_instructions=custom_instructions)
         else:
             jobs = list(jobs_or_links)  # type: ignore[arg-type]
+
+        self._assign_render_methods(jobs, render_method, render_methods, render_strategy)
 
         for j in jobs:
             if enable_chyron or chyron_badge is not None or chyron_text is not None:
@@ -515,6 +539,48 @@ class ShortsPipeline(IngestMixin, MediaMixin, UploadMixin, RerenderMixin):
             results = [_process_single(j) for j in jobs]
 
         return results
+
+    def _assign_render_methods(
+        self,
+        jobs: Sequence[Job],
+        render_method: str | None,
+        render_methods: Sequence[str] | str | None,
+        render_strategy: str | None,
+    ) -> None:
+        """Stamp each job with its render method(s) before the worker threads start.
+
+        Done up front on the calling thread so worker threads never race on assignment. Without
+        any explicit input or configured methods this is a no-op (default behaviour unchanged).
+        """
+        cfg = getattr(self.config, "render", None)
+        cfg_methods = getattr(cfg, "methods", None)
+        cfg_strategy = getattr(cfg, "strategy", "single")
+        strategy = render_strategy or (cfg_strategy if isinstance(cfg_strategy, str) else "single")
+        strategy = strategy.strip().lower()
+        if strategy not in ("single", "round_robin", "variants"):
+            raise AutoShortsError(f"Unknown render strategy '{strategy}'")
+        methods = parse_methods(
+            render_methods
+            if render_methods
+            else (cfg_methods if isinstance(cfg_methods, list) else None)
+        )
+        if render_method and not methods:
+            methods = parse_methods(render_method)[:1]
+        if not methods or (strategy == "single" and not render_method and not render_methods):
+            return
+        if strategy == "single":
+            methods = methods[:1]
+        assigned = assign_methods(strategy, methods, len(jobs))
+        for job, method in zip(jobs, assigned, strict=True):
+            job.render_method = method.value
+            job.render_variants = [m.value for m in methods] if strategy == "variants" else []
+            job.record_diagnostic(
+                "render_plan",
+                strategy=strategy,
+                method=method.value,
+                variants=job.render_variants,
+            )
+            self.state_manager.save_job(job)
 
     def retry_job(
         self,

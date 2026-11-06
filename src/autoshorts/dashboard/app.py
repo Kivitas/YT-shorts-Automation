@@ -552,6 +552,10 @@ class JobSubmitRequest(BaseModel):
     crop_focus: str | None = Field(default=None)
     auto_trim_silence: bool | None = Field(default=None)
     skip_sponsors: bool | None = Field(default=None)
+    # Render method selection (auto|raea|remotion|ffmpeg) and multi-method batches
+    render_method: str | None = Field(default=None)
+    render_methods: list[str] | str | None = Field(default=None)
+    render_strategy: str | None = Field(default=None)
 
 
 SubmitJobsRequest = JobSubmitRequest
@@ -916,6 +920,23 @@ def create_app(
         if not req.links.strip():
             raise HTTPException(status_code=400, detail="No links provided")
 
+        from autoshorts.media.render_dispatch import parse_methods
+
+        try:
+            req_methods = parse_methods(req.render_method) if req.render_method else []
+            req_method_list = parse_methods(req.render_methods) if req.render_methods else []
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if req.render_strategy and req.render_strategy not in (
+            "single",
+            "round_robin",
+            "variants",
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="render_strategy must be single, round_robin or variants",
+            )
+
         if req.upload_mode:
             cfg.upload.mode = req.upload_mode
             if pipe and pipe.config:
@@ -994,6 +1015,17 @@ def create_app(
                 if val is not None:
                     set_job_attr(job, field_name, val)
             state_mgr.save_job(job)
+
+        if req_methods or req_method_list or req.render_strategy:
+            try:
+                pipe._assign_render_methods(
+                    jobs,
+                    req.render_method,
+                    [m.value for m in req_method_list] or None,
+                    req.render_strategy,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
 
         # Trigger processing via parallel runner
         for job in jobs:
@@ -2074,7 +2106,9 @@ def create_app(
                 return {
                     "success": True,
                     "job_id": job.id,
-                    "title": getattr(job.video_metadata, "title", "") if getattr(job, "video_metadata", None) else "",
+                    "title": getattr(job.video_metadata, "title", "")
+                    if getattr(job, "video_metadata", None)
+                    else "",
                     "upload_result": res_dump,
                     "message": f"Successfully uploaded job #{job.id} immediately.",
                 }
@@ -2088,7 +2122,8 @@ def create_app(
             candidates = state_mgr.list_jobs(status=JobStatus.READY_FOR_REVIEW)
         if not candidates and hasattr(state_mgr, "get_all_jobs"):
             candidates = [
-                j for j in state_mgr.get_all_jobs()
+                j
+                for j in state_mgr.get_all_jobs()
                 if getattr(j, "status", None) == JobStatus.READY_FOR_REVIEW
             ]
 
@@ -2104,7 +2139,9 @@ def create_app(
                 return {
                     "success": True,
                     "job_id": job.id,
-                    "title": getattr(job.video_metadata, "title", "") if getattr(job, "video_metadata", None) else "",
+                    "title": getattr(job.video_metadata, "title", "")
+                    if getattr(job, "video_metadata", None)
+                    else "",
                     "upload_result": res_dump,
                     "message": f"Successfully uploaded job #{job.id} immediately.",
                 }

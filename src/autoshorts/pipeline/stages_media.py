@@ -10,13 +10,18 @@ from typing import Any
 
 from autoshorts.core.exceptions import AutoShortsError, DownloadError
 from autoshorts.core.models import Job, JobStatus
-from autoshorts.core.render_spec import CAM_GAMEPLAY_LAYOUT
+from autoshorts.core.render_spec import (
+    CAM_GAMEPLAY_LAYOUT,
+    RenderMethod,
+    RenderRequest,
+    RenderResult,
+)
 from autoshorts.decider.format_classifier import classify_format
 from autoshorts.decider.style import choose_style
 from autoshorts.edit_planner.edl_schema import create_empty_edl
 from autoshorts.media.ass_styler import write_ass_file
 from autoshorts.media.audio_master import normalize_two_pass
-from autoshorts.media.cam_layout import cam_layout_from_config
+from autoshorts.media.cam_layout import cam_layout_from_config, resolve_cam_layout
 from autoshorts.media.compositor import extract_16khz_mono_wav
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 from autoshorts.media.ffmpeg_tools import check_delivery
@@ -34,6 +39,12 @@ from autoshorts.media.remotion_overlay import (
     overlay_captions,
     render_caption_overlay,
     write_caption_plan,
+)
+from autoshorts.media.render_dispatch import (
+    MethodLimiter,
+    build_default_backends,
+    coerce_method,
+    render_with_fallback,
 )
 from autoshorts.pipeline.common import _is_nonempty_file, _resolve_local_source
 
@@ -552,7 +563,9 @@ class MediaMixin:
                 )
 
             ass_words: list[Any] = words
-            if self._caption_engine() == "remotion":
+            engine_is_remotion = self._caption_engine() == "remotion"
+            plan_written = False
+            if engine_is_remotion or self._remotion_plan_wanted(job):
                 # Word captions move to the Remotion track; ASS keeps the hook banner and credit.
                 timed_words, timeline_dur = build_caption_timeline(
                     words,
@@ -566,7 +579,9 @@ class MediaMixin:
                     duration_sec=timeline_dur or float(sel.candidate.duration or 1.0),
                     style_preset=style_preset,
                 )
-                ass_words = []
+                plan_written = True
+                if engine_is_remotion:
+                    ass_words = []
 
             ass_kwargs: dict[str, Any] = {
                 "output_path": ass_path,
@@ -597,6 +612,12 @@ class MediaMixin:
                 ass_kwargs.update(extra_ass_kwargs)
 
             write_ass_file(**ass_kwargs)
+            if plan_written and not engine_is_remotion and ass_words:
+                # The Remotion render method needs a words-free ASS so word captions are not
+                # drawn twice; every other method keeps using the full ASS above.
+                hook_ass_path = ass_path.with_name(f"{ass_path.stem}_hook{ass_path.suffix}")
+                write_ass_file(**{**ass_kwargs, "output_path": hook_ass_path, "words": []})
+                job.record_diagnostic("subtitles", hook_only_ass=str(hook_ass_path))
 
             job.subtitles_path = str(ass_path)
             if job.status not in (JobStatus.DOWNLOADING_SECTION, JobStatus.SUBTITLES_GENERATED):
@@ -730,6 +751,104 @@ class MediaMixin:
     def _caption_engine(self: Any) -> str:
         subtitles_cfg = getattr(self.config, "subtitles", None)
         return getattr(subtitles_cfg, "caption_engine", "ass") or "ass"
+
+    def _render_settings(self: Any, job: Job) -> tuple[RenderMethod, bool]:
+        """Resolve (method, allow_fallback) for a job.
+
+        caption_engine='remotion' (legacy setting) forces the Remotion method with no
+        fallback, because its ASS has no word captions to fall back to.
+        """
+        if self._caption_engine() == "remotion":
+            return RenderMethod.REMOTION, False
+        cfg = getattr(self.config, "render", None)
+        cfg_method = getattr(cfg, "method", None)
+        method = coerce_method(
+            getattr(job, "render_method", None)
+            or (cfg_method if isinstance(cfg_method, str) else None),
+            RenderMethod.AUTO,
+        )
+        fallback = getattr(cfg, "fallback", True)
+        return method, fallback if isinstance(fallback, bool) else True
+
+    def _remotion_plan_wanted(self: Any, job: Job) -> bool:
+        """True when a Remotion caption plan may be needed (explicit use, or raea fallback)."""
+        method, _ = self._render_settings(job)
+        cfg = getattr(self.config, "render", None)
+        cfg_methods = getattr(cfg, "methods", None)
+        extra = (list(cfg_methods) if isinstance(cfg_methods, list) else []) + list(
+            getattr(job, "render_variants", None) or []
+        )
+        if method == RenderMethod.REMOTION or "remotion" in extra:
+            return True
+        if method == RenderMethod.AUTO and is_remotion_ready(REMOTION_PROJECT_DIR):
+            import importlib.util
+
+            try:
+                return importlib.util.find_spec("autoshorts.media.raea_renderer") is not None
+            except (ImportError, ValueError):
+                return False
+        return False
+
+    def _render_backends(self: Any) -> dict[RenderMethod, Any]:
+        backends = getattr(self, "render_backends", None)
+        if not isinstance(backends, dict):
+            backends = build_default_backends(self.compositor, self.config)
+            self.render_backends = backends
+        return backends
+
+    def _dispatch_render(
+        self: Any, request: RenderRequest, method: RenderMethod, fallback: bool
+    ) -> RenderResult:
+        limiter = getattr(self, "_method_limiter", None)
+        return render_with_fallback(
+            request,
+            method,
+            self._render_backends(),
+            fallback=fallback,
+            limiter=limiter if isinstance(limiter, MethodLimiter) else None,
+        )
+
+    def _render_variants(
+        self: Any, job: Job, request: RenderRequest, output_dir: Path
+    ) -> dict[str, Any]:
+        """Render the extra methods of strategy 'variants' in parallel into output/<job>/.
+
+        Each variant is strict (no fallback) so the file really comes from its method; a
+        failing variant is recorded and never fails the job.
+        """
+        import dataclasses
+        from concurrent.futures import ThreadPoolExecutor
+
+        extra = [m for m in (job.render_variants or [])[1:] if m != "auto"]
+        results: dict[str, Any] = {}
+        if not extra:
+            return results
+        var_dir = output_dir / job.id
+        var_dir.mkdir(parents=True, exist_ok=True)
+
+        def _one(name: str) -> tuple[str, dict[str, Any]]:
+            kwargs = dict(request.extras.get("compose_kwargs") or {})
+            kwargs["job_id"] = f"{job.id}_{name}"
+            req = dataclasses.replace(
+                request,
+                output_path=var_dir / f"{name}.mp4",
+                extras={**request.extras, "compose_kwargs": kwargs},
+            )
+            try:
+                res = self._dispatch_render(req, coerce_method(name, RenderMethod.FFMPEG), False)
+                return name, {
+                    "ok": True,
+                    "path": str(res.output_path),
+                    "method_used": res.method_used.value,
+                }
+            except Exception as err:
+                logger.warning("Job %s: variant %s failed: %s", job.id, name, err)
+                return name, {"ok": False, "error": str(err)}
+
+        with ThreadPoolExecutor(max_workers=len(extra)) as pool:
+            for name, info in pool.map(_one, extra):
+                results[name] = info
+        return results
 
     def _apply_remotion_captions(self: Any, job: Job, base_path: Path) -> Path:
         """Render the Remotion caption track and composite it onto the composed Short."""
@@ -969,10 +1088,19 @@ class MediaMixin:
             )
             cam_layout = None
             if layout_mode == CAM_GAMEPLAY_LAYOUT:
+                # Resolve the camera region once, here, so every render backend (raea,
+                # Remotion, FFmpeg) sees the same final layout. No region -> split layout.
+                cam_cfg = getattr(branding_cfg, "cam_layout", None)
+                cam_layout = resolve_cam_layout(
+                    cam_layout_from_config(cam_cfg) if cam_cfg is not None else None,
+                    source=Path(job.raw_video_path),  # type: ignore[arg-type]
+                    auto_detect=bool(getattr(cam_cfg, "auto_detect", True)),
+                )
+                if cam_layout is None:
+                    layout_mode = "split_50_50"
+            if layout_mode == CAM_GAMEPLAY_LAYOUT:
                 # Camera on top, gameplay from the source: no gameplay background is needed.
                 bg_file, bg_offset = None, None
-                cam_cfg = getattr(branding_cfg, "cam_layout", None)
-                cam_layout = cam_layout_from_config(cam_cfg) if cam_cfg is not None else None
             else:
                 bg_fn = getattr(
                     pipeline_mod, "select_gameplay_background", select_gameplay_background
@@ -1080,8 +1208,46 @@ class MediaMixin:
             except Exception:
                 comp_kwargs.update(extra_comp)
 
-            # Run FFmpeg master compositing
-            composed_res = self.compositor.compose(**comp_kwargs)
+            # Dispatch the render through the method chain (raea -> remotion -> ffmpeg).
+            render_method, render_fallback = self._render_settings(job)
+            plan_path = pipeline_mod.get_work_dir() / job.id / f"{job.id}_captions.json"
+            hook_info = (
+                job.diagnostics.get("subtitles") if isinstance(job.diagnostics, dict) else None
+            )
+            hook_ass = hook_info.get("hook_only_ass") if isinstance(hook_info, dict) else None
+            render_request = RenderRequest(
+                job_id=job.id,
+                source_video=Path(job.raw_video_path),  # type: ignore[arg-type]
+                output_path=master_path,
+                layout_mode=str(layout_mode),
+                cam_layout=cam_layout,
+                background_video=Path(bg_file) if bg_file else None,
+                subtitle_ass=Path(comp_kwargs["subtitles_path"]),
+                caption_track=plan_path if plan_path.is_file() else None,
+                edl=job.edl.model_dump(mode="json") if hasattr(job.edl, "model_dump") else None,
+                branding={
+                    "color_grading": color_grading,
+                    "watermark_text": watermark_text,
+                    "watermark_position": watermark_position,
+                    "watermark_opacity": watermark_opacity,
+                    "progress_bar_position": progress_bar_position,
+                    "progress_bar_color": progress_bar_color,
+                },
+                extras={"compose_kwargs": comp_kwargs, "hook_only_ass": hook_ass},
+            )
+            variant_results: dict[str, Any] = {}
+            variant_thread = None
+            if len(job.render_variants or []) > 1:
+                import threading
+
+                def _run_variants() -> None:
+                    variant_results.update(self._render_variants(job, render_request, output_dir))
+
+                variant_thread = threading.Thread(target=_run_variants, daemon=True)
+                variant_thread.start()
+
+            render_res = self._dispatch_render(render_request, render_method, render_fallback)
+            composed_res = render_res.output_path
             # A master that does not decode must never reach review: re-render once, then stop.
             for attempt in range(2):
                 check_path = (
@@ -1103,14 +1269,45 @@ class MediaMixin:
                         f"Composited master for job {job.id} does not decode cleanly "
                         f"({decode_errors} error lines). Rerun the job; the output was not sent to review."
                     )
-                composed_res = self.compositor.compose(**comp_kwargs)
+                render_res = self._dispatch_render(render_request, render_method, render_fallback)
+                composed_res = render_res.output_path
             final_path = (
                 Path(composed_res) if isinstance(composed_res, (str, Path)) else master_path
             )
             if not final_path.is_file() and master_path.is_file():
                 final_path = master_path
-            if self._caption_engine() == "remotion":
-                final_path = self._apply_remotion_captions(job, final_path)
+            method_info: dict[str, Any] = {
+                "requested": render_method.value,
+                "method_used": render_res.method_used.value,
+                "attempts": [{"method": m.value, "error": e} for m, e in render_res.attempts],
+                "duration_sec": round(render_res.duration_sec, 2),
+                "fallback_used": any(e for _, e in render_res.attempts),
+            }
+            job.record_diagnostic("render_dispatch", **method_info)
+            if render_res.method_used == RenderMethod.REMOTION:
+                job.record_diagnostic(
+                    "compositing",
+                    caption_engine="remotion",
+                    caption_track=str(plan_path.with_suffix(".webm")),
+                )
+            if variant_thread is not None:
+                variant_thread.join()
+                if final_path.is_file():
+                    import shutil
+
+                    primary_copy = output_dir / job.id / f"{render_res.method_used.value}.mp4"
+                    primary_copy.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        shutil.copy2(final_path, primary_copy)
+                        variant_results[render_res.method_used.value] = {
+                            "ok": True,
+                            "path": str(primary_copy),
+                            "method_used": render_res.method_used.value,
+                            "primary": True,
+                        }
+                    except OSError as copy_err:
+                        logger.warning("Job %s: primary variant copy failed: %s", job.id, copy_err)
+                job.record_diagnostic("render_variants", **variant_results)
             job.rendered_video_path = str(final_path)
             # Informational only: the ffmpeg-skill delivery check never changes the job status.
             # Two-pass loudness on the finished file (video is copied, audio re-encoded).
@@ -1181,6 +1378,11 @@ class MediaMixin:
             # Publish a compact editing summary so a finished render is explainable
             # without digging through per-stage logs.
             job.record_diagnostic("render", **self._build_editing_summary(job, final_path))
+            job.record_diagnostic(
+                "render",
+                method_used=method_info["method_used"],
+                attempts=method_info["attempts"],
+            )
 
             if job.status not in (JobStatus.COMPOSITING, JobStatus.READY_FOR_REVIEW):
                 job.status = JobStatus.COMPOSITING

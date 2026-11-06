@@ -23,6 +23,7 @@ from autoshorts.core.exceptions import AutoShortsError, InvalidURLError
 from autoshorts.core.logging_setup import setup_logging
 from autoshorts.core.models import JobStatus
 from autoshorts.core.state_manager import StateManager
+from autoshorts.media.render_dispatch import parse_methods
 from autoshorts.pipeline import ShortsPipeline
 from autoshorts.quota.quota_tracker import QuotaTracker
 from autoshorts.scheduler.scheduler import SpreadScheduler
@@ -30,6 +31,36 @@ from autoshorts.uploader.local_exporter import LocalExportUploader
 from autoshorts.uploader.youtube_api import YouTubeApiUploader
 
 logger = logging.getLogger("autoshorts.cli")
+
+
+LAYOUT_CHOICES = [
+    "split_50_50",
+    "split_70_30",
+    "full_blur_bg",
+    "full_center_crop",
+    "pip_gameplay",
+    "cam_gameplay",
+]
+
+
+def _positive_int(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got '{value}'") from exc
+    if n < 1:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return n
+
+
+def _render_methods_arg(value: str) -> list[str]:
+    try:
+        methods = parse_methods(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if not methods:
+        raise argparse.ArgumentTypeError("at least one render method is required")
+    return [m.value for m in methods]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,6 +132,40 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Custom headline text for chyron overlay",
+    )
+
+    run_parser.add_argument(
+        "--render-method",
+        type=str,
+        default=None,
+        choices=["auto", "raea", "remotion", "ffmpeg"],
+        help="Renderer: auto (raea -> remotion -> ffmpeg), raea, remotion, or ffmpeg",
+    )
+    run_parser.add_argument(
+        "--render-methods",
+        type=_render_methods_arg,
+        default=None,
+        help="Comma-separated methods for multi-method batches, e.g. raea,ffmpeg",
+    )
+    run_parser.add_argument(
+        "--render-strategy",
+        type=str,
+        default=None,
+        choices=["single", "round_robin", "variants"],
+        help="single | round_robin (one method per job) | variants (every method per clip)",
+    )
+    run_parser.add_argument(
+        "--layout",
+        type=str,
+        default=None,
+        choices=LAYOUT_CHOICES,
+        help="Output layout (cam_gameplay = streamer cam on top, gameplay below)",
+    )
+    run_parser.add_argument(
+        "--parallel",
+        type=_positive_int,
+        default=None,
+        help="Max shorts processed/rendered concurrently (sets pipeline concurrency)",
     )
 
     # 2. dashboard command
@@ -213,7 +278,14 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_run(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
     """Execute clipping pipeline on provided links."""
     logger.info("Executing AutoShorts pipeline run...")
-    pipeline = ShortsPipeline(config=config, state_manager=state_manager)
+    layout = getattr(args, "layout", None)
+    if layout:
+        config.branding.layout_mode = layout
+    pipeline = ShortsPipeline(
+        config=config,
+        state_manager=state_manager,
+        concurrency=getattr(args, "parallel", None),
+    )
 
     jobs = pipeline.process_batch(
         jobs_or_links=args.links,
@@ -225,6 +297,9 @@ def cmd_run(args: argparse.Namespace, config: Settings, state_manager: StateMana
         enable_chyron=getattr(args, "chyron", False),
         chyron_badge=getattr(args, "chyron_badge", None),
         chyron_text=getattr(args, "chyron_text", None),
+        render_method=getattr(args, "render_method", None),
+        render_methods=getattr(args, "render_methods", None),
+        render_strategy=getattr(args, "render_strategy", None),
     )
 
     print("\n" + "=" * 60)
@@ -238,6 +313,12 @@ def cmd_run(args: argparse.Namespace, config: Settings, state_manager: StateMana
             print(f"  Title: {title_safe}")
         if j.rendered_video_path:
             print(f"  Master MP4: {j.rendered_video_path}")
+        used = (j.diagnostics.get("render") or {}).get("method_used")
+        if used:
+            print(f"  Render method: {used}")
+        for vname, vinfo in (j.diagnostics.get("render_variants") or {}).items():
+            state = vinfo.get("path") if vinfo.get("ok") else f"FAILED ({vinfo.get('error')})"
+            print(f"  Variant {vname}: {state}")
         if j.upload_result:
             print(f"  Uploaded URL: {j.upload_result.url} (Verified: {j.upload_result.verified})")
         if j.error_message:
