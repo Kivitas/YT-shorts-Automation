@@ -115,6 +115,7 @@ branding:
     cam_file: null                 # Camera recording path when cam_source is "file"
     gameplay_rect: null            # Gameplay region of the source; null = whole frame
     mirror_cam: false              # Flip the camera panel horizontally
+    exclude_cam_from_gameplay: true # Crop mode: gameplay panel uses the frame part without the facecam (no duplicate cam)
     auto_detect: true              # Find the facecam with OpenCV when cam_rect is null (needs opencv-python)
 
 audio_mastering:

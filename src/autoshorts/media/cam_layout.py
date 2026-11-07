@@ -174,7 +174,29 @@ def cam_layout_from_config(cfg: Any) -> CamLayoutSpec:
         cam_file=Path(cam_file) if cam_file else None,
         gameplay_rect=_as_rect(getattr(cfg, "gameplay_rect", None)),
         mirror_cam=bool(getattr(cfg, "mirror_cam", False)),
+        exclude_cam_from_gameplay=bool(getattr(cfg, "exclude_cam_from_gameplay", False)),
     )
+
+
+def gameplay_rect_excluding_cam(cam_rect: NormRect, min_area: float = 0.35) -> NormRect | None:
+    """Largest full-height or full-width strip of the frame that does not touch ``cam_rect``.
+
+    A rectangular crop cannot cut a corner overlay out of the middle of a frame, but it can drop
+    the side (or the band) the overlay sits in. Returns None when no strip keeps at least
+    ``min_area`` of the frame (a camera that fills most of the frame): the caller then keeps the
+    whole frame rather than a sliver of gameplay.
+    """
+    x, y, w, h = cam_rect
+    candidates: list[NormRect] = [
+        (0.0, 0.0, x, 1.0),  # left of the camera
+        (x + w, 0.0, 1.0 - (x + w), 1.0),  # right of the camera
+        (0.0, 0.0, 1.0, y),  # above the camera
+        (0.0, y + h, 1.0, 1.0 - (y + h)),  # below the camera
+    ]
+    best = max(candidates, key=lambda r: r[2] * r[3])
+    if best[2] * best[3] < min_area:
+        return None
+    return tuple(round(max(0.0, v), 4) for v in best)  # type: ignore[return-value]
 
 
 def _as_rect(value: Any) -> NormRect | None:
@@ -228,7 +250,12 @@ def resolve_cam_layout(
                 "opencv for auto-detect); falling back to split layout."
             )
             return None
-        return replace(spec, cam_source="crop", cam_rect=rect)
+        gameplay_rect = spec.gameplay_rect
+        if spec.exclude_cam_from_gameplay and gameplay_rect is None:
+            gameplay_rect = gameplay_rect_excluding_cam(rect)
+            if gameplay_rect is not None:
+                logger.info("cam_layout: gameplay panel excludes the facecam: %s", gameplay_rect)
+        return replace(spec, cam_source="crop", cam_rect=rect, gameplay_rect=gameplay_rect)
     except Exception as exc:  # never crash a render over layout resolution
         logger.warning("cam_gameplay resolution failed (%s); using split layout.", exc)
         return None
@@ -241,6 +268,7 @@ __all__ = [
     "caption_margin_v",
     "caption_top_percent",
     "crop_rect_filter",
+    "gameplay_rect_excluding_cam",
     "panel_heights",
     "remap_punch_ins_for_cuts",
     "resolve_cam_layout",

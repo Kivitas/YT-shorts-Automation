@@ -11,6 +11,10 @@ rem   start.bat --no-browser     do not open a browser tab
 rem   start.bat --host 0.0.0.0   listen on another interface
 rem   start.bat --build-assets   force a rebuild of the longform sprite assets
 rem
+rem Video modes (choose "Video Mode" in the dashboard, or autoshorts run --streamer-cam):
+rem   Subway Surfers / Minecraft background, or streamer cam on top + their own gameplay.
+rem   Streamer-cam auto-detect uses OpenCV, installed on first run.
+rem
 rem Everything the app needs is installed on first run. Paste your API keys into .env.
 rem =============================================================================
 setlocal EnableExtensions EnableDelayedExpansion
@@ -232,6 +236,13 @@ if !ERRORLEVEL! equ 0 (echo   ffprobe:    found) else (echo   ffprobe:    missin
 if exist ".env" (echo   .env:       present) else (echo   .env:       missing)
 "%PYTHON_EXE%" -c "import socket; s=socket.socket(); busy=s.connect_ex(('127.0.0.1', %PORT%))==0; s.close(); print('  Port %PORT%: ' + ('in use' if busy else 'free'))"
 "%PYTHON_EXE%" -c "import glob; print('  Background clips: ' + str(len(glob.glob('assets/backgrounds/**/*.mp4', recursive=True))))"
+"%PYTHON_EXE%" -c "import cv2; cv2.CascadeClassifier; print('  OpenCV:     ' + cv2.__version__ + ' - streamer-cam auto-detect ready')" >nul 2>&1
+if !ERRORLEVEL! equ 0 (
+    "%PYTHON_EXE%" -c "import cv2; print('  OpenCV:     ' + cv2.__version__ + ' - streamer-cam auto-detect ready')"
+) else (
+    echo   OpenCV:     missing ^(streamer-cam needs a manual cam_rect^)
+)
+"%PYTHON_EXE%" -c "from autoshorts.media.raea_renderer import find_raea_binary as f; p=f(); print('  raea:       ' + (str(p) if p else 'not installed - Remotion/FFmpeg are used'))"
 echo %C_GREEN%[ OK ]%C_RESET% Pre-flight complete
 pause
 exit /b 0
@@ -277,4 +288,5 @@ echo   start.bat --collect        download background gameplay footage
 echo   start.bat --port 8080      use another port
 echo   start.bat --no-browser     do not open a browser tab
 echo   start.bat --build-assets   force a rebuild of the longform sprite assets
+echo   Video Mode ^(dashboard^): Subway/Minecraft background, or streamer cam + their gameplay
 exit /b 0

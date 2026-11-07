@@ -29,3 +29,11 @@ def test_launchers_install_opencv_when_missing() -> None:
 def test_bat_md_documents_current_launcher() -> None:
     bat_md = _read("bat.md")
     assert "opencv-python-headless>=4.9.0,<5" in bat_md
+
+
+def test_bat_md_launcher_block_is_exactly_start_bat() -> None:
+    # bat.md is the canonical, inspectable copy of start.bat (SmartScreen can block the .bat).
+    match = re.search(r"(?ms)^```bat\r?\n(.*?)\r?\n```[ \t]*\r?$", _read("bat.md"))
+    assert match, "bat.md must contain a ```bat block"
+    block = match.group(1).replace("\r\n", "\n").rstrip("\n")
+    assert block == _read("start.bat").replace("\r\n", "\n").rstrip("\n")

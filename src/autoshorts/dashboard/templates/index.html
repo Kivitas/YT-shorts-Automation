@@ -379,6 +379,14 @@
               </div>
 
               <div class="control-group">
+                <label for="video-mode-select">Video Mode</label>
+                <select id="video-mode-select" onchange="onVideoModeChange()">
+                  <option value="background" selected>Gameplay background: Subway Surfers / Minecraft</option>
+                  <option value="streamer_cam">Streamer cam on top + their own gameplay (no Subway / Minecraft)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
                 <label for="layout-mode-select">Layout Mode</label>
                 <select id="layout-mode-select" onchange="syncLayoutCards()">
                   <option value="split_50_50" selected>50/50 Split (Host + Gameplay)</option>

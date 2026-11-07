@@ -249,6 +249,7 @@ class CamLayoutConfig(BaseModel):
     cam_file: str | None = None
     gameplay_rect: tuple[float, float, float, float] | None = None
     mirror_cam: bool = False
+    exclude_cam_from_gameplay: bool = True
     auto_detect: bool = True
 
     @model_validator(mode="after")

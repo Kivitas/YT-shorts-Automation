@@ -3582,6 +3582,29 @@ function syncLayoutCards() {
   cards.forEach(c => {
     c.classList.toggle("active", c.getAttribute("data-layout") === val);
   });
+  updateVideoModeUi();
+}
+
+// Video Mode: "background" (Subway Surfers / Minecraft under the host) vs "streamer_cam"
+// (facecam on top, the streamer's own gameplay below). It is a friendly front for layout_mode.
+function onVideoModeChange() {
+  const mode = document.getElementById("video-mode-select");
+  const layout = document.getElementById("layout-mode-select");
+  if (!mode || !layout) return;
+  if (mode.value === "streamer_cam") layout.value = "cam_gameplay";
+  else if (layout.value === "cam_gameplay") layout.value = "split_50_50";
+  syncLayoutCards();
+}
+
+function updateVideoModeUi() {
+  const layout = document.getElementById("layout-mode-select");
+  const mode = document.getElementById("video-mode-select");
+  const camMode = !!layout && layout.value === "cam_gameplay";
+  if (mode) mode.value = camMode ? "streamer_cam" : "background";
+  // no gameplay background is used in streamer-cam mode
+  const bg = document.getElementById("background-select");
+  const group = bg ? bg.closest(".control-group") : null;
+  if (group) group.style.display = camMode ? "none" : "";
 }
 
 // Visual Caption Cards Sync

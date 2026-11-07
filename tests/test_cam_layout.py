@@ -178,6 +178,7 @@ def test_spec_from_config_round_trip():
         cam_file=Path("c.mp4"),
         gameplay_rect=(0.0, 0.0, 1.0, 1.0),
         mirror_cam=True,
+        exclude_cam_from_gameplay=True,  # the config default
     )
 
 

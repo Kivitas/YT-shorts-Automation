@@ -55,6 +55,9 @@ class CamLayoutSpec:
         None  # region of the source holding gameplay; None = whole frame
     )
     mirror_cam: bool = False
+    # Crop mode only: when gameplay_rect is None, use the largest part of the frame that does not
+    # contain the camera, so the facecam overlay is not shown twice (top panel and gameplay).
+    exclude_cam_from_gameplay: bool = False
 
 
 @dataclass

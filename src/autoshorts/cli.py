@@ -162,6 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output layout (cam_gameplay = streamer cam on top, gameplay below)",
     )
     run_parser.add_argument(
+        "--streamer-cam",
+        action="store_true",
+        help=(
+            "Streamer mode: facecam on the top half and the streamer's own gameplay on the "
+            "bottom half (no Subway Surfers/Minecraft background). Same as --layout cam_gameplay."
+        ),
+    )
+    run_parser.add_argument(
         "--parallel",
         type=_positive_int,
         default=None,
@@ -279,6 +287,8 @@ def cmd_run(args: argparse.Namespace, config: Settings, state_manager: StateMana
     """Execute clipping pipeline on provided links."""
     logger.info("Executing AutoShorts pipeline run...")
     layout = getattr(args, "layout", None)
+    if getattr(args, "streamer_cam", False):
+        layout = "cam_gameplay"
     if layout:
         config.branding.layout_mode = layout
     pipeline = ShortsPipeline(

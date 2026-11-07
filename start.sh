@@ -11,6 +11,10 @@
 #   ./start.sh --host 0.0.0.0  listen on another interface
 #   ./start.sh --build-assets  force a rebuild of the longform sprite assets
 #
+# Video modes (choose "Video Mode" in the dashboard, or autoshorts run --streamer-cam):
+#   Subway Surfers / Minecraft background, or streamer cam on top + their own gameplay.
+#   Streamer-cam auto-detect uses OpenCV, installed on first run.
+#
 # Everything the app needs is installed on first run. Paste your API keys into .env.
 # =============================================================================
 set -euo pipefail
@@ -39,7 +43,7 @@ FORCE_ASSETS=0
 COLLECT_ARGS=()
 
 show_help() {
-    sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -224,6 +228,8 @@ case "$MODE" in
         "$PYTHON_EXE" -c "import shutil; print('  ffprobe:    ' + (shutil.which('ffprobe') or 'missing (slower durations)'))"
         "$PYTHON_EXE" -c "from pathlib import Path; print('  .env:       ' + ('present' if Path('.env').exists() else 'missing'))"
         "$PYTHON_EXE" -c "import glob; print('  Background clips: ' + str(len(glob.glob('assets/backgrounds/**/*.mp4', recursive=True))))"
+        "$PYTHON_EXE" -c "import cv2; cv2.CascadeClassifier; print('  OpenCV:     ' + cv2.__version__ + ' - streamer-cam auto-detect ready')" 2>/dev/null             || echo "  OpenCV:     missing (streamer-cam needs a manual cam_rect)"
+        "$PYTHON_EXE" -c "from autoshorts.media.raea_renderer import find_raea_binary as f; p=f(); print('  raea:       ' + (str(p) if p else 'not installed - Remotion/FFmpeg are used'))"
         ok "Pre-flight complete"
         exit 0
         ;;
