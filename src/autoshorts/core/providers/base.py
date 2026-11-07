@@ -185,9 +185,7 @@ class BaseLLMProvider(ABC, LLMProvider):
                     raise
                 parsed_delay = extract_retry_delay(str(exc))
                 sleep_dur = (
-                    min(parsed_delay + 1.0, 65.0)
-                    if parsed_delay is not None
-                    else current_delay
+                    min(parsed_delay + 1.0, 65.0) if parsed_delay is not None else current_delay
                 )
                 logger.warning(
                     "Rate limit encountered on '%s'. Backing off for %.2fs (attempt %d/%d)",
@@ -209,9 +207,7 @@ class BaseLLMProvider(ABC, LLMProvider):
                         ) from exc
                     parsed_delay = extract_retry_delay(str(exc))
                     sleep_dur = (
-                        min(parsed_delay + 1.0, 65.0)
-                        if parsed_delay is not None
-                        else current_delay
+                        min(parsed_delay + 1.0, 65.0) if parsed_delay is not None else current_delay
                     )
                     logger.warning(
                         "HTTP 429 on '%s'. Retrying in %.2fs (attempt %d/%d)",

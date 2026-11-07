@@ -1201,9 +1201,7 @@ def build_complex_filtergraph(
         # Generate silent audio if source has no audio track
         # Jump cuts shorten the picture, so the silence must be as short or the encoder holds
         # the last video frame until the (longer) silent track ends.
-        silent_sec = max(
-            1.0, duration_sec - sum(c.cut_end - c.cut_start for c in valid_cuts)
-        )
+        silent_sec = max(1.0, duration_sec - sum(c.cut_end - c.cut_start for c in valid_cuts))
         filter_stages.append(
             f"anullsrc=channel_layout=stereo:sample_rate=44100:d={silent_sec:.2f}[outa]"
         )

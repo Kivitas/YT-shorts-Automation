@@ -136,8 +136,8 @@ def test_publish_respects_studio_and_local_modes(counter, tmp_path, monkeypatch)
 
 
 def test_enqueue_longform_on_quota(counter, tmp_path, monkeypatch):
-    from autoshorts.core.state_manager import StateManager
     from autoshorts.core.models import JobStatus
+    from autoshorts.core.state_manager import StateManager
 
     db_path = tmp_path / "test_state.db"
     sm = StateManager(db_path=db_path)
@@ -174,7 +174,9 @@ def test_publish_longform_queues_on_quota_flag(counter, tmp_path, monkeypatch):
 
     monkeypatch.setattr(yt, "YouTubeApiUploader", FailingUploader)
     res = _result(tmp_path)
-    cfg = SimpleNamespace(upload=SimpleNamespace(mode="api", default_privacy_status="public", category_id="27"))
+    cfg = SimpleNamespace(
+        upload=SimpleNamespace(mode="api", default_privacy_status="public", category_id="27")
+    )
 
     queue_url = pub.publish_longform(res, config=cfg, state_manager=sm, queue_on_quota=True)
     assert queue_url.startswith("queued://")

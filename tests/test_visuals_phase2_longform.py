@@ -204,7 +204,9 @@ def test_resolve_day_label_explicit_text() -> None:
     assert _resolve_day_label(2, narration="It was day 100.") == "DAY 100"
     assert _resolve_day_label(0, heading="DAY 7") == "DAY 7"
     assert _resolve_day_label(5, heading="day 64") == "DAY 64"
-    assert _resolve_day_label(1, heading="No day here", narration="On day 365 we made it") == "DAY 365"
+    assert (
+        _resolve_day_label(1, heading="No day here", narration="On day 365 we made it") == "DAY 365"
+    )
 
 
 def test_resolve_day_label_milestone_table() -> None:

@@ -376,9 +376,8 @@ class BatchDecisionCoalescer:
                     f"Transcript: {cand.text[:400]}"
                 )
             job_sections.append(
-                f"=== JOB {j_idx} (job_id: \"{req.job_id}\", request_id: \"{req.request_id}\") ===\n"
-                f"Instructions: {req.instructions}\n"
-                + "\n".join(win_lines)
+                f'=== JOB {j_idx} (job_id: "{req.job_id}", request_id: "{req.request_id}") ===\n'
+                f"Instructions: {req.instructions}\n" + "\n".join(win_lines)
             )
 
         return (
@@ -1059,9 +1058,7 @@ class SemIfDecider(Decider):
 
         if self.scoring_approach == "consolidated" and self.provider is not None:
             uncached = [
-                c
-                for c in chosen_candidates
-                if self._lookup_window_meta(active_job_id, c) is None
+                c for c in chosen_candidates if self._lookup_window_meta(active_job_id, c) is None
             ]
             if uncached:
                 try:

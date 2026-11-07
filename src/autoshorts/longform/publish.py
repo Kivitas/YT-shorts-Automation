@@ -187,6 +187,7 @@ def enqueue_longform_on_quota(
     """Store and queue a long-form video in the scheduler queue for upload when quota resets."""
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
+
     from autoshorts.core.config import load_config
     from autoshorts.core.models import Job, JobStatus
     from autoshorts.core.state_manager import StateManager
@@ -208,11 +209,10 @@ def enqueue_longform_on_quota(
 
     pt_tz = ZoneInfo("America/Los_Angeles")
     now_pt = datetime.now(pt_tz)
-    tomorrow_pt = (now_pt + timedelta(days=1)).replace(
-        hour=8, minute=0, second=0, microsecond=0
-    )
+    tomorrow_pt = (now_pt + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
 
     from autoshorts.quota.quota_tracker import QuotaTracker
+
     qt = QuotaTracker(state_manager=state, config=cfg)
     scheduler = SpreadScheduler(config=cfg, state_manager=state, quota_tracker=qt)
     pending = state.get_pending_scheduled_slots()
@@ -274,8 +274,8 @@ def publish_longform(
     count. A slot is reserved before the upload and released if the upload fails.
     """
     from autoshorts.core.config import load_config
-    from autoshorts.core.state_manager import StateManager
     from autoshorts.core.exceptions import QuotaExhaustedError
+    from autoshorts.core.state_manager import StateManager
     from autoshorts.quota.quota_tracker import QuotaTracker
     from autoshorts.uploader.errors import QuotaExceededError
     from autoshorts.uploader.local_exporter import LocalExportUploader

@@ -4,29 +4,25 @@ import re
 import subprocess
 import tempfile
 from types import SimpleNamespace
+
 import pytest
 
 from autoshorts.core.config import BrandingConfig, JobDefaultsConfig
 from autoshorts.core.paths import escape_ffmpeg_filter_path
 from autoshorts.media.chyron_overlay import (
-    CHYRON_STYLES,
-    SUPPORTED_ANIMATIONS,
-    SUPPORTED_POSITIONS,
-    SUPPORTED_STYLES,
     ChyronData,
     build_chyron_ass,
     build_chyron_filter,
     calculate_chyron_y,
     derive_automated_chyron,
     escape_ffmpeg_drawtext,
-    merge_ass_documents,
     merge_chyron_into_ass,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. ChyronData Initialization and Validation Tests
 # ---------------------------------------------------------------------------
+
 
 def test_chyron_data_defaults_and_validation():
     """Test ChyronData default field initialization and basic normalization."""
@@ -85,6 +81,7 @@ def test_chyron_data_styles_validation():
 # 2. Automated Headline / Badge Extraction Tests
 # ---------------------------------------------------------------------------
 
+
 def test_derive_automated_chyron_with_clean_title():
     """Test deriving chyron from video title with clickbait and emojis."""
     title = 'BREAKING: Anthropic Researcher: "AI Could Kill Us All by End of the Decade" [MUST WATCH] 😱 #shorts'
@@ -142,7 +139,9 @@ def test_derive_automated_chyron_fallback_and_cleaning():
     assert "SPECIAL REPORT" in empty.headline_text
 
     # Hook text fallback when title is missing
-    hook = derive_automated_chyron(title=None, hook_text="Wait for it... this one trick saves 50% on flights! #travel")
+    hook = derive_automated_chyron(
+        title=None, hook_text="Wait for it... this one trick saves 50% on flights! #travel"
+    )
     assert hook.headline_text == "THIS ONE TRICK SAVES 50% ON FLIGHTS"
 
     # Transcript snippet fallback when title and hook are missing
@@ -155,7 +154,9 @@ def test_derive_automated_chyron_fallback_and_cleaning():
     assert "SCIENTISTS ANNOUNCED A MAJOR BREAKTHROUGH" in transcript.headline_text
 
     # Double quotes, smart quotes, and bracketed tags cleaning
-    quotes = derive_automated_chyron(title='“Secret” Plan Revealed By "Tech Giant" [SHOCKING] (WATCH TILL END)')
+    quotes = derive_automated_chyron(
+        title='“Secret” Plan Revealed By "Tech Giant" [SHOCKING] (WATCH TILL END)'
+    )
     assert quotes.headline_text == "SECRET PLAN REVEALED BY TECH GIANT"
 
     # Custom default badge preserved when no prefix detected
@@ -170,7 +171,9 @@ def test_derive_automated_chyron_fallback_and_cleaning():
 def test_derive_automated_chyron_length_clamping_and_wrapping():
     """Test single-line truncation clamping and two-line wrapping for 1080px width."""
     # Single line truncation with ellipsis
-    long_title = "THIS IS A VERY LONG BROADCAST HEADLINE DESIGNED TO TEST CLAMPING ON A SINGLE 1080PX BANNER"
+    long_title = (
+        "THIS IS A VERY LONG BROADCAST HEADLINE DESIGNED TO TEST CLAMPING ON A SINGLE 1080PX BANNER"
+    )
     clamped = derive_automated_chyron(title=long_title, max_chars=50, wrap_two_lines=False)
     assert len(clamped.headline_text) <= 50
     assert clamped.headline_text.endswith("...")
@@ -189,6 +192,7 @@ def test_derive_automated_chyron_length_clamping_and_wrapping():
 # 3. ASS Subtitle Overlay Generator Tests
 # ---------------------------------------------------------------------------
 
+
 def test_calculate_chyron_y_positions():
     """Verify vertical Y position calculations across different layout modes."""
     # split_50_50 sits right above seam_y=960 (around Y=850-950)
@@ -197,7 +201,9 @@ def test_calculate_chyron_y_positions():
     assert badge_y < banner_y
 
     # split_70_30 sits right above seam_y=1344
-    banner_y_70, badge_y_70 = calculate_chyron_y(position="seam", layout_mode="split_70_30", height=1920)
+    banner_y_70, badge_y_70 = calculate_chyron_y(
+        position="seam", layout_mode="split_70_30", height=1920
+    )
     assert banner_y_70 < 1344
     assert banner_y_70 + 72 <= 1344
 
@@ -206,7 +212,9 @@ def test_calculate_chyron_y_positions():
     assert banner_y_lt == 1450
 
     # full_center_crop sits at standard lower-third Y=1450
-    banner_y_fc, _ = calculate_chyron_y(position="seam", layout_mode="full_center_crop", height=1920)
+    banner_y_fc, _ = calculate_chyron_y(
+        position="seam", layout_mode="full_center_crop", height=1920
+    )
     assert banner_y_fc == 1450
 
     # top sits near top safe area at Y=220
@@ -244,8 +252,8 @@ def test_build_chyron_ass():
     # Verify coordinates sit near seam (Y=850-950)
     pos_matches = re.findall(r"\\pos\((\d+),(\d+)\)", ass)
     assert len(pos_matches) == 2
-    badge_x, badge_y = int(pos_matches[0][0]), int(pos_matches[0][1])
-    head_x, head_y = int(pos_matches[1][0]), int(pos_matches[1][1])
+    badge_y = int(pos_matches[0][1])
+    head_y = int(pos_matches[1][1])
     assert 800 <= badge_y <= 950
     assert 850 <= head_y <= 950
 
@@ -270,6 +278,7 @@ def test_build_chyron_ass_full_frame_and_no_animation():
 # ---------------------------------------------------------------------------
 # 4. ASS Merging Tests
 # ---------------------------------------------------------------------------
+
 
 def test_merge_chyron_into_ass():
     """Test merging chyron overlay into existing caption ASS document."""
@@ -312,6 +321,7 @@ def test_merge_chyron_into_ass_requires_events_section():
 # ---------------------------------------------------------------------------
 # 5. FFmpeg Filtergraph Generator Tests
 # ---------------------------------------------------------------------------
+
 
 def test_escape_ffmpeg_drawtext():
     """Test robust two-level escaping of special characters in FFmpeg drawtext."""
@@ -385,6 +395,7 @@ def test_build_chyron_filter_multiline():
 # 6. Configuration Integration Tests (BrandingConfig & JobDefaultsConfig)
 # ---------------------------------------------------------------------------
 
+
 def test_branding_config_chyron_fields():
     """Verify chyron configuration fields in BrandingConfig and JobDefaultsConfig."""
     branding = BrandingConfig()
@@ -411,6 +422,7 @@ def test_branding_config_chyron_fields():
 # 7. CLI Argument Parsing Tests
 # ---------------------------------------------------------------------------
 
+
 def test_cli_argument_parsing():
     """Verify CLI argument parsing for --chyron, --breaking-news, --chyron-badge, --chyron-text."""
     from autoshorts.cli import build_parser
@@ -424,25 +436,33 @@ def test_cli_argument_parsing():
     assert args_default.chyron_text is None
 
     # Invocation with --chyron and custom options
-    args_custom = parser.parse_args([
-        "run",
-        "--links", "https://youtu.be/sample2",
-        "--chyron",
-        "--chyron-badge", "DEVELOPING STORY",
-        "--chyron-text", "MASSIVE FLOODING REPORTED ACROSS FIVE COUNTIES",
-    ])
+    args_custom = parser.parse_args(
+        [
+            "run",
+            "--links",
+            "https://youtu.be/sample2",
+            "--chyron",
+            "--chyron-badge",
+            "DEVELOPING STORY",
+            "--chyron-text",
+            "MASSIVE FLOODING REPORTED ACROSS FIVE COUNTIES",
+        ]
+    )
     assert args_custom.chyron is True
     assert args_custom.chyron_badge == "DEVELOPING STORY"
     assert args_custom.chyron_text == "MASSIVE FLOODING REPORTED ACROSS FIVE COUNTIES"
 
     # Invocation with alias --breaking-news
-    args_alias = parser.parse_args(["run", "--links", "https://youtu.be/sample3", "--breaking-news"])
+    args_alias = parser.parse_args(
+        ["run", "--links", "https://youtu.be/sample3", "--breaking-news"]
+    )
     assert args_alias.chyron is True
 
 
 # ---------------------------------------------------------------------------
 # 8. End-to-End FFmpeg Execution Tests (ASS Subtitles & Filterchain)
 # ---------------------------------------------------------------------------
+
 
 def test_ffmpeg_execution_with_ass_subtitles():
     """Verify that FFmpeg can decode and render the generated ASS chyron script."""

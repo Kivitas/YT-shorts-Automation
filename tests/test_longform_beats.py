@@ -690,7 +690,9 @@ def test_mirror_and_fridge_planning() -> None:
     assert mirror_prop.params == {"cracked": False, "shadow_reflection": False}
 
     # 2. Mirror with shadow or negative: cracked and shadow_reflection
-    plan_shadow = plan_beat(0, "H", "Stare at yourself in the mirror and face the shadow.", "host", False)
+    plan_shadow = plan_beat(
+        0, "H", "Stare at yourself in the mirror and face the shadow.", "host", False
+    )
     assert "mirror" in _names(plan_shadow)
     mirror_shadow = next(p for p in plan_shadow.props if p.name == "mirror")
     assert mirror_shadow.params == {"cracked": True, "shadow_reflection": True}
@@ -761,6 +763,7 @@ def test_draw_beat_text_shattering_after_impact_t(monkeypatch: pytest.MonkeyPatc
         shatter_calls.append(t)
 
     import autoshorts.longform.beats as beats_mod
+
     monkeypatch.setattr(beats_mod, "draw_shatter_text", mock_draw_shatter_text)
 
     # Before impact_t: shatter_text is NOT called (inner_voice hovers)
@@ -798,4 +801,3 @@ def test_draw_beat_renders_action_fx_and_sleep_zs() -> None:
     img_climb = Image.new("RGB", FRAME, PALETTE.void)
     draw_beat(img_climb, plan_climb, 1.0, 0.0, 4.0, "We climb the mountain.")
     assert _has_colour(img_climb, OFFWHITE)
-

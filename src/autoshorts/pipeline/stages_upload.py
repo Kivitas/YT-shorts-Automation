@@ -297,7 +297,9 @@ class UploadMixin:
                     verified = use_uploader.verify(result.video_id)
                 else:
                     verifier = YouTubeVerifier(use_uploader)
-                    verified = verifier.poll_until_verified(result.video_id, max_retries=6, delay_sec=3.0)
+                    verified = verifier.poll_until_verified(
+                        result.video_id, max_retries=6, delay_sec=3.0
+                    )
             except Exception as verify_err:
                 logger.warning(
                     "Verification raised after upload of %s: %s", result.video_id, verify_err

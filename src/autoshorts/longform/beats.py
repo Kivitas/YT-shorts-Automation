@@ -22,6 +22,7 @@ from typing import Any, NamedTuple
 
 from PIL import Image, ImageDraw
 
+import autoshorts.longform.fx as _fx_mod
 from autoshorts.core.theme import (
     ACCENT_CORAL,
     ACCENT_TEAL,
@@ -35,7 +36,6 @@ from autoshorts.core.theme import (
     YELLOW_SOFT,
 )
 from autoshorts.longform.background import draw_themed_background
-import autoshorts.longform.fx as _fx_mod
 from autoshorts.longform.kinetic_text import (
     draw_inner_voice,
     draw_kinetic_line,

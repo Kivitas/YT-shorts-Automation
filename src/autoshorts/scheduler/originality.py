@@ -14,8 +14,24 @@ from typing import Any
 _HASHTAG_RE = re.compile(r"#\w+")
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = frozenset(
-    {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "it", "this", "that",
-     "shorts", "short"}
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "on",
+        "for",
+        "is",
+        "it",
+        "this",
+        "that",
+        "shorts",
+        "short",
+    }
 )
 
 # Diagnostics keys a pipeline stage can set when realistic generated media was used.

@@ -24,7 +24,6 @@ from autoshorts.core.theme import (
     ACCENT_YELLOW,
     BG_DEEP,
     BG_SURFACE,
-    TEXT_MUTED,
     TEXT_PRIMARY,
     ease_in_out_cubic,
     lerp_rgb,
@@ -1148,9 +1147,7 @@ def render_scene_frame(
     focus_xy: tuple[float, float] | None = None,
 ) -> Image.Image:
     """Render a single frame of a section audio beat at section time ``t``."""
-    plan = plan_beat(
-        index, sa.section.heading, sa.section.narration, _speaker(sa), False
-    )
+    plan = plan_beat(index, sa.section.heading, sa.section.narration, _speaker(sa), False)
     shots = _section_shots(sa) or [Shot(0.0, max(float(sa.duration), 0.0), "wide")]
     f = round(t * FPS)
     shot, shot_start = _locate_frame(shots, f)

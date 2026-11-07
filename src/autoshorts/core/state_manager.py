@@ -641,7 +641,9 @@ class StateManager:
             finally:
                 conn.close()
 
-    def get_recent_slot_titles(self, limit: int = 30, exclude_job_id: str | None = None) -> list[str]:
+    def get_recent_slot_titles(
+        self, limit: int = 30, exclude_job_id: str | None = None
+    ) -> list[str]:
         """Return titles of the most recently queued/uploaded slots (newest first)."""
         with self._lock:
             conn = self._get_connection()

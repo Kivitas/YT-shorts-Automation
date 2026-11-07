@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PIL import Image, ImageChops
 
-from autoshorts.longform.props import PROP_NAMES, _draw_7seg_digit, draw_prop
+from autoshorts.longform.props import PROP_NAMES, draw_prop
 
 CANVAS = (1920, 1080)
 BACKGROUND = (8, 8, 12)
@@ -259,4 +259,3 @@ def test_draw_7seg_digit_all_numbers() -> None:
         draw_prop(img, "alarm_clock_7seg", (100, 100), time_str=f"{digit}:00")
         diff = ImageChops.difference(img.convert("RGB"), _canvas())
         assert diff.getbbox() is not None
-

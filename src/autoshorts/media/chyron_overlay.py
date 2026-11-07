@@ -120,6 +120,7 @@ BADGE_NORMALIZATION = {
 # Data Models
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ChyronData:
     """Configuration and textual content for a broadcast lower-third chyron overlay."""
@@ -154,6 +155,7 @@ class ChyronData:
 # ---------------------------------------------------------------------------
 # Text Extraction & Formatting
 # ---------------------------------------------------------------------------
+
 
 def _clean_broadcast_text(text: str) -> str:
     """Format and sanitize input text for maximum broadcast impact.
@@ -258,7 +260,9 @@ def derive_automated_chyron(
     prefix (e.g. 'BREAKING:', 'EXCLUSIVE:'), cleans clickbait and emoji clutter,
     uppercases, and formats text to fit within standard 1080px lower-third bounds.
     """
-    raw_source = (title or "").strip() or (hook_text or "").strip() or (transcript_snippet or "").strip()
+    raw_source = (
+        (title or "").strip() or (hook_text or "").strip() or (transcript_snippet or "").strip()
+    )
     if not raw_source:
         return ChyronData(
             category_badge=default_badge.strip().upper(),
@@ -302,6 +306,7 @@ def derive_automated_chyron(
 # ---------------------------------------------------------------------------
 # Coordinate Calculations
 # ---------------------------------------------------------------------------
+
 
 def calculate_chyron_y(
     position: str = "seam",
@@ -354,6 +359,7 @@ def calculate_chyron_y(
 # ASS Subtitle Overlay Generator
 # ---------------------------------------------------------------------------
 
+
 def build_chyron_ass(
     chyron: ChyronData,
     total_duration_sec: float,
@@ -374,7 +380,9 @@ def build_chyron_ass(
     margin_x = int(60 * sx)
 
     # Check line count for height and font sizing
-    text_lines = [escape_ass_text(ln.strip()) for ln in chyron.headline_text.splitlines() if ln.strip()]
+    text_lines = [
+        escape_ass_text(ln.strip()) for ln in chyron.headline_text.splitlines() if ln.strip()
+    ]
     num_lines = max(1, len(text_lines))
     banner_h = int((112 if num_lines > 1 else 72) * sy)
 
@@ -525,6 +533,7 @@ def retarget_chyron_ass(ass_text: str, delta_y: int) -> str:
 # ---------------------------------------------------------------------------
 # FFmpeg Filtergraph Generator
 # ---------------------------------------------------------------------------
+
 
 def escape_ffmpeg_drawtext(text: str) -> str:
     """Apply two-level unquoted escaping for FFmpeg drawtext parameters.

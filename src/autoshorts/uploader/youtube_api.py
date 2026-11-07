@@ -703,20 +703,30 @@ class YouTubeApiUploader:
 
         if not is_short:
             viral_tag_pool = [
-                'viral', 'trending', 'fyp', 'explore', 'podcast', 'youtube',
-                'mindset', 'motivation', 'success', 'discipline', 'selfimprovement', 'algorithm'
+                "viral",
+                "trending",
+                "fyp",
+                "explore",
+                "podcast",
+                "youtube",
+                "mindset",
+                "motivation",
+                "success",
+                "discipline",
+                "selfimprovement",
+                "algorithm",
             ]
             for vt in viral_tag_pool:
                 if vt.lower() not in [t.lower() for t in effective_tags]:
-                    cost = len(vt) + (2 if ' ' in vt else 0) + (1 if effective_tags else 0)
+                    cost = len(vt) + (2 if " " in vt else 0) + (1 if effective_tags else 0)
                     if curr_len + cost <= 500:
                         effective_tags.append(vt)
                         curr_len += cost
             viral_hashtags = (
-                '\n\n#viral #trending #fyp #explore #foryou #youtube #podcast '
-                '#mindset #motivation #discipline #success #algorithm'
+                "\n\n#viral #trending #fyp #explore #foryou #youtube #podcast "
+                "#mindset #motivation #discipline #success #algorithm"
             )
-            if '#viral' not in (description or ''):
+            if "#viral" not in (description or ""):
                 description = f"{(description or '').strip()}{viral_hashtags}"
 
         # Enforce YouTube API's 5000-character description cap (word-boundary cut)

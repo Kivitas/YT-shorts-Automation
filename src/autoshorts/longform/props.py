@@ -390,16 +390,35 @@ def _draw_heavy_bag(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
 
         # Bag body with rightward tilt and concave impact dent on left side (1:27-1:39 reference video)
         bag_outline = [
-            (52, 48), (44, 54), (38, 65),
-            (36, 90), (38, 120), (44, 138),
-            (58, 152), (74, 168),  # concave impact dent peak
-            (60, 184), (46, 198),
-            (48, 225), (52, 260),
-            (56, 285), (66, 298), (80, 300),
-            (140, 300), (156, 298), (166, 285),
-            (170, 260), (166, 225), (162, 190), (158, 150), (156, 110), (156, 80),
-            (154, 62), (144, 52), (130, 48),
-            (100, 48), (70, 48),
+            (52, 48),
+            (44, 54),
+            (38, 65),
+            (36, 90),
+            (38, 120),
+            (44, 138),
+            (58, 152),
+            (74, 168),  # concave impact dent peak
+            (60, 184),
+            (46, 198),
+            (48, 225),
+            (52, 260),
+            (56, 285),
+            (66, 298),
+            (80, 300),
+            (140, 300),
+            (156, 298),
+            (166, 285),
+            (170, 260),
+            (166, 225),
+            (162, 190),
+            (158, 150),
+            (156, 110),
+            (156, 80),
+            (154, 62),
+            (144, 52),
+            (130, 48),
+            (100, 48),
+            (70, 48),
         ]
         cv.poly(bag_outline, CORAL)
 
@@ -656,7 +675,11 @@ def _draw_shadow_demon(cv: _Canvas, t: float, p: dict[str, Any]) -> None:
         # Hunched head shrunken down
         cv.ellipse(82, 172, 178, 246, VOID, outline=False)
         # Curled crouching body in lower half
-        cv.poly([(40, 318), (54, 235), (84, 210), (176, 210), (206, 235), (220, 318)], VOID, outline=False)
+        cv.poly(
+            [(40, 318), (54, 235), (84, 210), (176, 210), (206, 235), (220, 318)],
+            VOID,
+            outline=False,
+        )
 
         # Narrowed fearful eyes instead of towering wide eyes
         narrow_eyes = ((100, 209, 118, 215), (142, 209, 160, 215))

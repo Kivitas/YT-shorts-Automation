@@ -144,7 +144,11 @@ def rain_streaks(
     dx = math.cos(rad) * length
     dy = math.sin(rad) * length
     draw = ImageDraw.Draw(img)
-    draw_color = tuple(color)[:3] if img.mode == "RGB" else (tuple(color) if len(color) == 4 else (*tuple(color)[:3], 255))
+    draw_color = (
+        tuple(color)[:3]
+        if img.mode == "RGB"
+        else (tuple(color) if len(color) == 4 else (*tuple(color)[:3], 255))
+    )
     rng = random.Random(seed)
     tan_rad = math.tan(max(1e-3, rad))
     for _ in range(count):
@@ -182,7 +186,11 @@ def breath_puff(
     cx = int(mx + 30 * p)
     cy = int(my - 10 * p)
     draw = ImageDraw.Draw(img)
-    draw_color = tuple(color)[:3] if img.mode == "RGB" else (tuple(color) if len(color) == 4 else (*tuple(color)[:3], alpha))
+    draw_color = (
+        tuple(color)[:3]
+        if img.mode == "RGB"
+        else (tuple(color) if len(color) == 4 else (*tuple(color)[:3], alpha))
+    )
     draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=draw_color)
     return img
 
@@ -197,7 +205,11 @@ def sweat_drops(
     """Draw comical anime sweat drop beads near ``head_xy``."""
     hx, hy = head_xy
     draw = ImageDraw.Draw(img)
-    draw_color = tuple(color)[:3] if img.mode == "RGB" else (tuple(color) if len(color) == 4 else (*tuple(color)[:3], 255))
+    draw_color = (
+        tuple(color)[:3]
+        if img.mode == "RGB"
+        else (tuple(color) if len(color) == 4 else (*tuple(color)[:3], 255))
+    )
     for i in range(count):
         phase = (t * 2.0 + i * 0.5) % 1.0
         drop_x = hx + 18 + i * 14

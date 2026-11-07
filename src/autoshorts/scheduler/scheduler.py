@@ -239,7 +239,10 @@ class SpreadScheduler:
             return None
         logger.warning(
             "Job %s title %r is %.0f%% similar to recent upload %r (repetitive-content risk).",
-            job_id, title, match[1] * 100, match[0],
+            job_id,
+            title,
+            match[1] * 100,
+            match[0],
         )
         job = self.state_manager.get_job(job_id)
         if job is not None:
@@ -613,7 +616,9 @@ class SpreadScheduler:
                     verified = uploader_to_use.verify(result.video_id)
                 else:
                     verifier = YouTubeVerifier(uploader_to_use)
-                    verified = verifier.poll_until_verified(result.video_id, max_retries=6, delay_sec=3.0)
+                    verified = verifier.poll_until_verified(
+                        result.video_id, max_retries=6, delay_sec=3.0
+                    )
             except Exception as verify_err:
                 logger.warning(
                     "Verification raised after upload of %s: %s", result.video_id, verify_err
