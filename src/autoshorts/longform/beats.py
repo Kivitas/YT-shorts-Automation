@@ -37,8 +37,12 @@ from autoshorts.core.theme import (
 )
 from autoshorts.longform.background import draw_themed_background
 from autoshorts.longform.kinetic_text import (
+    _PAD,
+    _blit,
+    _font,
+    _ink_layer,
+    _text_width,
     draw_inner_voice,
-    draw_kinetic_line,
     draw_number_pop,
     draw_shatter_text,
 )
@@ -85,6 +89,36 @@ NARRATION_FONT_SIZE = 66
 NARRATION_MIN_FONT_SIZE = 40
 NARRATION_MAX_PER_LINE = 7
 NARRATION_LINE_SPACING = 1.25  # draw_kinetic_line uses int(font_size * 1.25) per row
+
+# Subtitle Engine & Kinetic Burst Constants
+NARRATION_BURST_MAX_WORDS = 3
+SHORTS_SAFE_ZONE_Y_MIN = 1200
+SHORTS_SAFE_ZONE_Y_MAX = 1350
+SHORTS_SAFE_ZONE_Y_DEFAULT = 1250  # vertical 1080x1920 caption anchor
+HORIZONTAL_SAFE_ZONE_Y = 880  # horizontal 1920x1080 caption anchor
+SHORTS_CLEAR_BOTTOM_PX = 450
+SHORTS_CLEAR_TOP_PX = 280
+
+# Spring pop keyframes (seconds since the word's Whisper start -> scale factor).
+# Linear segments, matching the ASS \t tags: 100->125 (0-70ms), 125->96 (70-130ms),
+# 96->100 (130-180ms).
+KARAOKE_SPRING_KEYFRAMES: tuple[tuple[float, float], ...] = (
+    (0.000, 1.00),
+    (0.070, 1.25),
+    (0.130, 0.96),
+    (0.180, 1.00),
+)
+KARAOKE_POP_SCALE = 1.25
+KARAOKE_SETTLE_SCALE = 1.00
+KARAOKE_POP_DURATION = 0.18
+
+KARAOKE_ACTIVE_COLOR = (255, 230, 0)  # Solar Yellow #FFE600
+KARAOKE_EMPHASIS_COLOR = (0, 240, 255)  # Supernova Cyan #00F0FF
+KARAOKE_INACTIVE_COLOR = OFFWHITE  # Crisp Offwhite (234, 230, 223)
+KARAOKE_STROKE_COLOR = (0, 0, 0)
+KARAOKE_STROKE_WIDTH = 4
+KARAOKE_BOX_FILL = (11, 14, 27, round(0.85 * 255))  # rgba(11,14,27,0.85) pill; alpha 217
+KARAOKE_BOX_BORDER = (40, 50, 70, 220)
 INNER_VOICE_ANCHOR = (140, 420)
 NUMBER_ANCHOR = (1500, 520)
 
@@ -976,30 +1010,266 @@ def _narration_font_size(sentences: Sequence[str]) -> int:
 
 
 def _draw_narration(
-    img: Image.Image, section_text: str, t: float, start: float, end: float
+    img: Image.Image,
+    section_text: str,
+    t: float,
+    start: float,
+    end: float,
+    words: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    safe_zone_y: int | None = None,
+    active_box: bool = True,
 ) -> None:
-    """Show the sentence that is current at ``t``, each sentence taking an equal slice of the section."""
-    sentences = _split_sentences(section_text)
-    slot = (end - start) / len(sentences) if end > start else 0.0
-    last = len(sentences) - 1
-    index = last if slot <= 0 else min(last, max(0, int((t - start) // slot)))
-    sentence_start = start + index * slot
-    items = sentences[index].split()
-    highlight = [i for i, word in enumerate(items) if _plain_word(word) in HIGHLIGHT_WORDS]
-    draw_kinetic_line(
-        img,
-        items,
-        t,
-        sentence_start,
-        end,
-        y=NARRATION_TOP,
-        color=PALETTE.text,
-        highlight_indices=highlight,
-        highlight_color=PALETTE.highlight,
-        max_per_line=NARRATION_MAX_PER_LINE,
-        font_size=_narration_font_size(sentences),
-        uppercase=False,
-    )
+    """Render the narration at time ``t`` as strict single-line 1-3 word bursts.
+
+    Bursts come from ``words`` (Whisper word timestamps, absolute seconds) when given, otherwise
+    from ``section_text`` with estimated timings across ``[start, end]``. Only one burst, one line,
+    is on screen at a time. ``safe_zone_y`` overrides the default anchor (Shorts Y=1250,
+    horizontal Y=880).
+    """
+    if not section_text.strip() or t < start or t > end:
+        return
+
+    bursts = chunk_narration_bursts(words, section_text, start, end)
+    if not bursts:
+        return
+
+    active_burst = None
+    for b in bursts:
+        if b.start <= t <= b.end:
+            active_burst = b
+            break
+    if active_burst is None:
+        active_burst = bursts[0] if t < bursts[0].start else bursts[-1]
+
+    draw_karaoke_burst(img, active_burst, t, y=safe_zone_y, active_box=active_box)
+
+
+def _spring_scale(tau: float) -> float:
+    """Scale factor for a word ``tau`` seconds after its Whisper start.
+
+    Piecewise linear, identical to the ASS tags: 1.00 at 0 ms, 1.25 at 70 ms (overshoot),
+    0.96 at 130 ms (rebound), 1.00 at 180 ms (settle). Before 0 and after 180 ms it is 1.00.
+    """
+    if tau <= 0.0:
+        return KARAOKE_SPRING_KEYFRAMES[0][1]
+    keys = KARAOKE_SPRING_KEYFRAMES
+    for (t0, s0), (t1, s1) in zip(keys, keys[1:], strict=False):
+        if tau <= t1:
+            return s0 + (s1 - s0) * (tau - t0) / (t1 - t0)
+    return KARAOKE_SPRING_KEYFRAMES[-1][1]
+
+
+@dataclass(frozen=True)
+class NarrationBurst:
+    """A single-line burst of 1-3 spoken words."""
+
+    words: list[dict[str, Any]]
+    text: str
+    start: float
+    end: float
+
+
+def chunk_narration_bursts(
+    words: Sequence[Mapping[str, Any]] | None,
+    section_text: str,
+    start: float,
+    end: float,
+    max_words: int = NARRATION_BURST_MAX_WORDS,
+    max_gap_sec: float = 0.5,
+) -> list[NarrationBurst]:
+    """Group narration words into strict single-line bursts of 1-3 words max.
+
+    If `words` (Whisper word timestamps) are provided, uses their exact millisecond timings.
+    Otherwise, splits `section_text` into words and estimates proportional timings across [start, end].
+    """
+    raw_words: list[dict[str, Any]] = []
+    if words:
+        for w in words:
+            word_str = str(w.get("word", "")).strip()
+            if not word_str:
+                continue
+            w_start = float(w.get("start", start))
+            w_end = float(w.get("end", max(w_start + 0.1, end)))
+            raw_words.append({"word": word_str, "start": w_start, "end": w_end})
+    else:
+        text_words = [w.strip() for w in section_text.split() if w.strip()]
+        if not text_words:
+            return []
+        total_chars = sum(len(w) for w in text_words)
+        dur = max(0.2, end - start)
+        cursor = start
+        for w in text_words:
+            fraction = len(w) / max(1, total_chars)
+            w_dur = max(0.12, dur * fraction)
+            w_end = min(end, cursor + w_dur)
+            raw_words.append({"word": w, "start": cursor, "end": w_end})
+            cursor = w_end
+
+    if not raw_words:
+        return []
+
+    bursts: list[NarrationBurst] = []
+    current_words: list[dict[str, Any]] = []
+
+    for i, w in enumerate(raw_words):
+        current_words.append(w)
+        w_text = w["word"]
+
+        ends_terminal = w_text.endswith((".", "?", "!"))
+        ends_clause = w_text.endswith((",", ";", ":", "-", "—"))
+
+        has_gap = False
+        if i + 1 < len(raw_words):
+            next_start = raw_words[i + 1]["start"]
+            if (next_start - w["end"]) >= max_gap_sec:
+                has_gap = True
+
+        count = len(current_words)
+        split = False
+        if count >= max_words:
+            split = True
+        elif ends_terminal or ends_clause or has_gap:
+            split = True
+
+        if split or (i == len(raw_words) - 1):
+            burst_start = current_words[0]["start"]
+            burst_end = current_words[-1]["end"]
+            if i + 1 < len(raw_words):
+                burst_end = min(raw_words[i + 1]["start"], max(burst_end, burst_start + 0.2))
+            else:
+                burst_end = max(end, burst_end)
+
+            bursts.append(
+                NarrationBurst(
+                    words=list(current_words),
+                    text=" ".join(cw["word"] for cw in current_words),
+                    start=burst_start,
+                    end=burst_end,
+                )
+            )
+            current_words = []
+
+    return bursts
+
+
+def _default_caption_y(img: Image.Image) -> int:
+    """Default caption anchor (top edge of the burst line) for this frame's orientation."""
+    if img.height == 1920 or img.height > img.width:
+        return SHORTS_SAFE_ZONE_Y_DEFAULT
+    return HORIZONTAL_SAFE_ZONE_Y
+
+
+def _active_word_index(burst: NarrationBurst, t: float) -> int:
+    """Index of the word whose highlight is live at ``t``.
+
+    A word becomes active at its own Whisper ``start`` and stays active until the next word
+    starts. Before the first word the first word is used, so its spring has not begun yet.
+    """
+    active_idx = 0
+    for idx, w in enumerate(burst.words):
+        if w["start"] <= t <= w["end"]:
+            return idx
+        if t > w["end"]:
+            active_idx = idx
+    return active_idx
+
+
+def draw_karaoke_burst(
+    img: Image.Image,
+    burst: NarrationBurst,
+    t: float,
+    *,
+    y: int | None = None,
+    font_size: int = 68,
+    active_box: bool = True,
+    active_color: tuple[int, int, int] = KARAOKE_ACTIVE_COLOR,
+    emphasis_color: tuple[int, int, int] = KARAOKE_EMPHASIS_COLOR,
+    inactive_color: tuple[int, int, int] = KARAOKE_INACTIVE_COLOR,
+    stroke_color: tuple[int, int, int] = KARAOKE_STROKE_COLOR,
+    stroke_width: int = KARAOKE_STROKE_WIDTH,
+) -> None:
+    """Render a single-line burst of 1-3 words with karaoke spring highlight and high-contrast active box."""
+    if not burst.words or t < burst.start or t > burst.end:
+        return
+
+    # Anchor: Shorts Y=1250 on a vertical 1080x1920 frame, horizontal Y=880 otherwise.
+    if y is None:
+        target_y = _default_caption_y(img)
+    else:
+        target_y = y
+
+    active_idx = _active_word_index(burst, t)
+    active_word = burst.words[active_idx]
+    tau = max(0.0, t - active_word["start"])
+    active_scale = _spring_scale(tau)
+
+    base_font = _font(font_size)
+    scaled_font = _font(max(8, round(font_size * active_scale)))
+    space_w = _text_width(" ", base_font)
+
+    # Compute word widths
+    word_widths: list[float] = []
+    for idx, w in enumerate(burst.words):
+        f = scaled_font if idx == active_idx else base_font
+        word_widths.append(_text_width(w["word"], f))
+
+    total_w = sum(word_widths) + space_w * (len(burst.words) - 1)
+    line_h = int(font_size * 1.3)
+    start_x = (img.width - total_w) / 2.0
+
+    # Draw high-contrast active backing box / pill
+    if active_box:
+        pad_x = 22
+        pad_y = 12
+        box_x0 = round(start_x - pad_x)
+        box_y0 = round(target_y - pad_y)
+        box_x1 = round(start_x + total_w + pad_x)
+        box_y1 = round(target_y + line_h + pad_y)
+
+        box_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        box_draw = ImageDraw.Draw(box_layer)
+        box_draw.rounded_rectangle(
+            [box_x0, box_y0, box_x1, box_y1],
+            radius=16,
+            fill=KARAOKE_BOX_FILL,
+            outline=KARAOKE_BOX_BORDER,
+            width=2,
+        )
+        _blit(img, box_layer, 0, 0)
+
+    # Render individual words
+    cur_x = start_x
+    for idx, w in enumerate(burst.words):
+        w_text = w["word"]
+        is_active = idx == active_idx
+        w_font = scaled_font if is_active else base_font
+        w_width = word_widths[idx]
+
+        if is_active:
+            plain = _plain_word(w_text).upper()
+            is_emp = plain in HIGHLIGHT_WORDS or w_text.endswith("!")
+            fill_rgb = emphasis_color if is_emp else active_color
+            strk_w = stroke_width + 1
+        else:
+            fill_rgb = inactive_color
+            strk_w = max(2, stroke_width - 1)
+
+        ink = _ink_layer(
+            w_text,
+            w_font,
+            (*fill_rgb, 255),
+            stroke_width=strk_w,
+            stroke_fill=(*stroke_color, 255),
+        )
+
+        ink_w = ink.width - 2 * _PAD
+        ink_h = ink.height - 2 * _PAD
+        glyph_y = target_y + (line_h - ink_h) / 2.0
+        glyph_x = cur_x + (w_width - ink_w) / 2.0
+
+        _blit(img, ink, round(glyph_x - _PAD), round(glyph_y - _PAD))
+        cur_x += w_width + space_w
 
 
 def _draw_prop(
@@ -1358,6 +1628,10 @@ def draw_beat_text(
     start: float,
     end: float,
     section_text: str,
+    words: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    safe_zone_y: int | None = None,
+    active_box: bool = True,
 ) -> None:
     """Draw the text layer for time ``t``: narration line, inner voice, shatter text and number pops.
 
@@ -1365,7 +1639,16 @@ def draw_beat_text(
     drawn before a zoom would drift toward the frame edge and into the letterbox bars.
     """
     if section_text.strip():
-        _draw_narration(img, section_text, t, start, end)
+        _draw_narration(
+            img,
+            section_text,
+            t,
+            start,
+            end,
+            words=words,
+            safe_zone_y=safe_zone_y,
+            active_box=active_box,
+        )
 
     if plan.shatter_text:
         impact_t = start + max(0.35, (end - start) * 0.62)
@@ -1417,6 +1700,7 @@ def draw_beat(
     words: Sequence[Mapping[str, Any]] | None = None,
     *,
     text: bool = True,
+    draw_background: bool = True,
 ) -> None:
     """Draw the full scene for one shot time ``t`` onto ``img`` in place.
 
@@ -1424,6 +1708,7 @@ def draw_beat(
     optional sequence of ``{"word", "start", "end"}`` mappings in absolute seconds; it
     sets when named props enter. The narration line is drawn from ``section_text``.
     ``text=False`` leaves the text layer to :func:`draw_beat_text`.
+    ``draw_background=False`` preserves any pre-painted dynamic procedural background.
     """
     if img.mode != "RGB" or img.size != (FRAME_W, FRAME_H):
         raise ValueError(
@@ -1433,10 +1718,11 @@ def draw_beat(
     pal = PALETTE
     # The navy default keeps its backdrop sprite, parallax and dust included. Other themes
     # are painted procedurally.
-    if plan.theme != NIGHT_THEME or not paste_sprite(
-        img, BACKDROP_SPRITE, (FRAME_W / 2, FRAME_H / 2)
-    ):
-        draw_themed_background(img, plan.theme, t, camera_x=PARALLAX_CAMERA_SPEED * t)
+    if draw_background:
+        if plan.theme != NIGHT_THEME or not paste_sprite(
+            img, BACKDROP_SPRITE, (FRAME_W / 2, FRAME_H / 2)
+        ):
+            draw_themed_background(img, plan.theme, t, camera_x=PARALLAX_CAMERA_SPEED * t)
     ImageDraw.Draw(img).line([(0, FLOOR_Y), (FRAME_W, FLOOR_Y)], fill=pal.floor, width=2)
 
     for prop in plan.props:
@@ -1499,7 +1785,7 @@ def draw_beat(
         colour_wash(img, plan.mood, MOOD_WASH_INTENSITY)
 
     if text:
-        draw_beat_text(img, plan, t, start, end, section_text)
+        draw_beat_text(img, plan, t, start, end, section_text, words=words)
 
 
 __all__ = [
@@ -1509,11 +1795,17 @@ __all__ = [
     "LightSource",
     "MAX_PROPS",
     "MIRROR_WORDS",
+    "NarrationBurst",
     "PALETTE",
     "PropPlacement",
     "PropSpec",
+    "SHORTS_SAFE_ZONE_Y_DEFAULT",
+    "SHORTS_SAFE_ZONE_Y_MAX",
+    "SHORTS_SAFE_ZONE_Y_MIN",
     "beat_palette",
+    "chunk_narration_bursts",
     "draw_beat",
     "draw_beat_text",
+    "draw_karaoke_burst",
     "plan_beat",
 ]

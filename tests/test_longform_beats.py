@@ -407,13 +407,16 @@ def test_rim_light_box_is_gone() -> None:
     assert not hasattr(beats, "RIG_BOX")
 
 
-def test_narration_highlight_uses_yellow_soft() -> None:
+def test_narration_highlight_uses_active_word_colours() -> None:
+    # The live burst word is drawn in Solar Yellow, or Supernova Cyan for emphasis words.
     narration = "You choose the desk."
     plan = plan_beat(0, "H", narration, "host", False)
     img = Image.new("RGB", FRAME, PALETTE.void)
     draw_beat(img, plan, 3.0, 0.0, 4.0, narration)
 
-    assert _has_colour(img, YELLOW_SOFT)
+    assert _has_colour(img, beats.KARAOKE_ACTIVE_COLOR) or _has_colour(
+        img, beats.KARAOKE_EMPHASIS_COLOR
+    )
 
 
 def test_narration_without_highlight_words_has_no_yellow_text() -> None:

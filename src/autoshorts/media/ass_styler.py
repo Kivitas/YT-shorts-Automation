@@ -2,7 +2,7 @@
 
 Produces SubStation Alpha (.ass) scripts formatted for 1080x1920 vertical Shorts:
 - 2-4 word bursts (word chunker)
-- Word-level active karaoke highlight with \\t scaling animation (100% -> 115% -> 100%)
+- Word-level active karaoke highlight with \\t spring pop (100% -> 125% -> 96% -> 100%, 70/130/180 ms)
 - 7 Built-in Studio Presets (neon, minimal, pill, hormozi, mrbeast, cyberpunk, cinematic)
 - Typography controls: text transforms (uppercase, title, none), custom hex colors
 - Safe-zone positioning avoiding YouTube Shorts UI chrome (center, bottom_safe, top_safe)
@@ -27,6 +27,20 @@ from autoshorts.core.theme import (
     BG_DEEP,
     TEXT_PRIMARY,
 )
+
+# YouTube Shorts Mobile Safe Zone Constants (PlayResX: 1080, PlayResY: 1920)
+SHORTS_SAFE_ZONE_Y_MIN = 1200
+SHORTS_SAFE_ZONE_Y_MAX = 1350
+SHORTS_SAFE_ZONE_Y_DEFAULT = 1250  # caption anchor: bottom edge of the burst at Y=1250
+# The caption box must clear the bottom 450 px (UI chrome) and the top 280 px.
+SHORTS_CLEAR_BOTTOM_PX = 450
+SHORTS_CLEAR_TOP_PX = 280
+# MarginV from bottom for PlayResY=1920 with Alignment=2 (Bottom-Center): MarginV = 1920 - Y
+SHORTS_SAFE_ZONE_MARGIN_V_DEFAULT = 1920 - SHORTS_SAFE_ZONE_Y_DEFAULT  # 670
+SHORTS_SAFE_ZONE_MARGIN_V_MIN = 1920 - SHORTS_SAFE_ZONE_Y_MAX  # 570
+SHORTS_SAFE_ZONE_MARGIN_V_MAX = 1920 - SHORTS_SAFE_ZONE_Y_MIN  # 720
+SHORTS_MARGIN_L = 80
+SHORTS_MARGIN_R = 150
 
 
 @dataclass
@@ -156,6 +170,24 @@ def rgb_to_ass_color(rgb: tuple[int, int, int], alpha: int = 0) -> str:
     return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}&"
 
 
+def rgba_to_ass_color(rgb: tuple[int, int, int], opacity: float) -> str:
+    """Convert an RGB colour plus opacity (0.0-1.0) to an ASS &HAABBGGRR colour.
+
+    ASS alpha is inverted: 00 is fully opaque and FF is fully transparent, so the stored
+    byte is the transparency, ``round((1 - opacity) * 255)``. For example opacity 0.85 gives
+    alpha 0x26 (38), and &H00 would mean a solid box.
+    """
+    r, g, b = rgb
+    alpha = round((1.0 - min(1.0, max(0.0, opacity))) * 255)
+    return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
+
+
+# Dark translucent pill behind the active burst: rgba(11, 14, 27, 0.85).
+SHORTS_PILL_RGB = (11, 14, 27)
+SHORTS_PILL_OPACITY = 0.85
+SHORTS_PILL_ASS = rgba_to_ass_color(SHORTS_PILL_RGB, SHORTS_PILL_OPACITY)  # &H261B0E0B
+
+
 # Flat "kurz" look: semi-transparent dark pill behind the active word, no stroke, no glow.
 _KURZ_PILL_ALPHA = 0x4D  # ~70% opaque backing box
 
@@ -269,6 +301,18 @@ CAPTION_PRESETS: dict[str, dict[str, Any]] = {
         "outline": 10,
         "shadow": 4,
     },
+    "active_box": {
+        "font_name": "Montserrat ExtraBold",
+        "font_size": 76,
+        "active_color": "&H0000E6FF",  # Solar Yellow #FFE600 (BGR)
+        "emphasis_color": "&H00FFF000",  # Supernova Cyan #00F0FF (BGR)
+        "primary_color": "&H00FFFFFF",  # Crisp White
+        "outline_color": SHORTS_PILL_ASS,  # Dark pill rgba(11,14,27,0.85) (BorderStyle 3 box)
+        "back_color": SHORTS_PILL_ASS,
+        "border_style": 3,  # Opaque/translucent backing box
+        "outline": 8,  # Box padding
+        "shadow": 0,
+    },
 }
 
 
@@ -318,15 +362,15 @@ def is_emphasis_word(word_clean: str) -> bool:
 
 def chunk_words(
     words: Sequence[TimedWord | dict[str, Any]],
-    words_per_burst: int = 3,
-    min_words: int = 2,
-    max_words: int = 4,
-    max_gap_sec: float = 0.6,
+    words_per_burst: int = 2,
+    min_words: int = 1,
+    max_words: int = 3,
+    max_gap_sec: float = 0.5,
 ) -> list[WordChunk]:
-    """Group word-level timestamps into readable bursts of 2-4 words.
+    """Group word-level timestamps into readable bursts of 1-3 words for strict single-line display.
 
-    Snaps chunks at sentence/clause punctuation (., ?, !, :, ;) or when speech
-    pauses exceed max_gap_sec.
+    Never wraps text onto multiple lines. Snaps chunks at sentence/clause punctuation
+    (., ?, !, :, ;, ,, -, —) or when speech pauses exceed max_gap_sec.
     """
     normalized_words: list[TimedWord] = []
     for item in words:
@@ -349,7 +393,7 @@ def chunk_words(
 
         # Check if punctuation signals a sentence/clause boundary
         ends_with_terminal = word_text.endswith((".", "?", "!"))
-        ends_with_clause = word_text.endswith((",", ";", ":"))
+        ends_with_clause = word_text.endswith((",", ";", ":", "-", "—"))
 
         # Check for pause gap between current and next word
         has_large_gap = False
@@ -361,11 +405,9 @@ def chunk_words(
         count = len(current_chunk_words)
 
         should_split = False
-        if (
-            count >= max_words
-            or count >= min_words
-            and (ends_with_terminal or ends_with_clause or has_large_gap)
-        ):
+        if count >= max_words:
+            should_split = True
+        elif count >= min_words and (ends_with_terminal or ends_with_clause or has_large_gap):
             should_split = True
         elif count >= words_per_burst and not (ends_with_terminal or ends_with_clause):
             # Normal burst size reached
@@ -600,6 +642,29 @@ def build_spring_bounce_tags(
     )
 
 
+def build_spring_physics_tags(
+    scale_overshoot: int = 125,
+    scale_settle: int = 100,
+    t_rise_ms: int = 80,
+    t_settle_ms: int = 160,
+    rot_tilt: int = -2,
+    color_tag: str | None = None,
+) -> str:
+    """Generate ASS spring-physics override tags (\\fscx125\\fscy125 -> \\fscx100\\fscy100).
+
+    Tags pop the word up to `scale_overshoot` at t=0ms, then ease down into `scale_settle`
+    by `t_settle_ms` with an optional micro-tilt return to 0 degrees.
+    """
+    tilt_init = f"\\frz{rot_tilt}" if rot_tilt != 0 else ""
+    tilt_settle = f"\\t({t_rise_ms},{t_settle_ms},\\frz0)" if rot_tilt != 0 else ""
+    c_str = f"\\c{color_tag}&" if color_tag else ""
+    return (
+        f"{tilt_init}\\t(0,{t_rise_ms},\\fscx{scale_overshoot}\\fscy{scale_overshoot})"
+        f"\\t({t_rise_ms},{t_settle_ms},\\fscx{scale_settle}\\fscy{scale_settle})"
+        f"{tilt_settle}{c_str}"
+    )
+
+
 def build_ass_script(
     words: Sequence[TimedWord | dict[str, Any]],
     hook_title: str | None = None,
@@ -662,11 +727,14 @@ def build_ass_script(
         resolved_font_size = config.font_size
 
     # Subtitle vertical position safe zones:
+    # "safe_zone" / "shorts_safe" -> SHORTS_SAFE_ZONE_MARGIN_V_DEFAULT (670, anchor Y = 1250)
     # "center" -> default 780 or config.safe_zone_margin_v
     # "bottom_safe" -> 420
     # "top_safe" -> 1450
     sub_pos = (subtitle_position or "center").strip().lower()
-    if sub_pos == "bottom_safe":
+    if sub_pos in ("safe_zone", "shorts_safe", "mobile_safe", "shorts"):
+        margin_v = SHORTS_SAFE_ZONE_MARGIN_V_DEFAULT
+    elif sub_pos == "bottom_safe":
         margin_v = 420
     elif sub_pos == "top_safe":
         margin_v = 1450
@@ -674,9 +742,19 @@ def build_ass_script(
         margin_v = max(350, config.safe_zone_margin_v)
     else:
         try:
-            margin_v = max(350, int(sub_pos))
+            val = int(sub_pos)
+            if val >= 900:
+                # Specified as Y coordinate from top (e.g. 1200 - 1350)
+                margin_v = max(350, 1920 - val)
+            else:
+                margin_v = max(350, val)
         except (ValueError, TypeError):
             margin_v = max(350, config.safe_zone_margin_v)
+
+    if "subtitle_y" in kwargs:
+        sub_y = int(kwargs["subtitle_y"])
+        margin_v = max(350, 1920 - sub_y)
+
     if kwargs.get("layout_mode") == "cam_gameplay" and sub_pos == "center":
         # Streamer cam on top, gameplay below: captions go just under the seam in the gameplay
         # panel, never on the seam or over the streamer's face (follows the cam top_ratio).
@@ -723,6 +801,16 @@ def build_ass_script(
     outline = preset["outline"]
     shadow = preset["shadow"]
 
+    use_box = (
+        kwargs.get("active_box") or kwargs.get("box_background") or preset_name == "active_box"
+    )
+    if use_box:
+        border_style = 3
+        outline = max(outline, 8)
+        shadow = 0
+        back_color = SHORTS_PILL_ASS
+        resolved_outline_color = SHORTS_PILL_ASS
+
     # Hook card banner style definition
     hb_style = (hook_banner_style or "neon_box").strip().lower()
     if hb_style == "pill":
@@ -755,13 +843,18 @@ def build_ass_script(
             )
             total_duration_sec = max(1.0, total_duration_sec - total_cut_dur)
 
-    # Clean and chunk the words
-    wpb = kwargs.get("words_per_burst", (2 if preset_name == "rapid" else config.words_per_burst))
-    min_w = 1 if (preset_name == "rapid" or wpb <= 2) else 2
+    # Clean and chunk the words into strict 1-line bursts (1-3 words max per event)
+    wpb = kwargs.get(
+        "words_per_burst",
+        (2 if preset_name in ("rapid", "active_box") else min(3, config.words_per_burst)),
+    )
+    max_w = kwargs.get("max_words", 3)
+    min_w = kwargs.get("min_words", 1)
     chunks = chunk_words(
         words,
         words_per_burst=wpb,
         min_words=min_w,
+        max_words=max_w,
     )
 
     # Calculate total duration if not provided
@@ -776,6 +869,7 @@ def build_ass_script(
         "ScriptType: v4.00+",
         "PlayResX: 1080",
         "PlayResY: 1920",
+        "WrapStyle: 2",
         "ScaledBorderAndShadow: yes",
         "",
         "[V4+ Styles]",
@@ -790,7 +884,7 @@ def build_ass_script(
         ),
         (
             f"Style: ActiveBox,{resolved_font_name},{resolved_font_size},{resolved_active_color},{resolved_primary_color},"
-            f"&HA0000000,&HA0000000,-1,0,0,0,100,100,2,0,3,6,0,2,{margin_l},{margin_r},{margin_v},1"
+            f"{SHORTS_PILL_ASS},{SHORTS_PILL_ASS},-1,0,0,0,100,100,2,0,3,6,0,2,{margin_l},{margin_r},{margin_v},1"
         ),
         hook_style_def,
         (
@@ -864,7 +958,15 @@ def build_ass_script(
                     color_tag = resolved_emphasis_color if emphasis else resolved_active_color
 
                     # Preset-specific animation and scale pops
-                    if preset_name == "rapid":
+                    if preset_name == "active_box" or kwargs.get("spring_physics"):
+                        # Exact spring keyframes: 100->125 (0-70ms), 125->96 (70-130ms),
+                        # 96->100 (130-180ms). Times are relative to this event's start, which
+                        # is the spoken word's own Whisper start, so no offset is needed.
+                        word_line = (
+                            f"{{{build_spring_bounce_tags(rot_tilt=0)}"
+                            f"\\c{color_tag}&}}{w_formatted}"
+                        )
+                    elif preset_name == "rapid":
                         scale_val = 135 if emphasis else 122
                         word_line = (
                             f"{{\\t(0,45,\\fscx{scale_val}\\fscy{scale_val})"
