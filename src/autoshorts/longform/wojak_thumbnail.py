@@ -222,8 +222,8 @@ def generate_wojak_thumbnail(
     canvas = bg
 
     # 2. Giant Comical Prop (Hospital Bill) on the Left
-    bill_img = _draw_giant_hospital_bill(width=520, height=660, total_amount="$1,850,000", angle=-7.0)
-    canvas.paste(bill_img, (60, 220), bill_img)
+    bill_img = _draw_giant_hospital_bill(width=470, height=580, total_amount="$1,850,000", angle=-6.0)
+    canvas.paste(bill_img, (60, 195), bill_img)
 
     # 3. Shocked Wojak / Meme Character on the Right
     if character_img is not None:
@@ -265,16 +265,16 @@ def generate_wojak_thumbnail(
     draw.text((tx, ty), t_text, font=t_font, fill=COLOR_BLACK)
 
     # 5. Massive High-CTR Shock Badges with 8px Stroke
-    # Left Badge (e.g. USA: $2,500,000?!)
-    badge_font = get_font(68, bold=True)
+    # Left Badge (e.g. USA: $2,500,000?!) positioned cleanly below prop
+    badge_font = get_font(58, bold=True)
     _draw_stroke_text(
         draw,
-        (100, h - 160),
+        (80, h - 110),
         left_badge.upper(),
         font=badge_font,
         fill=COLOR_ACCENT_YELLOW,
         stroke_fill=COLOR_BLACK,
-        stroke_width=9,
+        stroke_width=8,
     )
 
     # Right / Center Badge (e.g. VS FREE?!)

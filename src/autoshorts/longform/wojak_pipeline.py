@@ -502,20 +502,25 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
         except Exception as c_exc:
             logger.warning("Character resolution fallback for %s: %s", scene.country, c_exc)
 
-        # Render composite scene frame
-        scene_img = render_wojak_scene_frame(
-            country=scene.country,
-            caption=scene.caption,
-            background_img=bg_img,
-            character_img=char_img,
-            character_side=scene.character_side,
-        )
-
-        # Stream raw bytes into FFmpeg pipe
-        scene_raw = scene_img.tobytes()
+        # Stream raw bytes into FFmpeg pipe with cinematic Ken-Burns camera breathing
         num_frames = int(fps * scene_dur)
-        for _ in range(num_frames):
-            proc.stdin.write(scene_raw)
+        step_frames = 4  # Refresh camera push every 4 frames (7.5 fps motion rate) for speed + smoothness
+        f_idx = 0
+        while f_idx < num_frames:
+            prog = f_idx / max(1, num_frames - 1)
+            frame_img = render_wojak_scene_frame(
+                country=scene.country,
+                caption=scene.caption,
+                background_img=bg_img,
+                character_img=char_img,
+                character_side=scene.character_side,
+                progress=prog,
+            )
+            raw_bytes = frame_img.tobytes()
+            repeat = min(step_frames, num_frames - f_idx)
+            for _ in range(repeat):
+                proc.stdin.write(raw_bytes)
+            f_idx += repeat
 
     # Close stdin and wait for encoding
     proc.stdin.close()

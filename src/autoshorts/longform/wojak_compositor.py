@@ -32,6 +32,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from autoshorts.longform.flags import get_country_flag
+
 logger = logging.getLogger(__name__)
 
 FRAME_WIDTH = 1920
@@ -208,7 +210,7 @@ def create_soft_drop_shadow(
 def render_disclaimer_frame(
     size: tuple[int, int] = (FRAME_WIDTH, FRAME_HEIGHT),
     disclaimer_text: str | None = None,
-    warning_badge: str = "⚠️  PARODY & SATIRE DISCLAIMER",
+    warning_badge: str = "PARODY & SATIRE DISCLAIMER",
     sub_notice: str = "CREATED FOR COMEDIC & ENTERTAINMENT PURPOSES ONLY • ALL STEREOTYPES ARE EXAGGERATED MEMES",
 ) -> Image.Image:
     """Render Scene 0 Parody Disclaimer Card in sleek dark aesthetic."""
@@ -332,6 +334,7 @@ def render_wojak_scene_frame(
     character_side: str = "left",
     size: tuple[int, int] = (FRAME_WIDTH, FRAME_HEIGHT),
     character_height: int = 700,
+    progress: float = 0.0,
 ) -> Image.Image:
     """Render a 1920x1080 Country Meme scene matching the SapX style.
 
@@ -343,6 +346,7 @@ def render_wojak_scene_frame(
         character_side: 'left' or 'right' (floating card appears on opposite side).
         size: Target frame size (1920, 1080).
         character_height: Target height for character in pixels (~600-750px).
+        progress: Cinematic Ken-Burns progress (0.0 to 1.0) for subtle camera breathing.
     """
     w, h = size
     canvas = Image.new("RGB", (w, h), COLOR_WHITE)
@@ -350,15 +354,16 @@ def render_wojak_scene_frame(
     # 1. Background (y: HEADER_HEIGHT to FRAME_HEIGHT = 970px height)
     bg_h = h - HEADER_HEIGHT
     bg = background_img.convert("RGB")
-    if bg.size != (w, bg_h):
-        # Center-crop cover to (w, bg_h)
-        scale = max(w / bg.width, bg_h / bg.height)
-        new_w = max(w, round(bg.width * scale))
-        new_h = max(bg_h, round(bg.height * scale))
-        bg = bg.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        left = (new_w - w) // 2
-        top = (new_h - bg_h) // 2
-        bg = bg.crop((left, top, left + w, top + bg_h))
+
+    # Ken-Burns subtle zoom drift (1.00 -> 1.03)
+    zoom = 1.0 + 0.03 * max(0.0, min(1.0, progress))
+    scale = max(w / bg.width, bg_h / bg.height) * zoom
+    new_w = max(w, round(bg.width * scale))
+    new_h = max(bg_h, round(bg.height * scale))
+    bg = bg.resize((new_w, new_h), Image.Resampling.BILINEAR)
+    left = (new_w - w) // 2
+    top = (new_h - bg_h) // 2
+    bg = bg.crop((left, top, left + w, top + bg_h))
     canvas.paste(bg, (0, HEADER_HEIGHT))
 
     # 2. Position and draw Character (scaled to ~600-750px height, anchored to bottom)
@@ -458,15 +463,26 @@ def render_wojak_scene_frame(
     # Bottom 1px subtle divider rule
     hdraw.rectangle((0, HEADER_HEIGHT - HEADER_RULE_PX, w - 1, HEADER_HEIGHT - 1), fill=COLOR_HEADER_BORDER)
 
-    # Centered Country Name: bold uppercase black sans-serif
+    # Centered Country Name & Crisp National Flag: bold uppercase black sans-serif
     title_text = country.strip().upper()
-    title_font, _ = fit_title(title_text, max_w=w - 200, max_h=HEADER_HEIGHT - 30, initial_size=58)
+    title_font, _ = fit_title(title_text, max_w=w - 320, max_h=HEADER_HEIGHT - 30, initial_size=58)
     title_w = title_font.getlength(title_text)
     ink_top, ink_h = _ink_metrics(title_font, title_text)
-    title_x = (w - title_w) / 2
-    title_y = (HEADER_HEIGHT - ink_h) / 2 - ink_top
 
-    hdraw.text((title_x, title_y), title_text, font=title_font, fill=COLOR_BLACK)
+    flag_img = get_country_flag(country, target_height=52)
+    spacing = 20
+    if flag_img:
+        total_w = flag_img.width + spacing + title_w
+        start_x = (w - total_w) / 2
+        flag_x = round(start_x)
+        flag_y = round((HEADER_HEIGHT - flag_img.height) / 2)
+        header.paste(flag_img, (flag_x, flag_y), flag_img)
+        title_x = start_x + flag_img.width + spacing
+    else:
+        title_x = (w - title_w) / 2
+
+    title_y = (HEADER_HEIGHT - ink_h) / 2 - ink_top
+    hdraw.text((round(title_x), round(title_y)), title_text, font=title_font, fill=COLOR_BLACK)
     canvas.paste(header, (0, 0))
 
     return canvas

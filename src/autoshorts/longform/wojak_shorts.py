@@ -39,6 +39,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from autoshorts.core.paths import get_output_dir, get_work_dir
 from autoshorts.longform.country_photos import pick_photo
+from autoshorts.longform.flags import get_country_flag
 from autoshorts.longform.types import LongformResult
 from autoshorts.longform.wojak_generator import draw_wojak, spec_from_country_and_context
 from autoshorts.media.audio_master import normalize_two_pass
@@ -70,8 +71,8 @@ SAFE_WIDTH = SAFE_RIGHT - SAFE_LEFT  # 820px
 SAFE_TOP = 180
 SAFE_BOTTOM_OVERLAY = 1530
 
-CHARACTER_HEIGHT = 820
-CARD_Y0 = 210
+CHARACTER_HEIGHT = 1050
+CARD_Y0 = 260
 CARD_MAX_HEIGHT = 280
 
 # Colors
@@ -325,7 +326,7 @@ def draw_country_header_banner(
     width: int = SHORTS_WIDTH,
     height: int = HEADER_HEIGHT,
 ) -> None:
-    """Draw Top White Banner Strip (150px) with centered bold country name & flag."""
+    """Draw Top White Banner Strip (150px) with centered bold country name & real flag."""
     header = Image.new("RGB", (width, height), COLOR_WHITE)
     hdraw = ImageDraw.Draw(header)
 
@@ -333,35 +334,24 @@ def draw_country_header_banner(
     hdraw.rectangle((0, height - HEADER_RULE_PX, width - 1, height - 1), fill=COLOR_HEADER_BORDER)
 
     title_text = country.strip().upper()
-    flag_text = flag.strip()
-
     font_text = get_font(56, bold=True)
-    font_emoji = get_emoji_font(52)
+    w_text = font_text.getlength(title_text)
+    ink_top, ink_h = _ink_metrics(font_text, title_text)
 
-    has_emoji_font = _resolve_emoji_font() is not None
-
-    if flag_text and has_emoji_font:
-        spacing = 16
-        w_text = font_text.getlength(title_text)
-        w_flag = font_emoji.getlength(flag_text)
-        total_w = w_text + spacing + w_flag
+    flag_img = get_country_flag(country, target_height=60)
+    if flag_img:
+        spacing = 20
+        total_w = flag_img.width + spacing + w_text
         start_x = (width - total_w) / 2
-
-        ink_top, ink_h = _ink_metrics(font_text, title_text)
-        y_text = (height - ink_h) / 2 - ink_top
-        hdraw.text((start_x, y_text), title_text, font=font_text, fill=COLOR_BLACK)
-
-        flag_x = start_x + w_text + spacing
-        flag_ink_top, flag_ink_h = _ink_metrics(font_emoji, flag_text)
-        flag_y = (height - flag_ink_h) / 2 - flag_ink_top
-        hdraw.text((flag_x, flag_y), flag_text, font=font_emoji, fill=COLOR_BLACK)
+        flag_x = round(start_x)
+        flag_y = round((height - flag_img.height) / 2)
+        header.paste(flag_img, (flag_x, flag_y), flag_img)
+        title_x = start_x + flag_img.width + spacing
     else:
-        combined = f"{title_text} {flag_text}".strip()
-        total_w = font_text.getlength(combined)
-        start_x = (width - total_w) / 2
-        ink_top, ink_h = _ink_metrics(font_text, combined)
-        y_text = (height - ink_h) / 2 - ink_top
-        hdraw.text((start_x, y_text), combined, font=font_text, fill=COLOR_BLACK)
+        title_x = (width - w_text) / 2
+
+    y_text = (height - ink_h) / 2 - ink_top
+    hdraw.text((round(title_x), round(y_text)), title_text, font=font_text, fill=COLOR_BLACK)
 
     canvas.paste(header, (0, 0))
 
@@ -532,6 +522,7 @@ def render_shorts_country_frame(
     expression: str = "neutral",
     size: tuple[int, int] = (SHORTS_WIDTH, SHORTS_HEIGHT),
     character_height: int = CHARACTER_HEIGHT,
+    progress: float = 0.0,
 ) -> Image.Image:
     """Render a 1080x1920 YouTube Shorts frame compliant with Mobile Safe Zones."""
     w, h = size
@@ -543,14 +534,16 @@ def render_shorts_country_frame(
         bg = generate_procedural_background(country, width=w, height=bg_h)
     else:
         bg = background_img.convert("RGB")
-        if bg.size != (w, bg_h):
-            scale = max(w / bg.width, bg_h / bg.height)
-            new_w = max(w, round(bg.width * scale))
-            new_h = max(bg_h, round(bg.height * scale))
-            bg = bg.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            left = (new_w - w) // 2
-            top = (new_h - bg_h) // 2
-            bg = bg.crop((left, top, left + w, top + bg_h))
+
+    # Ken-Burns subtle camera push (1.00 -> 1.03)
+    zoom = 1.0 + 0.03 * max(0.0, min(1.0, progress))
+    scale = max(w / bg.width, bg_h / bg.height) * zoom
+    new_w = max(w, round(bg.width * scale))
+    new_h = max(bg_h, round(bg.height * scale))
+    bg = bg.resize((new_w, new_h), Image.Resampling.BILINEAR)
+    left = (new_w - w) // 2
+    top = (new_h - bg_h) // 2
+    bg = bg.crop((left, top, left + w, top + bg_h))
 
     # Subtle contrast treatment so text cards and characters pop
     canvas.paste(bg, (0, HEADER_HEIGHT))
@@ -918,9 +911,17 @@ def assemble_shorts_audio(
         current_time += seg.duration
 
     # Master limiter & write output
-    out_path = work_dir / "shorts_audio_master.wav"
+    raw_path = work_dir / "shorts_audio_raw.wav"
     master = np.tanh(1.2 * mix_buf)
-    _write_wav(out_path, master, master_sr)
+    _write_wav(raw_path, master, master_sr)
+
+    # Apply EBU R128 loudness normalization (-14 LUFS) for broadcast parity
+    out_path = work_dir / "shorts_audio_master.wav"
+    try:
+        normalize_two_pass(raw_path, out_path, target_lufs=-14.0)
+    except Exception as norm_err:
+        logger.warning("Shorts audio loudness normalization fallback: %s", norm_err)
+        return raw_path
     return out_path
 
 
@@ -1089,13 +1090,35 @@ def build_wojak_shorts_script(topic: str, segment_count: int = 7) -> list[WojakS
     """Select or generate punchy country comparison segments for vertical Shorts."""
     topic_clean = topic.strip().lower()
 
-    if any(k in topic_clean for k in ("hospital", "health", "doctor", "medicine", "medical")):
+    if any(k in topic_clean for k in ("hospital", "health", "doctor", "medicine", "medical", "bill")):
         key = "healthcare"
     elif any(k in topic_clean for k in ("transport", "subway", "train", "metro", "bus")):
         key = "transport"
     elif any(k in topic_clean for k in ("rent", "housing", "apartment", "landlord")):
         key = "rent"
     else:
+        # Check if topic is covered by curated longform topics (e.g. school, transport, etc.)
+        try:
+            from autoshorts.longform.wojak_pipeline import resolve_topic_scenes
+            _, p_scenes = resolve_topic_scenes(topic, scene_count=segment_count)
+            if p_scenes:
+                segments: list[WojakShortsSegment] = []
+                for s in p_scenes:
+                    photo = pick_photo(s.country, seed=topic)
+                    segments.append(
+                        WojakShortsSegment(
+                            country=s.country,
+                            flag=s.country,
+                            caption=s.caption,
+                            expression=s.emotion,
+                            duration=DEFAULT_SEGMENT_DURATION,
+                            sfx_cue="whoosh",
+                            photo_path=photo,
+                        )
+                    )
+                return segments
+        except Exception:
+            pass
         key = "healthcare"
 
     pool = CURATED_SHORTS_TOPICS.get(key, CURATED_SHORTS_TOPICS["healthcare"])
@@ -1300,17 +1323,24 @@ def render_wojak_shorts_video(
                     except Exception:
                         bg_img = None
 
-                seg_frame = render_shorts_country_frame(
-                    country=seg.country,
-                    caption=seg.caption,
-                    flag=seg.flag,
-                    background_img=bg_img,
-                    expression=seg.expression,
-                )
-                seg_bytes = seg_frame.tobytes()
                 n_seg_frames = int(round(seg.duration * FPS))
-                for _ in range(n_seg_frames):
-                    proc.stdin.write(seg_bytes)  # type: ignore[union-attr]
+                step_frames = 4  # Refresh camera push every 4 frames (7.5 fps motion rate) for speed + smoothness
+                f_idx = 0
+                while f_idx < n_seg_frames:
+                    prog = f_idx / max(1, n_seg_frames - 1)
+                    seg_frame = render_shorts_country_frame(
+                        country=seg.country,
+                        caption=seg.caption,
+                        flag=seg.flag,
+                        background_img=bg_img,
+                        expression=seg.expression,
+                        progress=prog,
+                    )
+                    raw_bytes = seg_frame.tobytes()
+                    repeat = min(step_frames, n_seg_frames - f_idx)
+                    for _ in range(repeat):
+                        proc.stdin.write(raw_bytes)  # type: ignore[union-attr]
+                    f_idx += repeat
 
         except (BrokenPipeError, OSError, ValueError):
             pass

@@ -908,12 +908,29 @@ def cmd_wojak(args: argparse.Namespace, config: Settings, state_manager: StateMa
     if countries_arg:
         if isinstance(countries_arg, str) and not countries_arg.strip().isdigit():
             c_list = [c.strip() for c in countries_arg.split(",") if c.strip()]
+            from autoshorts.longform.wojak_topics import (
+                generate_procedural_joke,
+                get_curated_topic_data,
+            )
+
+            topic_data = get_curated_topic_data(topic) or {}
+
             for idx, c in enumerate(c_list):
                 side = "left" if idx % 2 == 0 else "right"
+                c_clean = c.lower()
+                joke = None
+                for c_k, c_v in topic_data.items():
+                    if c_k.lower() == c_clean or c_v.get("heading", "").lower() == c_clean:
+                        joke = c_v.get("joke_text")
+                        break
+                if not joke:
+                    joke_dict = generate_procedural_joke(topic, c)
+                    joke = joke_dict.get("joke_text", f"Everyday {topic} in {c}")
+
                 scenes.append(
                     WojakScene(
                         country=c,
-                        caption=f"Meme scene for {c}",
+                        caption=joke,
                         character_side=side,
                         setting=topic,
                     )
