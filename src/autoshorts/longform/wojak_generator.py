@@ -2132,6 +2132,103 @@ def _draw_props_and_hands(
 # ---------------------------------------------------------------------------
 
 
+AUTHENTIC_WOJAK_PATH = Path(__file__).resolve().parents[3] / "assets" / "characters" / "wojak_doomer_cutout.png"
+
+
+def _draw_authentic_wojak_base(
+    canvas: Image.Image,
+    spec: WojakSpec,
+    skin_tone: tuple[int, int, int, int],
+    y_shift: float = 0.0,
+) -> bool:
+    """Render canonical hand-drawn Wojak/Doomer base if available."""
+    if not AUTHENTIC_WOJAK_PATH.is_file():
+        return False
+    if spec.expression == "chad" or spec.build == "buff":
+        return False
+    if spec.gender in ("female", "tradwife", "nonna"):
+        return False
+
+    try:
+        with Image.open(AUTHENTIC_WOJAK_PATH) as base_im:
+            draw = ImageDraw.Draw(canvas)
+            h_target = int(660 + (20 if spec.height == "tall" else -20 if spec.height == "short" else 0))
+            w_target = int(round(h_target * (base_im.width / max(1, base_im.height))))
+            scaled = base_im.resize((w_target, h_target), Image.Resampling.LANCZOS)
+
+            x_pos = (CANVAS_WIDTH - w_target) // 2
+            y_pos = int(180 + y_shift)
+
+            # Extend hoodie torso downward to bottom of canvas
+            hoodie_color = (65, 68, 72, 255)
+            draw.rectangle([x_pos + 40, y_pos + h_target - 40, x_pos + w_target - 40, CANVAS_HEIGHT], fill=hoodie_color)
+
+            # Optional NPC Grey tinting
+            if spec.expression == "npc" or spec.skin_tone == NPC_GREY_TONE:
+                g = scaled.convert("L")
+                scaled = Image.merge("RGBA", (g, g, g, scaled.getchannel("A")))
+
+            canvas.paste(scaled, (x_pos, y_pos), scaled)
+
+            # Draw cyan tears if crying
+            if spec.expression in ("crying", "sad"):
+                eye_lx = int(x_pos + w_target * 0.44)
+                eye_ly = int(y_pos + h_target * 0.44)
+                eye_rx = int(x_pos + w_target * 0.64)
+                eye_ry = int(y_pos + h_target * 0.45)
+
+                tear_color = (56, 189, 248, 240)
+                tear_edge = (14, 116, 144, 255)
+                tear_pts_l = [
+                    (eye_lx - 6, eye_ly),
+                    (eye_lx + 8, eye_ly + 10),
+                    (eye_lx + 4, eye_ly + 60),
+                    (eye_lx + 15, eye_ly + 120),
+                    (eye_lx + 8, eye_ly + 200),
+                    (eye_lx - 4, eye_ly + 260),
+                    (eye_lx - 12, eye_ly + 180),
+                    (eye_lx - 6, eye_ly + 90),
+                ]
+                draw.polygon(tear_pts_l, fill=tear_color, outline=tear_edge)
+
+                tear_pts_r = [
+                    (eye_rx - 4, eye_ry),
+                    (eye_rx + 8, eye_ry + 10),
+                    (eye_rx + 12, eye_ry + 80),
+                    (eye_rx + 18, eye_ry + 150),
+                    (eye_rx + 10, eye_ry + 240),
+                    (eye_rx + 2, eye_ry + 180),
+                    (eye_rx - 2, eye_ry + 90),
+                ]
+                draw.polygon(tear_pts_r, fill=tear_color, outline=tear_edge)
+
+            # Draw hospital bandages if bandaged
+            if spec.expression in ("bandaged", "injured") or "bandage" in spec.scenario or "bandage" in spec.prop:
+                forehead_y = int(y_pos + h_target * 0.22)
+                bandage_pts = [
+                    (int(x_pos + w_target * 0.25), forehead_y - 20),
+                    (int(x_pos + w_target * 0.78), forehead_y - 15),
+                    (int(x_pos + w_target * 0.82), forehead_y + 55),
+                    (int(x_pos + w_target * 0.22), forehead_y + 50),
+                ]
+                draw.polygon(bandage_pts, fill=(245, 245, 248, 245), outline=(60, 60, 60, 255), width=3)
+                draw.line(
+                    [(int(x_pos + w_target * 0.24), forehead_y + 18), (int(x_pos + w_target * 0.80), forehead_y + 22)],
+                    fill=(180, 180, 185, 255),
+                    width=2,
+                )
+                cheek_x = int(x_pos + w_target * 0.40)
+                cheek_y = int(y_pos + h_target * 0.60)
+                draw.rectangle([cheek_x, cheek_y, cheek_x + 60, cheek_y + 22], fill=(225, 175, 130, 255), outline=(120, 80, 50, 255), width=2)
+
+            # Foreground props and hands
+            _draw_props_and_hands(draw, spec, skin_tone, y_shift=y_shift)
+            return True
+    except Exception as exc:
+        logger.warning("Could not render authentic wojak base: %s", exc)
+        return False
+
+
 def draw_wojak(spec: WojakSpec) -> Image.Image:
     """Render a fully procedural Wojak character onto an 800x1200 RGBA canvas.
 
@@ -2155,6 +2252,10 @@ def draw_wojak(spec: WojakSpec) -> Image.Image:
         skin_tone = NPC_GREY_TONE
     else:
         skin_tone = SKIN_TONES.get(spec.race, SKIN_TONES["fair"])
+
+    # Try authentic Wojak base first (Feels Guy / Doomer ground-truth style)
+    if _draw_authentic_wojak_base(img, spec, skin_tone, y_shift=y_shift):
+        return img
 
     # 3. Draw background props (hospital bed, trolley, placard)
     _draw_background_props(draw, spec, y_shift=y_shift)

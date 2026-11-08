@@ -1,3 +1,4 @@
 *.png
+!wojak_doomer_cutout.png
 *.tmp
 wojaks/
