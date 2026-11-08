@@ -653,6 +653,99 @@
           <div id="longform-status" class="feedback" style="margin-top: 6px;"></div>
         </div>
 
+        <!-- 🎭 Country Meme & Types Of... Generator Studio -->
+        <div class="card meme-card" style="border-top: 3px solid var(--accent-coral, #ff4d4d);">
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>🌍 Country Meme &amp; 🎭 "Types Of..." Animation Studio</span>
+            <span id="meme-quota-badge" class="badge" style="background: rgba(255, 77, 77, 0.15); color: #ff4d4d; font-size: 11px; padding: 3px 8px; border-radius: 12px;">Meme Studio Ready</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+              <!-- Mode Selection -->
+              <select id="meme-mode-select" onchange="onMemeModeChange()" style="font-weight: bold; background: var(--bg-surface, #1e293b); color: var(--text-primary, #fff);">
+                <option value="country_meme" selected>🌍 Country Meme Generator</option>
+                <option value="types_of">🎭 Types Of... Meme Videos</option>
+              </select>
+
+              <!-- Category Selection -->
+              <select id="meme-category-select" onchange="onMemeCategoryChange()">
+                <option value="countries" selected>🌍 Countries</option>
+                <option value="school">🏫 School</option>
+                <option value="food">🍔 Food</option>
+                <option value="relatable">😂 Relatable</option>
+                <option value="dark_comedy">💀 Dark Comedy</option>
+                <option value="anime">🎌 Anime</option>
+              </select>
+
+              <!-- Preset Topic Picker -->
+              <select id="meme-preset-select" onchange="onMemePresetChange()" style="max-width: 280px;">
+                <option value="">-- Choose Curated Topic --</option>
+              </select>
+
+              <!-- Surprise Me / AI Topic Idea Button -->
+              <button id="meme-surprise-btn" type="button" class="btn btn-secondary btn-sm" onclick="fetchMemeTopicIdea()" title="Auto-invent an entertaining meme topic">🎲 Surprise Me</button>
+
+              <!-- Segment Count -->
+              <label style="display: flex; gap: 4px; align-items: center; font-size: 12px; margin-left: auto;">
+                Types:
+                <select id="meme-segments-select" style="width: 65px;">
+                  <option value="5">5 types</option>
+                  <option value="6" selected>6 types</option>
+                  <option value="7">7 types</option>
+                  <option value="8">8 types</option>
+                  <option value="10">10 types</option>
+                </select>
+              </label>
+
+              <!-- Aspect Ratio -->
+              <select id="meme-aspect-select">
+                <option value="9:16" selected>📱 9:16 Vertical (Shorts/TikTok)</option>
+                <option value="16:9">🖥️ 16:9 Landscape (YouTube)</option>
+              </select>
+
+              <!-- Visual Style -->
+              <select id="meme-style-select">
+                <option value="anime_color" selected>🎨 Colored Anime</option>
+                <option value="manga_bw">✒️ Manga B&amp;W (Screentone)</option>
+              </select>
+            </div>
+
+            <!-- Custom Topic Input -->
+            <div style="display: flex; gap: 6px;">
+              <input id="meme-custom-topic" type="text" placeholder="Type custom meme topic (e.g. 'Every Country's Public Transport', 'Types of Gamers', 'Types of Introverts')..." style="width: 100%;" />
+            </div>
+          </div>
+
+          <div class="action-buttons-row" style="margin-top: 10px; display: flex; align-items: center; gap: 12px;">
+            <label style="display: flex; gap: 6px; align-items: center; font-size: 13px;">
+              <input id="meme-publish-toggle" type="checkbox" /> Upload to YouTube after render
+            </label>
+            <span id="meme-quota-info" class="hint" style="font-size: 12px;">25 meme uploads per day</span>
+            <button id="meme-generate-btn" type="button" class="btn btn-primary" onclick="generateMemeVideo()" style="margin-left: auto; background: #e11d48; border-color: #be123c;">
+              ✨ Generate Meme Video
+            </button>
+          </div>
+
+          <!-- Status and Result Preview Area -->
+          <div id="meme-status" class="feedback" style="margin-top: 8px;"></div>
+          <div id="meme-result-card" style="display: none; margin-top: 12px; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);">
+            <div style="display: flex; gap: 16px; align-items: flex-start;">
+              <img id="meme-preview-thumb" src="" alt="Thumbnail" style="width: 120px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);" />
+              <div style="flex: 1;">
+                <h4 id="meme-result-title" style="margin: 0 0 6px 0; color: #fff;"></h4>
+                <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
+                  <span id="meme-result-duration"></span> • <span id="meme-result-aspect"></span> • <span id="meme-result-qc" class="badge" style="background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px;">QC PASSED</span>
+                </div>
+                <div id="meme-result-tags" style="font-size: 12px; color: #38bdf8; margin-bottom: 8px;"></div>
+                <div style="display: flex; gap: 8px;">
+                  <a id="meme-result-video-link" href="#" target="_blank" class="btn btn-secondary btn-sm">▶️ Open Video File</a>
+                  <a id="meme-result-yt-link" href="#" target="_blank" class="btn btn-primary btn-sm" style="display: none; background: #dc2626;">🔴 View on YouTube</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Gameplay Backgrounds Panel -->
         <div class="card gameplay-card">
           <div class="card-title">

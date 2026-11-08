@@ -592,6 +592,17 @@ class LongformRequest(BaseModel):
     publish: bool = False
 
 
+class MemeRequest(BaseModel):
+    mode: str = "country_meme"  # "country_meme" or "types_of"
+    topic: str = ""
+    category: str = "countries"
+    segment_count: int = Field(default=6, ge=3, le=12)
+    aspect_ratio: str = "9:16"  # "9:16" or "16:9"
+    visual_style: str = "anime_color"  # "anime_color" or "manga_bw"
+    voice: str = "en-US-ChristopherNeural"
+    publish: bool = False
+
+
 class LinkPreviewRequest(BaseModel):
     links_text: str = Field(..., description="Raw text containing one or more video URLs")
 
@@ -1287,6 +1298,126 @@ def create_app(
             for mtime, name, size in entries[:50]
         ]
         return {"files": files}
+
+    # =========================================================================
+    # MEME & TYPES OF... GENERATION STUDIO API
+    # =========================================================================
+
+    @app.get("/api/meme/categories")
+    def list_meme_categories() -> dict[str, Any]:
+        """Return available meme categories and sample topic ideas."""
+        from autoshorts.meme.topics import (
+            COUNTRY_MEME_TOPICS,
+            HASHTAG_LIBRARY,
+            TYPES_OF_TOPICS,
+            VALID_CATEGORIES,
+        )
+
+        return {
+            "categories": list(VALID_CATEGORIES),
+            "country_topics": list(COUNTRY_MEME_TOPICS),
+            "types_of_topics": list(TYPES_OF_TOPICS),
+            "hashtag_library_count": len(HASHTAG_LIBRARY),
+        }
+
+    @app.get("/api/meme/idea")
+    def get_meme_topic_idea(category: str | None = None, mode: str | None = None) -> dict[str, Any]:
+        """Procedurally invent a creative meme topic and category."""
+        from autoshorts.meme.topics import generate_topic_idea
+
+        topic, cat = generate_topic_idea(category=category, mode=mode)
+        return {
+            "topic": topic,
+            "category": cat,
+        }
+
+    @app.get("/api/meme/quota")
+    def meme_quota() -> dict[str, Any]:
+        """Meme uploads used and left today."""
+        from autoshorts.meme.publish import (
+            MEME_DAILY_CAP,
+            meme_remaining_today,
+            meme_uploads_today,
+        )
+
+        return {
+            "cap": MEME_DAILY_CAP,
+            "used_today": meme_uploads_today(),
+            "remaining_today": meme_remaining_today(),
+        }
+
+    @app.get("/api/meme")
+    def list_meme_videos() -> dict[str, Any]:
+        """List rendered meme MP4 files, newest first."""
+        from autoshorts.core.paths import get_output_dir
+
+        folder = get_output_dir() / "meme"
+        if not folder.is_dir():
+            return {"files": []}
+
+        entries = []
+        for path in folder.glob("*.mp4"):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            entries.append((stat.st_mtime, path.name, stat.st_size))
+        entries.sort(key=lambda item: item[0], reverse=True)
+
+        files = [
+            {
+                "name": name,
+                "size_bytes": size,
+                "modified": datetime.fromtimestamp(mtime, tz=UTC).isoformat(),
+            }
+            for mtime, name, size in entries[:50]
+        ]
+        return {"files": files}
+
+    @app.post("/api/meme")
+    def create_meme_video(req: MemeRequest) -> dict[str, Any]:
+        """Render a Country Meme or Types Of... anime comedy video."""
+        from autoshorts.meme import MemeConfig, generate_topic_idea, render_meme
+
+        topic = (req.topic or "").strip()
+        category = req.category or "countries"
+        if not topic:
+            topic, category = generate_topic_idea(category=category, mode=req.mode)
+
+        meme_cfg = MemeConfig(
+            mode=req.mode,
+            topic=topic,
+            category=category,
+            segment_count=req.segment_count,
+            aspect_ratio=req.aspect_ratio,
+            visual_style=req.visual_style,
+            voice=req.voice,
+            publish=req.publish,
+        )
+
+        try:
+            result = render_meme(
+                config=meme_cfg,
+                app_settings=cfg,
+                state_manager=state_mgr,
+            )
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        return {
+            "title": result.title,
+            "topic": result.script.topic,
+            "mode": result.script.mode,
+            "category": result.script.category,
+            "video_path": str(result.video_path),
+            "thumbnail_path": str(result.thumbnail_path),
+            "duration": result.duration,
+            "aspect_ratio": result.aspect_ratio,
+            "hashtags": list(result.hashtags),
+            "description": result.description,
+            "qc_passed": result.qc_passed,
+            "youtube_url": result.youtube_url,
+        }
 
     @app.get("/api/jobs/{job_id}/format")
     async def get_job_format(job_id: str) -> dict[str, Any]:

@@ -280,6 +280,77 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Simulate cleanup without deleting directories"
     )
 
+    # 9. meme and types-of commands
+    def _add_meme_args(
+        p: argparse.ArgumentParser,
+        default_mode: str = "country_meme",
+        default_cat: str = "countries",
+    ) -> None:
+        p.add_argument(
+            "--mode",
+            choices=["country_meme", "types_of"],
+            default=default_mode,
+            help="Meme generation mode (country_meme or types_of)",
+        )
+        p.add_argument(
+            "--topic",
+            type=str,
+            default="",
+            help="Topic for the meme video (e.g. 'Every Country\\'s Public Transport' or 'Types of Gamers')",
+        )
+        p.add_argument(
+            "--category",
+            choices=["countries", "school", "food", "relatable", "dark_comedy", "anime", "custom"],
+            default=default_cat,
+            help="Topic category (default %(default)s)",
+        )
+        p.add_argument(
+            "--segments",
+            type=int,
+            default=6,
+            help="Number of country/type segments (5-10, default 6)",
+        )
+        p.add_argument(
+            "--aspect-ratio",
+            choices=["9:16", "16:9"],
+            default="9:16",
+            help="Video aspect ratio: 9:16 (Shorts/TikTok) or 16:9 (Landscape) (default 9:16)",
+        )
+        p.add_argument(
+            "--style",
+            choices=["anime_color", "manga_bw"],
+            default="anime_color",
+            help="Visual style (anime_color or manga_bw, default anime_color)",
+        )
+        p.add_argument(
+            "--voice",
+            type=str,
+            default="en-US-ChristopherNeural",
+            help="TTS narrator voice",
+        )
+        p.add_argument(
+            "--auto-topic",
+            action="store_true",
+            default=False,
+            help="Automatically invent a creative topic",
+        )
+        p.add_argument(
+            "--publish",
+            action="store_true",
+            default=False,
+            help="Upload the rendered meme video to YouTube after rendering",
+        )
+
+    meme_parser = subparsers.add_parser(
+        "meme", help="Generate Country Meme or Types Of... Meme Animation video"
+    )
+    _add_meme_args(meme_parser, default_mode="country_meme", default_cat="countries")
+
+    types_parser = subparsers.add_parser(
+        "types-of", help="Generate Types Of... anime comedy meme video"
+    )
+    _add_meme_args(types_parser, default_mode="types_of", default_cat="relatable")
+
     return parser
 
 
@@ -596,8 +667,58 @@ def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: Stat
     return 0
 
 
+def cmd_meme(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
+    """Render a Country Meme or Types Of... meme animation video and print result paths."""
+    from autoshorts.meme import MemeConfig, generate_topic_idea, render_meme
+
+    topic = (getattr(args, "topic", "") or "").strip()
+    category = getattr(args, "category", "countries") or "countries"
+    mode = getattr(args, "mode", "country_meme")
+
+    if getattr(args, "auto_topic", False) or not topic:
+        topic_idea, cat_idea = generate_topic_idea(category=category, mode=mode)
+        if not topic:
+            topic = topic_idea
+            category = cat_idea
+
+    meme_cfg = MemeConfig(
+        mode=mode,
+        topic=topic,
+        category=category,
+        segment_count=getattr(args, "segments", 6),
+        aspect_ratio=getattr(args, "aspect_ratio", "9:16"),
+        visual_style=getattr(args, "style", "anime_color"),
+        voice=getattr(args, "voice", "en-US-ChristopherNeural"),
+        publish=getattr(args, "publish", False),
+    )
+
+    try:
+        result = render_meme(
+            config=meme_cfg,
+            app_settings=config,
+            state_manager=state_manager,
+        )
+    except (ValueError, RuntimeError) as e:
+        print(f"Error rendering meme video: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Title: {result.title}")
+    print(f"Video: {result.video_path}")
+    print(f"Thumbnail: {result.thumbnail_path}")
+    print(f"Duration: {result.duration:.1f}s")
+    print(f"Aspect Ratio: {result.aspect_ratio}")
+    print(f"QC Passed: {result.qc_passed}")
+    if result.youtube_url:
+        print(f"Published: {result.youtube_url}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Master CLI entry point."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -646,6 +767,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return cmd_edge_login(args, config, state_manager)
     elif args.command == "longform":
         return cmd_longform(args, config, state_manager)
+    elif args.command in ("meme", "types-of"):
+        return cmd_meme(args, config, state_manager)
 
     parser.print_help()
     return 0

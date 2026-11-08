@@ -5243,3 +5243,194 @@ async function cloneStyle(jobId, layout, caption, bg) {
 }
 
 document.addEventListener("DOMContentLoaded", refreshLongformQuota);
+
+
+// =========================================================================
+// MEME & TYPES OF... STUDIO FRONTEND CONTROLLER
+// =========================================================================
+
+let _memeCategoriesData = null;
+
+async function initMemeStudio() {
+  try {
+    const res = await fetch("/api/meme/categories");
+    if (res.ok) {
+      _memeCategoriesData = await res.json();
+      populateMemePresets();
+    }
+  } catch (err) {
+    console.debug("Failed to load meme categories:", err);
+  }
+  refreshMemeQuota();
+}
+
+async function refreshMemeQuota() {
+  try {
+    const res = await fetch("/api/meme/quota");
+    if (res.ok) {
+      const data = await res.json();
+      const infoEl = document.getElementById("meme-quota-info");
+      const badgeEl = document.getElementById("meme-quota-badge");
+      if (infoEl) {
+        infoEl.textContent = `${data.used_today} / ${data.cap} uploads used today (${data.remaining_today} left)`;
+      }
+      if (badgeEl) {
+        badgeEl.textContent = `${data.remaining_today} uploads left`;
+      }
+    }
+  } catch (err) {
+    console.debug("Failed to refresh meme quota:", err);
+  }
+}
+
+function onMemeModeChange() {
+  const mode = document.getElementById("meme-mode-select")?.value || "country_meme";
+  const catSelect = document.getElementById("meme-category-select");
+  if (catSelect) {
+    if (mode === "country_meme") {
+      catSelect.value = "countries";
+    } else if (catSelect.value === "countries") {
+      catSelect.value = "relatable";
+    }
+  }
+  populateMemePresets();
+}
+
+function onMemeCategoryChange() {
+  populateMemePresets();
+}
+
+function populateMemePresets() {
+  const presetSelect = document.getElementById("meme-preset-select");
+  if (!presetSelect || !_memeCategoriesData) return;
+
+  const mode = document.getElementById("meme-mode-select")?.value || "country_meme";
+  const category = document.getElementById("meme-category-select")?.value || "countries";
+
+  presetSelect.innerHTML = '<option value="">-- Choose Curated Topic --</option>';
+
+  const topics = mode === "country_meme" 
+    ? (_memeCategoriesData.country_topics || [])
+    : (_memeCategoriesData.types_of_topics || []);
+
+  topics.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    presetSelect.appendChild(opt);
+  });
+}
+
+function onMemePresetChange() {
+  const preset = document.getElementById("meme-preset-select")?.value;
+  const customInput = document.getElementById("meme-custom-topic");
+  if (preset && customInput) {
+    customInput.value = preset;
+  }
+}
+
+async function fetchMemeTopicIdea() {
+  const mode = document.getElementById("meme-mode-select")?.value || "country_meme";
+  const category = document.getElementById("meme-category-select")?.value || "countries";
+  const customInput = document.getElementById("meme-custom-topic");
+  const btn = document.getElementById("meme-surprise-btn");
+
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/meme/idea?category=${encodeURIComponent(category)}&mode=${encodeURIComponent(mode)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (customInput && data.topic) {
+        customInput.value = data.topic;
+        customInput.focus();
+      }
+    }
+  } catch (err) {
+    console.debug("Failed to fetch meme topic idea:", err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function generateMemeVideo() {
+  const mode = document.getElementById("meme-mode-select")?.value || "country_meme";
+  const category = document.getElementById("meme-category-select")?.value || "countries";
+  const customTopic = document.getElementById("meme-custom-topic")?.value?.trim();
+  const presetTopic = document.getElementById("meme-preset-select")?.value;
+  const topic = customTopic || presetTopic || "";
+
+  const segments = parseInt(document.getElementById("meme-segments-select")?.value || "6", 10);
+  const aspectRatio = document.getElementById("meme-aspect-select")?.value || "9:16";
+  const visualStyle = document.getElementById("meme-style-select")?.value || "anime_color";
+  const publish = document.getElementById("meme-publish-toggle")?.checked || false;
+
+  const btn = document.getElementById("meme-generate-btn");
+  const statusEl = document.getElementById("meme-status");
+  const resultCard = document.getElementById("meme-result-card");
+
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.innerHTML = `<span style="color: #38bdf8;">⏳ Synthesizing script, anime visuals &amp; multi-stem audio for: <strong>${topic || "Auto-Topic"}</strong>...</span>`;
+  }
+  if (resultCard) resultCard.style.display = "none";
+
+  try {
+    const res = await fetch("/api/meme", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: mode,
+        category: category,
+        topic: topic,
+        segment_count: segments,
+        aspect_ratio: aspectRatio,
+        visual_style: visualStyle,
+        publish: publish,
+      }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color: #4ade80;">✅ Video successfully generated! QC Passed: ${data.qc_passed}</span>`;
+      }
+      if (resultCard) {
+        resultCard.style.display = "block";
+        const thumbEl = document.getElementById("meme-preview-thumb");
+        const titleEl = document.getElementById("meme-result-title");
+        const durEl = document.getElementById("meme-result-duration");
+        const aspEl = document.getElementById("meme-result-aspect");
+        const tagsEl = document.getElementById("meme-result-tags");
+        const vLink = document.getElementById("meme-result-video-link");
+        const ytLink = document.getElementById("meme-result-yt-link");
+
+        if (titleEl) titleEl.textContent = data.title;
+        if (durEl) durEl.textContent = `${Number(data.duration).toFixed(1)}s`;
+        if (aspEl) aspEl.textContent = data.aspect_ratio;
+        if (tagsEl && data.hashtags) tagsEl.textContent = data.hashtags.join(" ");
+
+        if (vLink) {
+          vLink.href = `/api/output/${encodeURIComponent(data.video_path.split(/[\\\\/]/).pop())}`;
+        }
+        if (ytLink) {
+          if (data.youtube_url) {
+            ytLink.href = data.youtube_url;
+            ytLink.style.display = "inline-flex";
+          } else {
+            ytLink.style.display = "none";
+          }
+        }
+      }
+      refreshMemeQuota();
+    } else {
+      const err = data.detail || "Meme generation failed";
+      if (statusEl) statusEl.innerHTML = `<span style="color: #f87171;">❌ Error: ${err}</span>`;
+    }
+  } catch (err) {
+    if (statusEl) statusEl.innerHTML = `<span style="color: #f87171;">❌ Network error: ${err}</span>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", initMemeStudio);
