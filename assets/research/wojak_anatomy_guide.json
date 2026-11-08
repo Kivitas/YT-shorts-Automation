@@ -1,0 +1,4247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "meta": {
+    "title": "Procedural Wojak Anatomy & Visual Asset Specification",
+    "version": "1.0.0",
+    "target_canvas": {
+      "width": 600,
+      "height": 1000,
+      "aspect_ratio": "3:5",
+      "supersampling_factor": 2,
+      "internal_resolution": [
+        1200,
+        2000
+      ],
+      "resampling_filter": "LANCZOS"
+    },
+    "description": "Comprehensive vector, polygon, coordinate, and parametric specifications for 100% procedural PIL drawing of Wojak archetypes, expressions, clothing, props, and demographic variations without external raster assets."
+  },
+  "canvas_coordinate_system": {
+    "origin": "top-left (0,0)",
+    "center_x": 300.0,
+    "key_anchors": {
+      "cranium_apex": [
+        300.0,
+        134.0
+      ],
+      "head_center": [
+        300.0,
+        250.0
+      ],
+      "brow_line": 200.0,
+      "eye_line": 236.0,
+      "eye_left": [
+        262.0,
+        236.0
+      ],
+      "eye_right": [
+        338.0,
+        236.0
+      ],
+      "nose_root": [
+        300.0,
+        254.0
+      ],
+      "nose_tip": [
+        293.0,
+        276.0
+      ],
+      "nose_base": [
+        302.0,
+        281.0
+      ],
+      "mouth_center": [
+        300.0,
+        306.0
+      ],
+      "chin_tip": [
+        300.0,
+        356.0
+      ],
+      "ear_left_root": [
+        198.0,
+        252.0
+      ],
+      "ear_right_root": [
+        402.0,
+        252.0
+      ],
+      "neck_top_left": [
+        266.0,
+        338.0
+      ],
+      "neck_top_right": [
+        334.0,
+        338.0
+      ],
+      "neck_base_left": [
+        262.0,
+        410.0
+      ],
+      "neck_base_right": [
+        338.0,
+        410.0
+      ],
+      "shoulder_left": [
+        188.0,
+        420.0
+      ],
+      "shoulder_right": [
+        412.0,
+        420.0
+      ],
+      "torso_box": {
+        "top_left": [
+          188.0,
+          392.0
+        ],
+        "bottom_right": [
+          412.0,
+          652.0
+        ]
+      },
+      "left_hand": [
+        150.0,
+        628.0
+      ],
+      "right_hand": [
+        456.0,
+        606.0
+      ],
+      "hip_left": [
+        252.0,
+        640.0
+      ],
+      "hip_right": [
+        348.0,
+        640.0
+      ],
+      "feet_left": [
+        238.0,
+        952.0
+      ],
+      "feet_right": [
+        362.0,
+        952.0
+      ]
+    }
+  },
+  "rendering_pipeline": {
+    "pipeline_stages": [
+      "1. Canvas Initialization (Supersampled 1200x2000 RGBA)",
+      "2. Back Layer Rendering (Rear hair, back headscarf, back chignon bun)",
+      "3. Lower Body Rendering (Legs, shoes, skirts/trousers)",
+      "4. Torso & Neck Rendering (Neck cylinder, torso shape, base clothes)",
+      "5. Outer Clothing Layer (Doctor coat, nurse scrubs, hospital gown, apron)",
+      "6. Head Silhouette & Fill (Parametric head polygon, skin tone fill)",
+      "7. Shadow & Cross-Hatching (45-degree angle hatching right of shade threshold x=330)",
+      "8. Ears & Ear Notches",
+      "9. Age & Stress Creases (Forehead wrinkles, crow's feet, eye bags, nasolabial folds)",
+      "10. Facial Features (Eyes, pupils, sclera tint, eyebrows, nose, mouth cavity, teeth/tongue)",
+      "11. Facial Hair & Head Hair (Beard, stubble, bangs, headscarf front knot, tradwife headband)",
+      "12. Accessories & Eyewear (Spectacles, bandages, nose plasters, bruises)",
+      "13. Limbs & Hands (Arms polyline chain, hands ellipse/palm)",
+      "14. Props (Scrolls, tea cups, pasta pots, paracetamol box, clipboard, stethoscope)",
+      "15. Foreground FX (Tears streaming, sweat drops, steam puffs)",
+      "16. Downscaling (LANCZOS downsampling to 600x1000 RGBA)"
+    ],
+    "stroke_algorithms": {
+      "wobble_jitter": {
+        "description": "Simulates hand-drawn MS Paint shaky mouse line art using low-frequency sinusoidal sway combined with Gaussian noise.",
+        "formula": "dx = sway * 0.5 + N(0, amp * 0.35); dy = -sway * 0.3 + N(0, amp * 0.35); sway = amp * sin(i * 0.8 + phase)",
+        "default_amplitude": 1.0,
+        "node_densification_step_px": 12.0
+      },
+      "brush_caps": {
+        "join_style": "round",
+        "method": "Draw circular disk at every polyline vertex with radius = round(width * supersample / 2) to eliminate seams."
+      },
+      "double_pass_sketch": {
+        "probability": 0.35,
+        "secondary_width_multiplier": 0.42,
+        "secondary_amplitude": 1.3,
+        "description": "Adds characteristic messy MS Paint secondary sketchy stroke on key contours."
+      }
+    }
+  },
+  "palettes": {
+    "skin_tones": [
+      {
+        "id": "fair_pale",
+        "label": "Fair / Pale",
+        "hex": "#FDDFD0",
+        "rgb": [
+          253,
+          223,
+          208,
+          255
+        ],
+        "shadow_hex": "#D8B2A0",
+        "shadow_rgb": [
+          216,
+          178,
+          160,
+          255
+        ],
+        "notes": "Classic pale caucasian / Nordic base, pinkish undertone."
+      },
+      {
+        "id": "olive_mediterranean",
+        "label": "Olive / Mediterranean",
+        "hex": "#ECC8A8",
+        "rgb": [
+          236,
+          200,
+          168,
+          255
+        ],
+        "shadow_hex": "#C49E7C",
+        "shadow_rgb": [
+          196,
+          158,
+          124,
+          255
+        ],
+        "notes": "Southern European, Italian nonna, Greek / Spanish complexion."
+      },
+      {
+        "id": "east_asian",
+        "label": "East Asian",
+        "hex": "#F8DFC2",
+        "rgb": [
+          248,
+          223,
+          194,
+          255
+        ],
+        "shadow_hex": "#D0B392",
+        "shadow_rgb": [
+          208,
+          179,
+          146,
+          255
+        ],
+        "notes": "Warm golden undertone, smooth porcelain tint."
+      },
+      {
+        "id": "south_asian",
+        "label": "South Asian",
+        "hex": "#C68642",
+        "rgb": [
+          198,
+          134,
+          66,
+          255
+        ],
+        "shadow_hex": "#9E642E",
+        "shadow_rgb": [
+          158,
+          100,
+          46,
+          255
+        ],
+        "notes": "Rich golden brown, Indian / Pakistani / Bangladeshi tone."
+      },
+      {
+        "id": "middle_eastern_tan",
+        "label": "Middle Eastern / Tan",
+        "hex": "#D2A177",
+        "rgb": [
+          210,
+          161,
+          119,
+          255
+        ],
+        "shadow_hex": "#A77750",
+        "shadow_rgb": [
+          167,
+          119,
+          80,
+          255
+        ],
+        "notes": "Warm sun-bronzed desert olive-tan."
+      },
+      {
+        "id": "african_black",
+        "label": "African / Black",
+        "hex": "#5C3826",
+        "rgb": [
+          92,
+          56,
+          38,
+          255
+        ],
+        "shadow_hex": "#3D2214",
+        "shadow_rgb": [
+          61,
+          34,
+          20,
+          255
+        ],
+        "notes": "Deep rich umber / dark brown tone with mahogany warmth."
+      },
+      {
+        "id": "latino_amber",
+        "label": "Latino / Amber",
+        "hex": "#D49A6A",
+        "rgb": [
+          212,
+          154,
+          106,
+          255
+        ],
+        "shadow_hex": "#A87247",
+        "shadow_rgb": [
+          168,
+          114,
+          71,
+          255
+        ],
+        "notes": "Warm amber caramel complexion."
+      },
+      {
+        "id": "classic_paper_white",
+        "label": "Classic Meme Paper White",
+        "hex": "#FBFBFB",
+        "rgb": [
+          251,
+          251,
+          251,
+          255
+        ],
+        "shadow_hex": "#D4D4D4",
+        "shadow_rgb": [
+          212,
+          212,
+          212,
+          255
+        ],
+        "notes": "The authentic 2009 MS Paint Wojak / Feels Guy stark white fill."
+      },
+      {
+        "id": "npc_slate_grey",
+        "label": "NPC Slate Grey",
+        "hex": "#B0B4B8",
+        "rgb": [
+          176,
+          180,
+          184,
+          255
+        ],
+        "shadow_hex": "#94989C",
+        "shadow_rgb": [
+          148,
+          152,
+          156,
+          255
+        ],
+        "notes": "Monolithic unshaded dull grey for the NPC archetype."
+      },
+      {
+        "id": "rage_red",
+        "label": "Rage / Sunburnt Red",
+        "hex": "#E86A6A",
+        "rgb": [
+          232,
+          106,
+          106,
+          255
+        ],
+        "shadow_hex": "#B83E3E",
+        "shadow_rgb": [
+          184,
+          62,
+          62,
+          255
+        ],
+        "notes": "Flushed screaming rage, blood-pressure spike or extreme sunburn."
+      }
+    ],
+    "ink_and_strokes": {
+      "primary_ink": [
+        16,
+        16,
+        16,
+        255
+      ],
+      "heavy_ink": [
+        0,
+        0,
+        0,
+        255
+      ],
+      "hatch_grey": [
+        190,
+        190,
+        190,
+        255
+      ],
+      "dark_crease": [
+        105,
+        105,
+        105,
+        255
+      ],
+      "tear_cyan": [
+        93,
+        183,
+        222,
+        210
+      ],
+      "tear_highlight": [
+        220,
+        245,
+        255,
+        240
+      ],
+      "sclera_red": [
+        255,
+        138,
+        128,
+        255
+      ],
+      "blood_crimson": [
+        183,
+        28,
+        28,
+        255
+      ],
+      "bruise_purple": [
+        92,
+        45,
+        97,
+        140
+      ],
+      "bruise_plum": [
+        136,
+        57,
+        98,
+        120
+      ],
+      "bruise_yellow_green": [
+        158,
+        151,
+        72,
+        90
+      ]
+    },
+    "hair_colors": {
+      "black": [
+        24,
+        24,
+        26,
+        255
+      ],
+      "doomer_dark": [
+        30,
+        30,
+        36,
+        255
+      ],
+      "nordic_blonde": [
+        245,
+        208,
+        97,
+        255
+      ],
+      "nordic_beard": [
+        229,
+        184,
+        66,
+        255
+      ],
+      "tradwife_blonde": [
+        250,
+        215,
+        105,
+        255
+      ],
+      "elderly_grey": [
+        216,
+        216,
+        216,
+        255
+      ],
+      "elderly_white": [
+        245,
+        245,
+        245,
+        255
+      ],
+      "brown_chestnut": [
+        101,
+        67,
+        33,
+        255
+      ]
+    },
+    "clothing_colors": {
+      "hospital_gown": [
+        168,
+        218,
+        220,
+        255
+      ],
+      "doctor_coat": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "doctor_lapel_shadow": [
+        232,
+        236,
+        240,
+        255
+      ],
+      "nurse_scrubs_blue": [
+        59,
+        130,
+        246,
+        255
+      ],
+      "nurse_scrubs_green": [
+        16,
+        185,
+        129,
+        255
+      ],
+      "tradwife_dress": [
+        74,
+        144,
+        226,
+        255
+      ],
+      "nonna_shawl": [
+        139,
+        0,
+        0,
+        255
+      ],
+      "apron_white": [
+        248,
+        249,
+        250,
+        255
+      ],
+      "parchment_scroll": [
+        247,
+        235,
+        198,
+        255
+      ],
+      "parchment_roller": [
+        139,
+        90,
+        43,
+        255
+      ],
+      "paracetamol_blue": [
+        2,
+        136,
+        209,
+        255
+      ]
+    }
+  },
+  "head_shapes": [
+    {
+      "id": "classic_wojak",
+      "name": "Classic Wojak / Feels Guy",
+      "description": "The archetypal 2009 melancholy bald man with an egg-like sloping cranium and soft recessed jaw.",
+      "type": "superellipse_sloped",
+      "geometry": {
+        "center": [
+          300.0,
+          248.0
+        ],
+        "radii": [
+          102.0,
+          108.0
+        ],
+        "power": 2.4,
+        "sloping_offset_x": 4.0,
+        "sloping_offset_y": -6.0
+      },
+      "polygon_vertices": [
+        [
+          300.0,
+          140.0
+        ],
+        [
+          338.0,
+          146.0
+        ],
+        [
+          372.0,
+          168.0
+        ],
+        [
+          394.0,
+          202.0
+        ],
+        [
+          404.0,
+          244.0
+        ],
+        [
+          398.0,
+          288.0
+        ],
+        [
+          374.0,
+          324.0
+        ],
+        [
+          342.0,
+          350.0
+        ],
+        [
+          300.0,
+          356.0
+        ],
+        [
+          258.0,
+          350.0
+        ],
+        [
+          226.0,
+          324.0
+        ],
+        [
+          202.0,
+          288.0
+        ],
+        [
+          196.0,
+          244.0
+        ],
+        [
+          206.0,
+          202.0
+        ],
+        [
+          228.0,
+          168.0
+        ],
+        [
+          262.0,
+          146.0
+        ]
+      ],
+      "ears": {
+        "style": "classic_arc",
+        "left": {
+          "cx": 196.0,
+          "cy": 252.0,
+          "rx": 13.0,
+          "ry": 22.0,
+          "notch": true
+        },
+        "right": {
+          "cx": 404.0,
+          "cy": 252.0,
+          "rx": 13.0,
+          "ry": 22.0,
+          "notch": true
+        }
+      },
+      "jaw": {
+        "structure": "soft_recessed",
+        "double_chin_curve": [
+          [
+            280.0,
+            356.0
+          ],
+          [
+            300.0,
+            362.0
+          ],
+          [
+            320.0,
+            356.0
+          ]
+        ]
+      },
+      "drawing_instructions": "Draw smooth closed polygon with wobble amplitude 1.0; apply diagonal grey hatching on right side for x > 330."
+    },
+    {
+      "id": "gigachad",
+      "name": "Gigachad (Chiseled Jaw)",
+      "description": "Hyper-masculine, sharply sculpted face with wide mandibular angles, cleft chin, high cheekbones, and thick muscular neck.",
+      "type": "hexagonal_sculpted",
+      "polygon_vertices": [
+        [
+          300.0,
+          134.0
+        ],
+        [
+          348.0,
+          140.0
+        ],
+        [
+          382.0,
+          166.0
+        ],
+        [
+          396.0,
+          208.0
+        ],
+        [
+          408.0,
+          242.0
+        ],
+        [
+          388.0,
+          298.0
+        ],
+        [
+          382.0,
+          322.0
+        ],
+        [
+          332.0,
+          372.0
+        ],
+        [
+          308.0,
+          374.0
+        ],
+        [
+          300.0,
+          366.0
+        ],
+        [
+          292.0,
+          374.0
+        ],
+        [
+          268.0,
+          372.0
+        ],
+        [
+          218.0,
+          322.0
+        ],
+        [
+          212.0,
+          298.0
+        ],
+        [
+          192.0,
+          242.0
+        ],
+        [
+          204.0,
+          208.0
+        ],
+        [
+          218.0,
+          166.0
+        ],
+        [
+          252.0,
+          140.0
+        ]
+      ],
+      "chin": {
+        "type": "square_cleft",
+        "cleft_line": [
+          [
+            300.0,
+            362.0
+          ],
+          [
+            300.0,
+            374.0
+          ]
+        ],
+        "width": 64.0
+      },
+      "cheekbones": {
+        "lines": [
+          [
+            [
+              216.0,
+              246.0
+            ],
+            [
+              248.0,
+              274.0
+            ]
+          ],
+          [
+            [
+              384.0,
+              246.0
+            ],
+            [
+              352.0,
+              274.0
+            ]
+          ]
+        ]
+      },
+      "neck": {
+        "type": "heavy_muscular",
+        "left_boundary": 234.0,
+        "right_boundary": 366.0,
+        "sternocleidomastoid_tendons": [
+          [
+            [
+              252.0,
+              338.0
+            ],
+            [
+              286.0,
+              410.0
+            ]
+          ],
+          [
+            [
+              348.0,
+              338.0
+            ],
+            [
+              314.0,
+              410.0
+            ]
+          ]
+        ]
+      },
+      "stubble": {
+        "style": "jawline_stipple",
+        "color": [
+          34,
+          34,
+          34,
+          180
+        ],
+        "y_range": [
+          300.0,
+          370.0
+        ]
+      },
+      "drawing_instructions": "Use angular line joints; draw cleft chin line and deep jaw shading; widen neck by 30% and add internal neck tendons."
+    },
+    {
+      "id": "doomer",
+      "name": "The Doomer",
+      "description": "Depressed young man wearing a black knit beanie pulled low over forehead, unkempt bangs, gaunt hollow cheeks, and dangling cigarette.",
+      "type": "beanie_gaunt",
+      "polygon_vertices": [
+        [
+          300.0,
+          144.0
+        ],
+        [
+          342.0,
+          150.0
+        ],
+        [
+          376.0,
+          178.0
+        ],
+        [
+          392.0,
+          218.0
+        ],
+        [
+          398.0,
+          252.0
+        ],
+        [
+          376.0,
+          292.0
+        ],
+        [
+          358.0,
+          324.0
+        ],
+        [
+          332.0,
+          350.0
+        ],
+        [
+          300.0,
+          354.0
+        ],
+        [
+          268.0,
+          350.0
+        ],
+        [
+          242.0,
+          324.0
+        ],
+        [
+          224.0,
+          292.0
+        ],
+        [
+          202.0,
+          252.0
+        ],
+        [
+          208.0,
+          218.0
+        ],
+        [
+          224.0,
+          178.0
+        ],
+        [
+          258.0,
+          150.0
+        ]
+      ],
+      "beanie": {
+        "dome_polygon": [
+          [
+            194.0,
+            218.0
+          ],
+          [
+            198.0,
+            160.0
+          ],
+          [
+            222.0,
+            122.0
+          ],
+          [
+            260.0,
+            102.0
+          ],
+          [
+            300.0,
+            98.0
+          ],
+          [
+            340.0,
+            102.0
+          ],
+          [
+            378.0,
+            122.0
+          ],
+          [
+            402.0,
+            160.0
+          ],
+          [
+            406.0,
+            218.0
+          ]
+        ],
+        "cuff_rectangle": [
+          190.0,
+          192.0,
+          410.0,
+          222.0
+        ],
+        "cuff_ribbing_step_x": 10.0,
+        "fill": [
+          30,
+          30,
+          36,
+          255
+        ],
+        "ribbing_color": [
+          48,
+          48,
+          56,
+          255
+        ]
+      },
+      "hair_bangs": {
+        "tufts": [
+          [
+            [
+              216.0,
+              218.0
+            ],
+            [
+              222.0,
+              234.0
+            ],
+            [
+              226.0,
+              220.0
+            ]
+          ],
+          [
+            [
+              232.0,
+              220.0
+            ],
+            [
+              240.0,
+              240.0
+            ],
+            [
+              246.0,
+              222.0
+            ]
+          ],
+          [
+            [
+              364.0,
+              220.0
+            ],
+            [
+              370.0,
+              238.0
+            ],
+            [
+              376.0,
+              220.0
+            ]
+          ]
+        ]
+      },
+      "hollow_cheeks": {
+        "lines": [
+          [
+            [
+              236.0,
+              280.0
+            ],
+            [
+              248.0,
+              304.0
+            ]
+          ],
+          [
+            [
+              364.0,
+              280.0
+            ],
+            [
+              352.0,
+              304.0
+            ]
+          ]
+        ]
+      },
+      "cigarette": {
+        "body": [
+          [
+            316.0,
+            310.0
+          ],
+          [
+            360.0,
+            326.0
+          ]
+        ],
+        "filter": [
+          [
+            316.0,
+            310.0
+          ],
+          [
+            328.0,
+            314.5
+          ]
+        ],
+        "ember_tip": [
+          362.0,
+          326.5
+        ],
+        "smoke_plume": [
+          [
+            364.0,
+            326.0
+          ],
+          [
+            374.0,
+            314.0
+          ],
+          [
+            368.0,
+            298.0
+          ],
+          [
+            382.0,
+            282.0
+          ],
+          [
+            376.0,
+            264.0
+          ]
+        ]
+      },
+      "drawing_instructions": "Overlay dark knit beanie with vertical ribbing lines; draw messy hair tufts protruding beneath cuff; add gaunt cheek contours and cigarette smoke."
+    },
+    {
+      "id": "soyjak",
+      "name": "Soyjak (Open-Mouth Pointing)",
+      "description": "Hyper-expressive open gaping agape mouth, elongated dropped jaw, spectacles, raised frantic eyebrows, and patchy neckbeard.",
+      "type": "elongated_dropped_jaw",
+      "polygon_vertices": [
+        [
+          300.0,
+          136.0
+        ],
+        [
+          344.0,
+          142.0
+        ],
+        [
+          380.0,
+          172.0
+        ],
+        [
+          398.0,
+          212.0
+        ],
+        [
+          406.0,
+          256.0
+        ],
+        [
+          402.0,
+          310.0
+        ],
+        [
+          390.0,
+          356.0
+        ],
+        [
+          360.0,
+          388.0
+        ],
+        [
+          300.0,
+          396.0
+        ],
+        [
+          240.0,
+          388.0
+        ],
+        [
+          210.0,
+          356.0
+        ],
+        [
+          198.0,
+          310.0
+        ],
+        [
+          194.0,
+          256.0
+        ],
+        [
+          202.0,
+          212.0
+        ],
+        [
+          220.0,
+          172.0
+        ],
+        [
+          256.0,
+          142.0
+        ]
+      ],
+      "open_mouth_cavity": {
+        "outer_boundary": [
+          [
+            256.0,
+            292.0
+          ],
+          [
+            300.0,
+            288.0
+          ],
+          [
+            344.0,
+            292.0
+          ],
+          [
+            348.0,
+            328.0
+          ],
+          [
+            340.0,
+            362.0
+          ],
+          [
+            300.0,
+            366.0
+          ],
+          [
+            260.0,
+            362.0
+          ],
+          [
+            252.0,
+            328.0
+          ]
+        ],
+        "fill": [
+          24,
+          8,
+          8,
+          255
+        ],
+        "upper_teeth_row": {
+          "y_top": 290.0,
+          "y_bottom": 302.0,
+          "tooth_count": 6,
+          "color": [
+            255,
+            255,
+            255,
+            255
+          ]
+        },
+        "tongue": {
+          "ellipse": [
+            278.0,
+            344.0,
+            322.0,
+            364.0
+          ],
+          "color": [
+            229,
+            115,
+            115,
+            255
+          ]
+        }
+      },
+      "spectacles": {
+        "frame_style": "thick_rectangular",
+        "left_lens": [
+          232.0,
+          216.0,
+          282.0,
+          252.0
+        ],
+        "right_lens": [
+          318.0,
+          216.0,
+          368.0,
+          252.0
+        ],
+        "bridge": [
+          [
+            282.0,
+            232.0
+          ],
+          [
+            318.0,
+            232.0
+          ]
+        ],
+        "stroke_width": 4.5,
+        "color": [
+          20,
+          20,
+          20,
+          255
+        ]
+      },
+      "patchy_neckbeard": {
+        "style": "scraggly_jaw_fringe",
+        "stroke_color": [
+          36,
+          36,
+          36,
+          255
+        ],
+        "points": [
+          [
+            216.0,
+            348.0
+          ],
+          [
+            232.0,
+            376.0
+          ],
+          [
+            254.0,
+            394.0
+          ],
+          [
+            300.0,
+            404.0
+          ],
+          [
+            346.0,
+            394.0
+          ],
+          [
+            368.0,
+            376.0
+          ],
+          [
+            384.0,
+            348.0
+          ]
+        ]
+      },
+      "drawing_instructions": "Extend jaw by 40px downwards; render black mouth cavern with white square teeth blocks and pink tongue; draw thick glasses and patchy chin stubble."
+    },
+    {
+      "id": "npc",
+      "name": "NPC (Gray Rounded)",
+      "description": "Minimalist, flat slate grey, completely smooth geometric capsule head with blank expressionless stare.",
+      "type": "smooth_capsule_gray",
+      "polygon_vertices": [
+        [
+          300.0,
+          142.0
+        ],
+        [
+          344.0,
+          148.0
+        ],
+        [
+          380.0,
+          178.0
+        ],
+        [
+          398.0,
+          222.0
+        ],
+        [
+          402.0,
+          268.0
+        ],
+        [
+          394.0,
+          312.0
+        ],
+        [
+          368.0,
+          346.0
+        ],
+        [
+          336.0,
+          360.0
+        ],
+        [
+          300.0,
+          362.0
+        ],
+        [
+          264.0,
+          360.0
+        ],
+        [
+          232.0,
+          346.0
+        ],
+        [
+          206.0,
+          312.0
+        ],
+        [
+          198.0,
+          268.0
+        ],
+        [
+          202.0,
+          222.0
+        ],
+        [
+          220.0,
+          178.0
+        ],
+        [
+          256.0,
+          148.0
+        ]
+      ],
+      "skin_override": [
+        176,
+        180,
+        184,
+        255
+      ],
+      "nose": {
+        "style": "sharp_triangle",
+        "polygon": [
+          [
+            300.0,
+            252.0
+          ],
+          [
+            290.0,
+            280.0
+          ],
+          [
+            302.0,
+            280.0
+          ]
+        ],
+        "width": 2.5
+      },
+      "eyes": {
+        "style": "solid_black_dots",
+        "left": [
+          262.0,
+          238.0
+        ],
+        "right": [
+          338.0,
+          238.0
+        ],
+        "radius": 5.5
+      },
+      "mouth": {
+        "style": "dead_straight_slash",
+        "line": [
+          [
+            280.0,
+            310.0
+          ],
+          [
+            320.0,
+            310.0
+          ]
+        ],
+        "width": 3.0
+      },
+      "shading_enabled": false,
+      "drawing_instructions": "Fill with flat slate grey #B0B4B8; suppress all shadow hatching, wrinkles, pupils, and ear notches; draw rigid geometric triangle nose."
+    },
+    {
+      "id": "tradwife_nonna",
+      "name": "Tradwife / Nonna",
+      "description": "Two distinct feminine variants: Tradwife (soft oval jaw, wavy golden bob, blue floral headband, feminine eyelashes) or Nonna/Babushka (plump face, floral headscarf tied under chin, apron, round spectacles).",
+      "type": "feminine_curved_dual",
+      "tradwife": {
+        "jaw_polygon": [
+          [
+            300.0,
+            144.0
+          ],
+          [
+            338.0,
+            150.0
+          ],
+          [
+            368.0,
+            176.0
+          ],
+          [
+            386.0,
+            214.0
+          ],
+          [
+            392.0,
+            252.0
+          ],
+          [
+            382.0,
+            290.0
+          ],
+          [
+            354.0,
+            326.0
+          ],
+          [
+            326.0,
+            348.0
+          ],
+          [
+            300.0,
+            350.0
+          ],
+          [
+            274.0,
+            348.0
+          ],
+          [
+            246.0,
+            326.0
+          ],
+          [
+            218.0,
+            290.0
+          ],
+          [
+            208.0,
+            252.0
+          ],
+          [
+            214.0,
+            214.0
+          ],
+          [
+            232.0,
+            176.0
+          ],
+          [
+            262.0,
+            150.0
+          ]
+        ],
+        "hair_wavy_bob": {
+          "fill": [
+            250,
+            215,
+            105,
+            255
+          ],
+          "left_curls": [
+            [
+              214.0,
+              190.0
+            ],
+            [
+              182.0,
+              230.0
+            ],
+            [
+              178.0,
+              290.0
+            ],
+            [
+              192.0,
+              340.0
+            ],
+            [
+              216.0,
+              350.0
+            ],
+            [
+              218.0,
+              310.0
+            ]
+          ],
+          "right_curls": [
+            [
+              386.0,
+              190.0
+            ],
+            [
+              418.0,
+              230.0
+            ],
+            [
+              422.0,
+              290.0
+            ],
+            [
+              408.0,
+              340.0
+            ],
+            [
+              384.0,
+              350.0
+            ],
+            [
+              382.0,
+              310.0
+            ]
+          ]
+        },
+        "headband": {
+          "arc": [
+            198.0,
+            168.0,
+            402.0,
+            204.0
+          ],
+          "fill": [
+            74,
+            144,
+            226,
+            255
+          ],
+          "width": 14.0
+        },
+        "eyelashes": {
+          "count": 3,
+          "length": 8.0,
+          "curve_angle_deg": -35.0
+        }
+      },
+      "nonna_babushka": {
+        "headscarf_back": [
+          [
+            170.0,
+            240.0
+          ],
+          [
+            184.0,
+            160.0
+          ],
+          [
+            230.0,
+            110.0
+          ],
+          [
+            300.0,
+            96.0
+          ],
+          [
+            370.0,
+            110.0
+          ],
+          [
+            416.0,
+            160.0
+          ],
+          [
+            430.0,
+            240.0
+          ],
+          [
+            420.0,
+            330.0
+          ],
+          [
+            300.0,
+            380.0
+          ],
+          [
+            180.0,
+            330.0
+          ]
+        ],
+        "knot_under_chin": {
+          "knot_ellipse": [
+            286.0,
+            356.0,
+            314.0,
+            376.0
+          ],
+          "tail_left": [
+            [
+              292.0,
+              372.0
+            ],
+            [
+              276.0,
+              404.0
+            ],
+            [
+              290.0,
+              400.0
+            ]
+          ],
+          "tail_right": [
+            [
+              308.0,
+              372.0
+            ],
+            [
+              324.0,
+              404.0
+            ],
+            [
+              310.0,
+              400.0
+            ]
+          ]
+        },
+        "headscarf_pattern": "polka_dot",
+        "headscarf_color": [
+          139,
+          0,
+          0,
+          255
+        ],
+        "dot_color": [
+          248,
+          235,
+          235,
+          255
+        ],
+        "spectacles": {
+          "style": "round_wireframe",
+          "left_circle": [
+            246.0,
+            222.0,
+            278.0,
+            254.0
+          ],
+          "right_circle": [
+            322.0,
+            222.0,
+            354.0,
+            254.0
+          ],
+          "bridge": [
+            [
+              278.0,
+              238.0
+            ],
+            [
+              322.0,
+              238.0
+            ]
+          ],
+          "color": [
+            180,
+            150,
+            70,
+            255
+          ]
+        }
+      },
+      "drawing_instructions": "For Tradwife: render flowing golden bob and cornflower headband; for Nonna: wrap head in red patterned scarf tied beneath chin and add round wireframe spectacles."
+    },
+    {
+      "id": "nordic_gamer",
+      "name": "Nordic Gamer (Yes Chad)",
+      "description": "Right-facing side profile with prominent straight classical nose, clean 90-degree jawline, sculpted full blonde beard, and swept-back hair.",
+      "type": "side_profile_right",
+      "profile_silhouette": [
+        [
+          260.0,
+          136.0
+        ],
+        [
+          310.0,
+          142.0
+        ],
+        [
+          336.0,
+          172.0
+        ],
+        [
+          342.0,
+          214.0
+        ],
+        [
+          384.0,
+          246.0
+        ],
+        [
+          358.0,
+          260.0
+        ],
+        [
+          354.0,
+          276.0
+        ],
+        [
+          360.0,
+          288.0
+        ],
+        [
+          352.0,
+          302.0
+        ],
+        [
+          376.0,
+          324.0
+        ],
+        [
+          374.0,
+          354.0
+        ],
+        [
+          336.0,
+          378.0
+        ],
+        [
+          290.0,
+          386.0
+        ],
+        [
+          270.0,
+          380.0
+        ],
+        [
+          250.0,
+          338.0
+        ],
+        [
+          236.0,
+          254.0
+        ]
+      ],
+      "nose": {
+        "root": [
+          342.0,
+          214.0
+        ],
+        "tip": [
+          384.0,
+          246.0
+        ],
+        "base": [
+          358.0,
+          260.0
+        ],
+        "style": "straight_greek_profile"
+      },
+      "hair": {
+        "style": "swept_back_blonde",
+        "fill": [
+          245,
+          208,
+          97,
+          255
+        ],
+        "strokes": [
+          [
+            [
+              260.0,
+              136.0
+            ],
+            [
+              236.0,
+              176.0
+            ],
+            [
+              230.0,
+              226.0
+            ]
+          ],
+          [
+            [
+              284.0,
+              138.0
+            ],
+            [
+              258.0,
+              180.0
+            ],
+            [
+              242.0,
+              240.0
+            ]
+          ],
+          [
+            [
+              310.0,
+              142.0
+            ],
+            [
+              288.0,
+              184.0
+            ],
+            [
+              264.0,
+              248.0
+            ]
+          ]
+        ]
+      },
+      "beard": {
+        "fill": [
+          229,
+          184,
+          66,
+          255
+        ],
+        "polygon": [
+          [
+            354.0,
+            276.0
+          ],
+          [
+            360.0,
+            288.0
+          ],
+          [
+            352.0,
+            302.0
+          ],
+          [
+            376.0,
+            324.0
+          ],
+          [
+            374.0,
+            354.0
+          ],
+          [
+            336.0,
+            378.0
+          ],
+          [
+            290.0,
+            386.0
+          ],
+          [
+            270.0,
+            380.0
+          ],
+          [
+            280.0,
+            320.0
+          ],
+          [
+            314.0,
+            290.0
+          ]
+        ]
+      },
+      "eye": {
+        "position": [
+          334.0,
+          230.0
+        ],
+        "style": "calm_side_slit",
+        "iris_color": [
+          93,
+          173,
+          226,
+          255
+        ],
+        "brow": [
+          [
+            320.0,
+            218.0
+          ],
+          [
+            346.0,
+            216.0
+          ]
+        ]
+      },
+      "drawing_instructions": "Draw pure right-facing profile; highlight straight nasal bridge, angular forward chin, golden sculpted beard block, and stoic blue eye."
+    }
+  ],
+  "expressions": [
+    {
+      "id": "crying",
+      "name": "Crying / Weeping",
+      "description": "Streaming translucent blue tears flowing down cheeks, bloodshot pink sclera, peaked grief eyebrows, and trembling wavy downturned mouth.",
+      "eyebrows": {
+        "left": [
+          [
+            240.0,
+            214.0
+          ],
+          [
+            280.0,
+            186.0
+          ]
+        ],
+        "right": [
+          [
+            320.0,
+            186.0
+          ],
+          [
+            360.0,
+            214.0
+          ]
+        ],
+        "style": "inverted_v_grief",
+        "width": 5.0
+      },
+      "eyes": {
+        "left_pos": [
+          262.0,
+          236.0
+        ],
+        "right_pos": [
+          338.0,
+          236.0
+        ],
+        "sclera_tint": [
+          255,
+          170,
+          170,
+          180
+        ],
+        "pupil_radius": 4.5,
+        "bloodshot_veins": [
+          [
+            [
+              252.0,
+              232.0
+            ],
+            [
+              257.0,
+              235.0
+            ]
+          ],
+          [
+            [
+              272.0,
+              232.0
+            ],
+            [
+              267.0,
+              235.0
+            ]
+          ],
+          [
+            [
+              328.0,
+              232.0
+            ],
+            [
+              333.0,
+              235.0
+            ]
+          ],
+          [
+            [
+              348.0,
+              232.0
+            ],
+            [
+              343.0,
+              235.0
+            ]
+          ]
+        ]
+      },
+      "tears": {
+        "wells": [
+          {
+            "center": [
+              262.0,
+              244.0
+            ],
+            "rx": 9.0,
+            "ry": 4.0
+          },
+          {
+            "center": [
+              338.0,
+              244.0
+            ],
+            "rx": 9.0,
+            "ry": 4.0
+          }
+        ],
+        "streams": [
+          [
+            [
+              262.0,
+              246.0
+            ],
+            [
+              258.0,
+              268.0
+            ],
+            [
+              264.0,
+              292.0
+            ],
+            [
+              260.0,
+              318.0
+            ],
+            [
+              263.0,
+              344.0
+            ]
+          ],
+          [
+            [
+              338.0,
+              246.0
+            ],
+            [
+              342.0,
+              268.0
+            ],
+            [
+              336.0,
+              292.0
+            ],
+            [
+              340.0,
+              318.0
+            ],
+            [
+              337.0,
+              344.0
+            ]
+          ]
+        ],
+        "stream_width": 3.2,
+        "falling_drops": [
+          {
+            "center": [
+              263.0,
+              352.0
+            ],
+            "rx": 4.0,
+            "ry": 6.5
+          },
+          {
+            "center": [
+              337.0,
+              352.0
+            ],
+            "rx": 4.0,
+            "ry": 6.5
+          }
+        ],
+        "color": [
+          93,
+          183,
+          222,
+          220
+        ],
+        "highlight_color": [
+          240,
+          250,
+          255,
+          255
+        ]
+      },
+      "mouth": {
+        "style": "quivering_weep",
+        "polyline": [
+          [
+            274.0,
+            318.0
+          ],
+          [
+            286.0,
+            308.0
+          ],
+          [
+            294.0,
+            312.0
+          ],
+          [
+            300.0,
+            306.0
+          ],
+          [
+            306.0,
+            312.0
+          ],
+          [
+            314.0,
+            308.0
+          ],
+          [
+            326.0,
+            318.0
+          ]
+        ],
+        "width": 4.5
+      }
+    },
+    {
+      "id": "smug",
+      "name": "Smug / Smirk",
+      "description": "Asymmetric sneer: high arched questioning left eyebrow, low furrowed right eyebrow, half-closed heavy lids, and mouth curled up on right side.",
+      "eyebrows": {
+        "left": [
+          [
+            238.0,
+            186.0
+          ],
+          [
+            280.0,
+            192.0
+          ]
+        ],
+        "right": [
+          [
+            320.0,
+            204.0
+          ],
+          [
+            362.0,
+            204.0
+          ]
+        ],
+        "style": "asymmetric_cocked",
+        "width": 5.0
+      },
+      "eyes": {
+        "style": "half_lidded_heavy",
+        "left_lid": [
+          [
+            248.0,
+            232.0
+          ],
+          [
+            276.0,
+            232.0
+          ]
+        ],
+        "right_lid": [
+          [
+            324.0,
+            232.0
+          ],
+          [
+            352.0,
+            232.0
+          ]
+        ],
+        "pupils": [
+          {
+            "center": [
+              262.0,
+              237.0
+            ],
+            "radius": 4.0
+          },
+          {
+            "center": [
+              338.0,
+              237.0
+            ],
+            "radius": 4.0
+          }
+        ]
+      },
+      "mouth": {
+        "style": "crooked_smirk",
+        "polyline": [
+          [
+            276.0,
+            308.0
+          ],
+          [
+            296.0,
+            310.0
+          ],
+          [
+            314.0,
+            306.0
+          ],
+          [
+            332.0,
+            292.0
+          ]
+        ],
+        "corner_crease": [
+          [
+            332.0,
+            290.0
+          ],
+          [
+            338.0,
+            286.0
+          ]
+        ],
+        "width": 4.5
+      }
+    },
+    {
+      "id": "screaming_shocked",
+      "name": "Screaming / Shocked",
+      "description": "Enormous gaping oval scream mouth cavity with teeth and uvula, wildly dilated circular eyes with pinpoint pupils, arched forehead panic wrinkles.",
+      "eyebrows": {
+        "left": [
+          [
+            236.0,
+            172.0
+          ],
+          [
+            282.0,
+            168.0
+          ]
+        ],
+        "right": [
+          [
+            318.0,
+            168.0
+          ],
+          [
+            364.0,
+            172.0
+          ]
+        ],
+        "style": "high_alarm_arch",
+        "width": 5.5
+      },
+      "eyes": {
+        "style": "bulging_dilated",
+        "sclera_left": {
+          "center": [
+            262.0,
+            232.0
+          ],
+          "rx": 16.0,
+          "ry": 18.0
+        },
+        "sclera_right": {
+          "center": [
+            338.0,
+            232.0
+          ],
+          "rx": 16.0,
+          "ry": 18.0
+        },
+        "pinpoint_pupils": [
+          {
+            "center": [
+              262.0,
+              232.0
+            ],
+            "radius": 3.0
+          },
+          {
+            "center": [
+              338.0,
+              232.0
+            ],
+            "radius": 3.0
+          }
+        ]
+      },
+      "mouth": {
+        "style": "giant_scream_cavity",
+        "boundary": [
+          [
+            262.0,
+            286.0
+          ],
+          [
+            300.0,
+            280.0
+          ],
+          [
+            338.0,
+            286.0
+          ],
+          [
+            346.0,
+            324.0
+          ],
+          [
+            338.0,
+            362.0
+          ],
+          [
+            300.0,
+            368.0
+          ],
+          [
+            262.0,
+            362.0
+          ],
+          [
+            254.0,
+            324.0
+          ]
+        ],
+        "fill": [
+          14,
+          14,
+          14,
+          255
+        ],
+        "uvula": {
+          "center": [
+            300.0,
+            300.0
+          ],
+          "radius": 5.0,
+          "color": [
+            210,
+            80,
+            80,
+            255
+          ]
+        }
+      },
+      "sweat_drops": [
+        {
+          "center": [
+            220.0,
+            192.0
+          ],
+          "rx": 4.0,
+          "ry": 7.0,
+          "angle": -30.0
+        },
+        {
+          "center": [
+            380.0,
+            192.0
+          ],
+          "rx": 4.0,
+          "ry": 7.0,
+          "angle": 30.0
+        }
+      ]
+    },
+    {
+      "id": "deadpan_stoic",
+      "name": "Deadpan / Stoic",
+      "description": "Completely horizontal bar mouth, rigid straight eyebrows, centered unblinking dot eyes, zero emotional inflection.",
+      "eyebrows": {
+        "left": [
+          [
+            242.0,
+            202.0
+          ],
+          [
+            280.0,
+            202.0
+          ]
+        ],
+        "right": [
+          [
+            320.0,
+            202.0
+          ],
+          [
+            358.0,
+            202.0
+          ]
+        ],
+        "style": "horizontal_rigid",
+        "width": 4.5
+      },
+      "eyes": {
+        "style": "centered_dots",
+        "left_center": [
+          262.0,
+          236.0
+        ],
+        "right_center": [
+          338.0,
+          236.0
+        ],
+        "radius": 5.0
+      },
+      "mouth": {
+        "style": "horizontal_slash",
+        "polyline": [
+          [
+            278.0,
+            306.0
+          ],
+          [
+            322.0,
+            306.0
+          ]
+        ],
+        "width": 4.0
+      }
+    },
+    {
+      "id": "tired_sunken_bags",
+      "name": "Tired / Sunken Eye Bags",
+      "description": "Deep purplish dark circles and concentric sagging eye bags, heavy drooping lids, slack exhausted mouth, drooping brow.",
+      "eyebrows": {
+        "left": [
+          [
+            240.0,
+            206.0
+          ],
+          [
+            282.0,
+            202.0
+          ]
+        ],
+        "right": [
+          [
+            318.0,
+            202.0
+          ],
+          [
+            360.0,
+            206.0
+          ]
+        ],
+        "style": "drooping_exhausted",
+        "width": 4.5
+      },
+      "eyes": {
+        "style": "heavy_drooping",
+        "upper_lids": [
+          [
+            [
+              246.0,
+              230.0
+            ],
+            [
+              278.0,
+              234.0
+            ]
+          ],
+          [
+            [
+              322.0,
+              234.0
+            ],
+            [
+              354.0,
+              230.0
+            ]
+          ]
+        ],
+        "eye_bags": [
+          {
+            "arc_center": [
+              262.0,
+              244.0
+            ],
+            "radii": [
+              16.0,
+              10.0
+            ],
+            "angles_deg": [
+              20.0,
+              160.0
+            ],
+            "color": [
+              105,
+              105,
+              105,
+              255
+            ],
+            "tint_fill": [
+              122,
+              107,
+              128,
+              90
+            ]
+          },
+          {
+            "arc_center": [
+              338.0,
+              244.0
+            ],
+            "radii": [
+              16.0,
+              10.0
+            ],
+            "angles_deg": [
+              20.0,
+              160.0
+            ],
+            "color": [
+              105,
+              105,
+              105,
+              255
+            ],
+            "tint_fill": [
+              122,
+              107,
+              128,
+              90
+            ]
+          },
+          {
+            "arc_center": [
+              262.0,
+              252.0
+            ],
+            "radii": [
+              13.0,
+              7.0
+            ],
+            "angles_deg": [
+              25.0,
+              155.0
+            ],
+            "color": [
+              140,
+              140,
+              140,
+              255
+            ]
+          },
+          {
+            "arc_center": [
+              338.0,
+              252.0
+            ],
+            "radii": [
+              13.0,
+              7.0
+            ],
+            "angles_deg": [
+              25.0,
+              155.0
+            ],
+            "color": [
+              140,
+              140,
+              140,
+              255
+            ]
+          }
+        ]
+      },
+      "mouth": {
+        "style": "slack_exhausted",
+        "polyline": [
+          [
+            280.0,
+            310.0
+          ],
+          [
+            300.0,
+            312.0
+          ],
+          [
+            320.0,
+            309.0
+          ]
+        ],
+        "width": 3.8
+      }
+    },
+    {
+      "id": "bandaged_bruised",
+      "name": "Bandaged / Bruised",
+      "description": "Trauma hospital meme: head wrapped in white gauze bandage, plaster on nasal bridge, purple/yellow hematoma around right eye, raised swelling lump.",
+      "head_bandage": {
+        "polygon": [
+          [
+            198.0,
+            186.0
+          ],
+          [
+            402.0,
+            186.0
+          ],
+          [
+            406.0,
+            222.0
+          ],
+          [
+            194.0,
+            222.0
+          ]
+        ],
+        "fill": [
+          245,
+          245,
+          240,
+          255
+        ],
+        "cross_hatch_step_x": 14.0,
+        "safety_pin": [
+          [
+            384.0,
+            200.0
+          ],
+          [
+            398.0,
+            208.0
+          ]
+        ]
+      },
+      "nose_plaster": {
+        "polygon": [
+          [
+            282.0,
+            262.0
+          ],
+          [
+            318.0,
+            262.0
+          ],
+          [
+            318.0,
+            274.0
+          ],
+          [
+            282.0,
+            274.0
+          ]
+        ],
+        "fill": [
+          210,
+          161,
+          119,
+          255
+        ],
+        "center_pad": [
+          [
+            296.0,
+            262.0
+          ],
+          [
+            304.0,
+            262.0
+          ],
+          [
+            304.0,
+            274.0
+          ],
+          [
+            296.0,
+            274.0
+          ]
+        ],
+        "cross_indicator": true
+      },
+      "black_eye_bruise": {
+        "target_eye": "right",
+        "layers": [
+          {
+            "center": [
+              338.0,
+              236.0
+            ],
+            "rx": 22.0,
+            "ry": 18.0,
+            "fill": [
+              92,
+              45,
+              97,
+              130
+            ]
+          },
+          {
+            "center": [
+              338.0,
+              242.0
+            ],
+            "rx": 18.0,
+            "ry": 14.0,
+            "fill": [
+              136,
+              57,
+              98,
+              110
+            ]
+          },
+          {
+            "center": [
+              342.0,
+              246.0
+            ],
+            "rx": 24.0,
+            "ry": 12.0,
+            "fill": [
+              158,
+              151,
+              72,
+              85
+            ]
+          }
+        ]
+      },
+      "forehead_bump": {
+        "center": [
+          244.0,
+          162.0
+        ],
+        "arc": [
+          232.0,
+          150.0,
+          256.0,
+          174.0
+        ],
+        "impact_lines": [
+          [
+            [
+              232.0,
+              146.0
+            ],
+            [
+              224.0,
+              138.0
+            ]
+          ],
+          [
+            [
+              248.0,
+              142.0
+            ],
+            [
+              252.0,
+              130.0
+            ]
+          ]
+        ]
+      }
+    }
+  ],
+  "age_markers": {
+    "forehead_wrinkles": {
+      "description": "Horizontal wavy creases across the upper forehead indicating stress and advanced age.",
+      "lines": [
+        {
+          "y": 172.0,
+          "x_range": [
+            236.0,
+            364.0
+          ],
+          "dips": [
+            [
+              262.0,
+              2.0
+            ],
+            [
+              338.0,
+              2.0
+            ]
+          ],
+          "width": 2.2
+        },
+        {
+          "y": 184.0,
+          "x_range": [
+            230.0,
+            370.0
+          ],
+          "dips": [
+            [
+              262.0,
+              2.5
+            ],
+            [
+              338.0,
+              2.5
+            ]
+          ],
+          "width": 2.4
+        },
+        {
+          "y": 196.0,
+          "x_range": [
+            238.0,
+            362.0
+          ],
+          "dips": [
+            [
+              262.0,
+              2.0
+            ],
+            [
+              338.0,
+              2.0
+            ]
+          ],
+          "width": 2.0
+        }
+      ]
+    },
+    "crows_feet": {
+      "description": "Radiating fan creases at the outer lateral corner of both eyes.",
+      "left_spokes": [
+        [
+          [
+            246.0,
+            236.0
+          ],
+          [
+            232.0,
+            230.0
+          ]
+        ],
+        [
+          [
+            246.0,
+            236.0
+          ],
+          [
+            230.0,
+            236.0
+          ]
+        ],
+        [
+          [
+            246.0,
+            236.0
+          ],
+          [
+            232.0,
+            242.0
+          ]
+        ]
+      ],
+      "right_spokes": [
+        [
+          [
+            354.0,
+            236.0
+          ],
+          [
+            368.0,
+            230.0
+          ]
+        ],
+        [
+          [
+            354.0,
+            236.0
+          ],
+          [
+            370.0,
+            236.0
+          ]
+        ],
+        [
+          [
+            354.0,
+            236.0
+          ],
+          [
+            368.0,
+            242.0
+          ]
+        ]
+      ],
+      "stroke_width": 2.0
+    },
+    "nasolabial_folds": {
+      "description": "Deep parenthesis brackets extending from nostril wings down past mouth corners.",
+      "left_fold": [
+        [
+          278.0,
+          280.0
+        ],
+        [
+          268.0,
+          304.0
+        ],
+        [
+          266.0,
+          330.0
+        ]
+      ],
+      "right_fold": [
+        [
+          322.0,
+          280.0
+        ],
+        [
+          332.0,
+          304.0
+        ],
+        [
+          334.0,
+          330.0
+        ]
+      ],
+      "stroke_width": 2.5
+    },
+    "eye_bags": {
+      "description": "Concentric dermal sagging arcs beneath lower eyelids.",
+      "left_arc": {
+        "center": [
+          262.0,
+          248.0
+        ],
+        "rx": 14.0,
+        "ry": 7.0,
+        "angles_deg": [
+          15.0,
+          165.0
+        ]
+      },
+      "right_arc": {
+        "center": [
+          338.0,
+          248.0
+        ],
+        "rx": 14.0,
+        "ry": 7.0,
+        "angles_deg": [
+          15.0,
+          165.0
+        ]
+      },
+      "stroke_width": 2.2
+    },
+    "receding_hairline": {
+      "description": "M-shaped widow's peak or high bilateral temporal recession pattern.",
+      "hairline_polyline": [
+        [
+          202.0,
+          240.0
+        ],
+        [
+          210.0,
+          190.0
+        ],
+        [
+          240.0,
+          210.0
+        ],
+        [
+          300.0,
+          180.0
+        ],
+        [
+          360.0,
+          210.0
+        ],
+        [
+          390.0,
+          190.0
+        ],
+        [
+          398.0,
+          240.0
+        ]
+      ]
+    },
+    "grey_hair": {
+      "description": "Silver / grey tone with alternating salt-and-pepper stroke hatching.",
+      "base_fill": [
+        216,
+        216,
+        216,
+        255
+      ],
+      "hatch_colors": [
+        [
+          110,
+          110,
+          110,
+          255
+        ],
+        [
+          250,
+          250,
+          250,
+          255
+        ]
+      ]
+    },
+    "grandma_bun": {
+      "description": "Spherical coiled chignon bun at crown/nape pinned with crossed hairpins.",
+      "circle": {
+        "cx": 300.0,
+        "cy": 110.0,
+        "radius": 28.0
+      },
+      "spiral_rings": 3,
+      "hairpins": [
+        [
+          [
+            274.0,
+            126.0
+          ],
+          [
+            326.0,
+            94.0
+          ]
+        ],
+        [
+          [
+            274.0,
+            94.0
+          ],
+          [
+            326.0,
+            126.0
+          ]
+        ]
+      ],
+      "stroke_width": 2.8
+    }
+  },
+  "gender_markers": {
+    "male": {
+      "brow_thickness": 5.5,
+      "jaw_width_multiplier": 1.05,
+      "eyelashes": false,
+      "neck_width": 72.0,
+      "hair_presets": [
+        "bald",
+        "short_tuft",
+        "receding",
+        "beanie",
+        "cap"
+      ]
+    },
+    "female": {
+      "brow_thickness": 3.0,
+      "jaw_width_multiplier": 0.94,
+      "chin_taper_y": 348.0,
+      "neck_width": 62.0,
+      "eyelashes": {
+        "enabled": true,
+        "flicks_per_eye": 3,
+        "length_px": 8.0,
+        "angles_deg": [
+          -45.0,
+          -20.0,
+          5.0
+        ]
+      },
+      "hair_presets": [
+        "tradwife_bob",
+        "long_straight",
+        "bun",
+        "curls"
+      ],
+      "accessories": [
+        "headband",
+        "floral_ribbon"
+      ]
+    },
+    "elderly_nonna_babushka": {
+      "brow_thickness": 3.5,
+      "neck_width": 76.0,
+      "headscarf": {
+        "enabled": true,
+        "type": "triangular_wrap_under_chin",
+        "knot_position": [
+          300.0,
+          366.0
+        ]
+      },
+      "spectacles": {
+        "enabled": true,
+        "style": "round_wireframe",
+        "position_y": 238.0
+      },
+      "apron": {
+        "enabled": true,
+        "pattern": "gingham_or_white",
+        "y_range": [
+          420.0,
+          680.0
+        ]
+      }
+    }
+  },
+  "clothing": [
+    {
+      "id": "hospital_gown",
+      "name": "Hospital Patient Gown",
+      "description": "Loose, sterile pale cyan smock with wide open V-neck, short wide sleeves, and dangling tie strings at side/back.",
+      "color": [
+        168,
+        218,
+        220,
+        255
+      ],
+      "torso_polygon": [
+        [
+          204.0,
+          404.0
+        ],
+        [
+          260.0,
+          420.0
+        ],
+        [
+          300.0,
+          440.0
+        ],
+        [
+          340.0,
+          420.0
+        ],
+        [
+          396.0,
+          404.0
+        ],
+        [
+          420.0,
+          530.0
+        ],
+        [
+          424.0,
+          710.0
+        ],
+        [
+          176.0,
+          710.0
+        ],
+        [
+          180.0,
+          530.0
+        ]
+      ],
+      "v_neck": [
+        [
+          260.0,
+          420.0
+        ],
+        [
+          300.0,
+          456.0
+        ],
+        [
+          340.0,
+          420.0
+        ]
+      ],
+      "tie_strings": [
+        [
+          [
+            178.0,
+            540.0
+          ],
+          [
+            160.0,
+            552.0
+          ],
+          [
+            164.0,
+            576.0
+          ]
+        ],
+        [
+          [
+            178.0,
+            546.0
+          ],
+          [
+            156.0,
+            560.0
+          ],
+          [
+            152.0,
+            584.0
+          ]
+        ]
+      ],
+      "pattern": "scattered_crosses_or_dots"
+    },
+    {
+      "id": "doctor_coat",
+      "name": "Doctor / Lab Coat",
+      "description": "Crisp white medical coat with structured lapels, center placket with buttons, and breast pocket holding medical pens.",
+      "color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "torso_polygon": [
+        [
+          200.0,
+          400.0
+        ],
+        [
+          262.0,
+          392.0
+        ],
+        [
+          338.0,
+          392.0
+        ],
+        [
+          400.0,
+          400.0
+        ],
+        [
+          416.0,
+          520.0
+        ],
+        [
+          412.0,
+          720.0
+        ],
+        [
+          188.0,
+          720.0
+        ],
+        [
+          184.0,
+          520.0
+        ]
+      ],
+      "lapels": {
+        "left_lapel": [
+          [
+            262.0,
+            392.0
+          ],
+          [
+            236.0,
+            450.0
+          ],
+          [
+            280.0,
+            480.0
+          ],
+          [
+            300.0,
+            530.0
+          ]
+        ],
+        "right_lapel": [
+          [
+            338.0,
+            392.0
+          ],
+          [
+            364.0,
+            450.0
+          ],
+          [
+            320.0,
+            480.0
+          ],
+          [
+            300.0,
+            530.0
+          ]
+        ]
+      },
+      "center_placket": [
+        [
+          300.0,
+          530.0
+        ],
+        [
+          300.0,
+          720.0
+        ]
+      ],
+      "buttons": [
+        {
+          "center": [
+            300.0,
+            560.0
+          ],
+          "radius": 4.0
+        },
+        {
+          "center": [
+            300.0,
+            610.0
+          ],
+          "radius": 4.0
+        },
+        {
+          "center": [
+            300.0,
+            660.0
+          ],
+          "radius": 4.0
+        }
+      ],
+      "breast_pocket": {
+        "box": [
+          226.0,
+          490.0,
+          264.0,
+          540.0
+        ],
+        "pens": [
+          {
+            "body": [
+              [
+                236.0,
+                476.0
+              ],
+              [
+                236.0,
+                492.0
+              ]
+            ],
+            "color": [
+              220,
+              20,
+              20,
+              255
+            ]
+          },
+          {
+            "body": [
+              [
+                246.0,
+                474.0
+              ],
+              [
+                246.0,
+                492.0
+              ]
+            ],
+            "color": [
+              20,
+              60,
+              220,
+              255
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "nurse_scrubs",
+      "name": "Nurse Scrubs Tunic",
+      "description": "Ceil blue or emerald medical scrub top with sharp V-neck, short sleeves, and chest ID pass badge.",
+      "color": [
+        59,
+        130,
+        246,
+        255
+      ],
+      "torso_polygon": [
+        [
+          202.0,
+          402.0
+        ],
+        [
+          264.0,
+          394.0
+        ],
+        [
+          336.0,
+          394.0
+        ],
+        [
+          398.0,
+          402.0
+        ],
+        [
+          412.0,
+          520.0
+        ],
+        [
+          404.0,
+          664.0
+        ],
+        [
+          196.0,
+          664.0
+        ],
+        [
+          188.0,
+          520.0
+        ]
+      ],
+      "v_neck_band": {
+        "outer": [
+          [
+            264.0,
+            394.0
+          ],
+          [
+            300.0,
+            444.0
+          ],
+          [
+            336.0,
+            394.0
+          ]
+        ],
+        "width": 12.0
+      },
+      "id_badge": {
+        "strap": [
+          [
+            256.0,
+            420.0
+          ],
+          [
+            252.0,
+            460.0
+          ]
+        ],
+        "card": [
+          240.0,
+          460.0,
+          268.0,
+          496.0
+        ],
+        "card_fill": [
+          250,
+          250,
+          250,
+          255
+        ],
+        "photo_box": [
+          244.0,
+          464.0,
+          256.0,
+          478.0
+        ]
+      }
+    },
+    {
+      "id": "nonna_apron",
+      "name": "Nonna / Grandmother Apron",
+      "description": "White domestic cooking apron with ruffled shoulder straps, square bib, and waist tie over dark dress.",
+      "color": [
+        248,
+        249,
+        250,
+        255
+      ],
+      "bib_polygon": [
+        [
+          240.0,
+          430.0
+        ],
+        [
+          360.0,
+          430.0
+        ],
+        [
+          376.0,
+          670.0
+        ],
+        [
+          224.0,
+          670.0
+        ]
+      ],
+      "straps": [
+        [
+          [
+            240.0,
+            430.0
+          ],
+          [
+            220.0,
+            398.0
+          ]
+        ],
+        [
+          [
+            360.0,
+            430.0
+          ],
+          [
+            380.0,
+            398.0
+          ]
+        ]
+      ],
+      "pocket": [
+        266.0,
+        540.0,
+        334.0,
+        610.0
+      ]
+    }
+  ],
+  "props": [
+    {
+      "id": "giant_scroll",
+      "name": "Giant Scroll (Waiting List / Scroll of Truth)",
+      "description": "Exaggerated rolled parchment unfurling downwards from hands past canvas boundary, depicting bureaucratic waiting lists or healthcare delays.",
+      "held_by": "both_hands",
+      "top_roller": {
+        "capsule": [
+          120.0,
+          560.0,
+          320.0,
+          582.0
+        ],
+        "wood_fill": [
+          139,
+          90,
+          43,
+          255
+        ],
+        "roller_knobs": [
+          {
+            "center": [
+              116.0,
+              571.0
+            ],
+            "radius": 14.0
+          },
+          {
+            "center": [
+              324.0,
+              571.0
+            ],
+            "radius": 14.0
+          }
+        ]
+      },
+      "parchment_body": {
+        "polygon": [
+          [
+            134.0,
+            580.0
+          ],
+          [
+            306.0,
+            580.0
+          ],
+          [
+            320.0,
+            920.0
+          ],
+          [
+            116.0,
+            920.0
+          ]
+        ],
+        "fill": [
+          247,
+          235,
+          198,
+          255
+        ],
+        "unfurl_curl": [
+          [
+            116.0,
+            920.0
+          ],
+          [
+            130.0,
+            946.0
+          ],
+          [
+            306.0,
+            946.0
+          ],
+          [
+            320.0,
+            920.0
+          ]
+        ]
+      },
+      "script_lines": {
+        "count": 14,
+        "y_start": 610.0,
+        "y_step": 22.0,
+        "x_start": 148.0,
+        "x_end": 292.0,
+        "wobble": true
+      },
+      "wax_seal": {
+        "center": [
+          220.0,
+          890.0
+        ],
+        "radius": 18.0,
+        "color": [
+          183,
+          28,
+          28,
+          255
+        ],
+        "ribbon": [
+          [
+            214.0,
+            904.0
+          ],
+          [
+            210.0,
+            934.0
+          ],
+          [
+            226.0,
+            934.0
+          ],
+          [
+            222.0,
+            904.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "cup_of_tea",
+      "name": "Cup of British Tea",
+      "description": "Porcelain teacup with delicate curved handle resting on a saucer, amber tea liquid, and rising sinusoidal steam wisps.",
+      "held_by": "right_hand",
+      "saucer": {
+        "ellipse": [
+          416.0,
+          616.0,
+          496.0,
+          634.0
+        ],
+        "fill": [
+          250,
+          250,
+          250,
+          255
+        ]
+      },
+      "teacup": {
+        "polygon": [
+          [
+            428.0,
+            560.0
+          ],
+          [
+            484.0,
+            560.0
+          ],
+          [
+            476.0,
+            618.0
+          ],
+          [
+            436.0,
+            618.0
+          ]
+        ],
+        "fill": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "handle_arc": [
+          480.0,
+          570.0,
+          506.0,
+          604.0
+        ]
+      },
+      "liquid": {
+        "ellipse": [
+          430.0,
+          556.0,
+          482.0,
+          568.0
+        ],
+        "fill": [
+          184,
+          107,
+          40,
+          255
+        ]
+      },
+      "steam_wisps": [
+        [
+          [
+            444.0,
+            546.0
+          ],
+          [
+            440.0,
+            520.0
+          ],
+          [
+            448.0,
+            496.0
+          ]
+        ],
+        [
+          [
+            456.0,
+            544.0
+          ],
+          [
+            460.0,
+            514.0
+          ],
+          [
+            452.0,
+            486.0
+          ]
+        ],
+        [
+          [
+            468.0,
+            546.0
+          ],
+          [
+            472.0,
+            524.0
+          ],
+          [
+            466.0,
+            502.0
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "pasta_pot",
+      "name": "Nonna's Boiling Pasta Pot",
+      "description": "Heavy two-handled cooking pot with boiling bubbles, overflowing yellow spaghetti strands draped over sides.",
+      "held_by": "both_hands",
+      "pot_body": {
+        "polygon": [
+          [
+            170.0,
+            580.0
+          ],
+          [
+            330.0,
+            580.0
+          ],
+          [
+            320.0,
+            710.0
+          ],
+          [
+            180.0,
+            710.0
+          ]
+        ],
+        "fill": [
+          110,
+          110,
+          116,
+          255
+        ],
+        "rim_ellipse": [
+          168.0,
+          568.0,
+          332.0,
+          592.0
+        ]
+      },
+      "handles": [
+        {
+          "arc": [
+            146.0,
+            588.0,
+            172.0,
+            624.0
+          ],
+          "width": 5.0
+        },
+        {
+          "arc": [
+            328.0,
+            588.0,
+            354.0,
+            624.0
+          ],
+          "width": 5.0
+        }
+      ],
+      "spaghetti_overflow": [
+        [
+          [
+            210.0,
+            578.0
+          ],
+          [
+            200.0,
+            608.0
+          ],
+          [
+            204.0,
+            638.0
+          ]
+        ],
+        [
+          [
+            230.0,
+            576.0
+          ],
+          [
+            222.0,
+            620.0
+          ],
+          [
+            216.0,
+            650.0
+          ]
+        ],
+        [
+          [
+            280.0,
+            576.0
+          ],
+          [
+            292.0,
+            616.0
+          ],
+          [
+            288.0,
+            646.0
+          ]
+        ],
+        [
+          [
+            300.0,
+            578.0
+          ],
+          [
+            314.0,
+            610.0
+          ],
+          [
+            318.0,
+            636.0
+          ]
+        ]
+      ],
+      "spaghetti_color": [
+        244,
+        208,
+        63,
+        255
+      ]
+    },
+    {
+      "id": "paracetamol_box",
+      "name": "Paracetamol 500mg Medicine Box",
+      "description": "Rectangular pharmaceutical drug carton held forward: white background, bold blue stripe, 'PARACETAMOL 500mg' label, red cross emblem.",
+      "held_by": "right_hand",
+      "box_polygon": [
+        [
+          420.0,
+          530.0
+        ],
+        [
+          512.0,
+          514.0
+        ],
+        [
+          526.0,
+          592.0
+        ],
+        [
+          434.0,
+          608.0
+        ]
+      ],
+      "fill": [
+        250,
+        252,
+        255,
+        255
+      ],
+      "blue_header_stripe": [
+        [
+          422.0,
+          542.0
+        ],
+        [
+          514.0,
+          526.0
+        ],
+        [
+          517.0,
+          546.0
+        ],
+        [
+          425.0,
+          562.0
+        ]
+      ],
+      "stripe_fill": [
+        2,
+        136,
+        209,
+        255
+      ],
+      "red_cross": {
+        "center": [
+          444.0,
+          584.0
+        ],
+        "size": 14.0,
+        "color": [
+          211,
+          47,
+          47,
+          255
+        ]
+      },
+      "label_text": {
+        "text": "PARACETAMOL",
+        "subtext": "500 mg - 16 Tablets",
+        "position": [
+          464.0,
+          580.0
+        ]
+      }
+    },
+    {
+      "id": "clipboard",
+      "name": "Medical / Bureaucracy Clipboard",
+      "description": "Brown masonite clipboard held in left hand, heavy spring clip clamp at top, checklist boxes and consultation notes.",
+      "held_by": "left_hand",
+      "board_polygon": [
+        [
+          100.0,
+          510.0
+        ],
+        [
+          178.0,
+          494.0
+        ],
+        [
+          196.0,
+          626.0
+        ],
+        [
+          118.0,
+          642.0
+        ]
+      ],
+      "fill": [
+        121,
+        85,
+        72,
+        255
+      ],
+      "top_clip": {
+        "polygon": [
+          [
+            130.0,
+            484.0
+          ],
+          [
+            158.0,
+            488.0
+          ],
+          [
+            160.0,
+            508.0
+          ],
+          [
+            132.0,
+            504.0
+          ]
+        ],
+        "fill": [
+          189,
+          189,
+          189,
+          255
+        ]
+      },
+      "paper_sheet": {
+        "polygon": [
+          [
+            108.0,
+            516.0
+          ],
+          [
+            170.0,
+            504.0
+          ],
+          [
+            186.0,
+            616.0
+          ],
+          [
+            124.0,
+            628.0
+          ]
+        ],
+        "fill": [
+          255,
+          255,
+          255,
+          255
+        ]
+      },
+      "checklist_lines": [
+        {
+          "box": [
+            116.0,
+            532.0,
+            124.0,
+            540.0
+          ],
+          "line": [
+            [
+              128.0,
+              536.0
+            ],
+            [
+              162.0,
+              530.0
+            ]
+          ]
+        },
+        {
+          "box": [
+            118.0,
+            552.0,
+            126.0,
+            560.0
+          ],
+          "line": [
+            [
+              130.0,
+              556.0
+            ],
+            [
+              164.0,
+              550.0
+            ]
+          ]
+        },
+        {
+          "box": [
+            120.0,
+            572.0,
+            128.0,
+            580.0
+          ],
+          "line": [
+            [
+              132.0,
+              576.0
+            ],
+            [
+              166.0,
+              570.0
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stethoscope",
+      "name": "Doctor Stethoscope",
+      "description": "Medical stethoscope draped around neck: dual ear tubes looping over shoulders, converging into Y-connector tube and chest bell disc.",
+      "worn": "around_neck",
+      "left_tube": [
+        [
+          262.0,
+          410.0
+        ],
+        [
+          240.0,
+          460.0
+        ],
+        [
+          250.0,
+          520.0
+        ],
+        [
+          276.0,
+          546.0
+        ]
+      ],
+      "right_tube": [
+        [
+          338.0,
+          410.0
+        ],
+        [
+          360.0,
+          460.0
+        ],
+        [
+          350.0,
+          520.0
+        ],
+        [
+          324.0,
+          546.0
+        ]
+      ],
+      "y_junction": [
+        300.0,
+        558.0
+      ],
+      "chest_piece": {
+        "center": [
+          300.0,
+          584.0
+        ],
+        "radius": 14.0,
+        "fill": [
+          176,
+          190,
+          197,
+          255
+        ]
+      },
+      "tube_color": [
+        40,
+        40,
+        44,
+        255
+      ],
+      "tube_width": 4.0
+    },
+    {
+      "id": "bandaged_head",
+      "name": "Bandaged Head (Medical Cranial Wrap)",
+      "description": "Full cranial spiral gauze wrap around forehead and cranium with safety pin clasp and gauze texture for medical trauma and accident memes.",
+      "worn": "on_head",
+      "gauze_wrap": {
+        "polygon": [
+          [
+            198.0,
+            186.0
+          ],
+          [
+            402.0,
+            186.0
+          ],
+          [
+            406.0,
+            222.0
+          ],
+          [
+            194.0,
+            222.0
+          ]
+        ],
+        "fill": [
+          245,
+          245,
+          240,
+          255
+        ],
+        "cross_hatch_step_x": 14.0,
+        "stroke_width": 3.0
+      },
+      "safety_pin": {
+        "pin_body": [
+          [
+            384.0,
+            200.0
+          ],
+          [
+            398.0,
+            208.0
+          ]
+        ],
+        "clasp_circle": {
+          "center": [
+            384.0,
+            200.0
+          ],
+          "radius": 3.5
+        },
+        "color": [
+          176,
+          190,
+          197,
+          255
+        ]
+      },
+      "nose_plaster": {
+        "polygon": [
+          [
+            282.0,
+            262.0
+          ],
+          [
+            318.0,
+            262.0
+          ],
+          [
+            318.0,
+            274.0
+          ],
+          [
+            282.0,
+            274.0
+          ]
+        ],
+        "fill": [
+          210,
+          161,
+          119,
+          255
+        ],
+        "gauze_center": [
+          [
+            296.0,
+            262.0
+          ],
+          [
+            304.0,
+            262.0
+          ],
+          [
+            304.0,
+            274.0
+          ],
+          [
+            296.0,
+            274.0
+          ]
+        ],
+        "cross_red": [
+          211,
+          47,
+          47,
+          255
+        ]
+      }
+    }
+  ]
+}

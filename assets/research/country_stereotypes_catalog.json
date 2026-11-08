@@ -1,0 +1,1221 @@
+{
+  "metadata": {
+    "title": "Cultural Stereotype & National Parody Catalog",
+    "total_countries": 40,
+    "max_punchline_chars": 120,
+    "target_slide_duration_seconds": 4.0,
+    "themes": [
+      "Hospitals / Healthcare",
+      "Driving",
+      "Public Transport",
+      "School",
+      "Supermarkets",
+      "Winter"
+    ]
+  },
+  "countries": {
+    "united_states": {
+      "country": "United States",
+      "slug": "united_states",
+      "flag": "🇺🇸",
+      "region": "North America",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Ambulance cost $45,000. Paramedic tablet asked for an 18% tip.",
+      "archetype_character": {
+        "age": "Mid-30s",
+        "gender": "Any / Patient",
+        "ethnicity": "Diverse American",
+        "expression": "Wide-eyed panic clutching a mountain of itemized medical receipts",
+        "attire": "Hospital gown worn over casual jeans, backward baseball cap, running shoes",
+        "props": "Giant accordion-folded hospital invoice totaling $87,420; digital POS card reader displaying gratuity options (18%, 22%, 30%)"
+      },
+      "visual_setting": "Gleaming five-star hotel-style hospital lobby with marble floors, grand piano, indoor palm trees, and valet parking stand",
+      "viral_tropes": [
+        "$50,000 ambulance ride",
+        "$38 hospital aspirin charge",
+        "Card reader tip prompt at hospital discharge",
+        "Luxury hotel marble lobby masking medical bankruptcy"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Turned right on red while eating a burger in a lifted pickup.",
+        "public_transport": "Waited 3 hours for a bus that only runs every other Tuesday.",
+        "school": "Hall pass required to sneeze; campus looks like high school movie.",
+        "supermarkets": "Left Costco with a 5-gallon jar of ranch and a 75-inch TV.",
+        "winter": "Half an inch of snow fell; governor called National Guard."
+      },
+      "satire_critique": "Playfully highlights exorbitant healthcare billing and pervasive tipping culture; purely satirical observational humor without malicious intent."
+    },
+    "united_kingdom": {
+      "country": "United Kingdom",
+      "slug": "united_kingdom",
+      "flag": "🇬🇧",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Waited 14 hours on a hallway trolley, drinking tea and praising the lovely nurses.",
+      "archetype_character": {
+        "age": "Late 50s",
+        "gender": "Any / Patient",
+        "ethnicity": "British / Anglo-Celtic",
+        "expression": "Polite stoic smile concealing mild agony; determined not to make a fuss",
+        "attire": "Knitted cardigan, wool socks, tweed slippers, dressing gown",
+        "props": "Steaming ceramic mug of builder's tea, pack of chocolate digestives, frayed NHS waiting ticket #419"
+      },
+      "visual_setting": "Fluorescent-lit NHS hospital corridor packed with gurneys, yellow hazard wet-floor signs, and faded 1990s motivational posters",
+      "viral_tropes": [
+        "14-hour corridor trolley wait",
+        "Compulsive apologetic politeness",
+        "Tea as universal medical panacea",
+        "Fierce affection for 'our lovely NHS nurses'"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Apologized to three cars while navigating a double roundabout.",
+        "public_transport": "Train canceled due to 'wrong type of leaves' on the track.",
+        "school": "Blazer itchy, prefect shouting, eating spotted dick in rain.",
+        "supermarkets": "Got the £3.50 Meal Deal: prawn mayo sandwich and salt crisps.",
+        "winter": "Light frost arrived; entire national rail network collapsed."
+      },
+      "satire_critique": "Classic British self-deprecating irony celebrating stoic politeness and tea-drinking resilience amid bureaucratic NHS backlog."
+    },
+    "canada": {
+      "country": "Canada",
+      "slug": "canada",
+      "flag": "🇨🇦",
+      "region": "North America",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Free surgery approved! First available appointment: November 2029.",
+      "archetype_character": {
+        "age": "Late 30s",
+        "gender": "Any / Canadian",
+        "ethnicity": "Canadian",
+        "expression": "Unfailingly cheerful yet quietly despairing over calendar dates",
+        "attire": "Red-and-black plaid flannel jacket, knit toque, winter boots",
+        "props": "Tim Hortons double-double paper cup, wall calendar flipped forward 4 years, provincial health insurance card"
+      },
+      "visual_setting": "Bilingual provincial clinic waiting room with snow visible through double-glazed windows and a faded framed picture of a loon",
+      "viral_tropes": [
+        "Proudly free universal healthcare with five-year waiting lists",
+        "Saying 'sorry' to the receptionist",
+        "Drinking Tim Hortons while waiting for MRI"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Apologized to the moose after sliding into a snowbank at Tim Hortons.",
+        "public_transport": "Streetcar frozen in place; passengers all apologized to driver.",
+        "school": "Pencil frozen solid; recess still held outside at minus 25.",
+        "supermarkets": "Bag of milk sprung a leak; bought maple syrup to seal it.",
+        "winter": "Minus 30 outside; locals still wearing shorts to Tim Hortons."
+      },
+      "satire_critique": "Affectionate poke at Canadian excessive politeness and notorious wait times for elective procedures in single-payer care."
+    },
+    "sweden": {
+      "country": "Sweden",
+      "slug": "sweden",
+      "flag": "🇸🇪",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Number 112 in the phone queue. Doctor paused triage for fika.",
+      "archetype_character": {
+        "age": "Early 30s",
+        "gender": "Neutral / Any",
+        "ethnicity": "Scandinavian",
+        "expression": "Calm, deadpan, impeccably composed",
+        "attire": "Minimalist grey wool sweater, neat Fjällräven backpack, tailored neutral slacks",
+        "props": "Cinnamon cardamom bun (kanelbulle), thermos cup of dark roast coffee, paper queue ticket #112"
+      },
+      "visual_setting": "Sleek Scandinavian healthcare center with blonde birch wood furniture, soft indirect lighting, and acoustic felt wall baffles",
+      "viral_tropes": [
+        "Non-negotiable 3 PM fika coffee break",
+        "Endless digital queuing systems (Vårdguiden 1177)",
+        "Unflappable lagom calmness under stress"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Politely merged 4 km before lane closure in a Volvo wagon.",
+        "public_transport": "Stood 3 meters away from nearest human at the freezing bus stop.",
+        "school": "Student democracy meeting spent 4 hours debating school lunch bread.",
+        "supermarkets": "Took paper ticket number 84 to buy pickled herring in calm silence.",
+        "winter": "Pitch black at 2 PM; lit 14 candles and drank oat milk glogg."
+      },
+      "satire_critique": "Lighthearted riff on Swedish punctuality, mandatory coffee breaks (fika), and radical queuing etiquette."
+    },
+    "india": {
+      "country": "India",
+      "slug": "india",
+      "flag": "🇮🇳",
+      "region": "Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Robotic heart surgery cost $400. Mom brought turmeric milk to cure it faster.",
+      "archetype_character": {
+        "age": "Mid-20s to 50s",
+        "gender": "Any / Patient & Family",
+        "ethnicity": "South Asian",
+        "expression": "Warm, energetic, multitasking on two phones while doctor consults",
+        "attire": "Crisp cotton kurta or formal collared shirt, smartwatch, gold chain",
+        "props": "Steel tiffin carrier box full of home-cooked khichdi and haldi doodh (turmeric milk), stethoscope, file folder bursting with laminated test reports"
+      },
+      "visual_setting": "High-tech NABH-accredited private super-specialty hospital atrium bustling with families, robotic surgery banners, and American medical tourists holding dental folders",
+      "viral_tropes": [
+        "World-class state-of-the-art robotic surgery at 1/50th US cost",
+        "Ayurvedic motherly cure (haldi doodh) overriding surgical post-op",
+        "American medical tourists with bulging binders of dental work",
+        "Jugaad and multi-generational family support"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Honking means 'I exist, good luck to both of us!'",
+        "public_transport": "Local train was full, so hung onto the outside doorway with one finger.",
+        "school": "Scored 99.2% on maths exam; father asked what happened to 0.8%.",
+        "supermarkets": "Bargained free coriander leaves after buying three sacks of mangoes.",
+        "winter": "Temperature dropped to 18°C; family pulled out woollen monkey caps."
+      },
+      "satire_critique": "Celebrates India's genuine medical technological prowess alongside affectionate cultural traditions like tiffins and maternal remedies."
+    },
+    "south_korea": {
+      "country": "South Korea",
+      "slug": "south_korea",
+      "flag": "🇰🇷",
+      "region": "Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Went in for a runny nose, left with double eyelids and a V-line jaw.",
+      "archetype_character": {
+        "age": "Mid-20s",
+        "gender": "Female / Male",
+        "ethnicity": "East Asian / Korean",
+        "expression": "Immaculately contoured face, subtle postoperative swelling behind fashionable oversized dark sunglasses",
+        "attire": "Trendy oversized pastel blazer, surgical compression chin strap, white face mask",
+        "props": "Iced Americano in transparent plastic cup, high-end clinic brochure with before/after photos, dermatologist mirror"
+      },
+      "visual_setting": "Glitzy Gangnam aesthetic clinic lobby with white marble, golden accents, K-pop video playing on wall screen, and glass displays of designer skincare serums",
+      "viral_tropes": [
+        "Walk in for basic medicine, receive aesthetic upgrade",
+        "Gangnam clinic aesthetic culture",
+        "Ubiquitous iced americano even in freezing winter"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Dashcam records 4 near-misses while navigating tiny alleyway.",
+        "public_transport": "Subway Wi-Fi loaded 8K stream before doors finished closing.",
+        "school": "Attending 4th hagwon cram school at 11 PM; iced americano in hand.",
+        "supermarkets": "Ate 12 free samples of dumplings; ajumma made eye contact, had to buy 4 bags.",
+        "winter": "Floor heating set to maximum; sleeping on floor wearing padded bench coat."
+      },
+      "satire_critique": "Playfully reflects South Korea's world-famous cosmetic dermatology culture and lightning-fast aesthetic consultations in Gangnam."
+    },
+    "portugal": {
+      "country": "Portugal",
+      "slug": "portugal",
+      "flag": "🇵🇹",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "12-hour wait in emergency room, but brought three pastéis de nata to survive.",
+      "archetype_character": {
+        "age": "Mid-40s",
+        "gender": "Any / Portuguese",
+        "ethnicity": "Southern European / Portuguese",
+        "expression": "Patient, melancholy saudade sigh while peeling a custard tart wrapper",
+        "attire": "Linen shirt, dark trousers, lightweight jacket",
+        "props": "Bakery paper bag with 3 dusted pastéis de nata (egg tarts), small espresso cup (bica), crumpled triagem ticket"
+      },
+      "visual_setting": "Tiled public hospital waiting area with blue-and-white azulejo motifs, overhead TV playing daytime soap opera on mute, and ceiling fan",
+      "viral_tropes": [
+        "Epic ER waits solved by sweet custard pastries",
+        "Fatalistic philosophical calm (saudade)",
+        "Emergency espresso (bica) intake"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Parked on the sidewalk half-in a roundabout with hazard lights on.",
+        "public_transport": "Historic tram 28 stuck behind a delivery van for 45 minutes.",
+        "school": "Students drink bica espresso between classes; professor is 20 minutes late.",
+        "supermarkets": "Entire aisle dedicated to 40 varieties of dried salted cod.",
+        "winter": "14°C inside house with zero insulation; wearing coat indoors."
+      },
+      "satire_critique": "Warm, culturally relatable parody of Iberian hospitality, pastry obsession, and patient waiting room culture."
+    },
+    "italy": {
+      "country": "Italy",
+      "slug": "italy",
+      "flag": "🇮🇹",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Hospital food was unacceptable; family sneaked 8kg of lasagna into the ICU.",
+      "archetype_character": {
+        "age": "Late 60s",
+        "gender": "Nonna / Matriarch",
+        "ethnicity": "Italian / Southern European",
+        "expression": "Fierce maternal determination, dramatic open-palm hand gestures",
+        "attire": "Floral apron over black dress, gold earrings, comfortable orthopedic shoes",
+        "props": "Enormous foil-covered baking tray of piping hot multi-layered lasagna, glass jug of home-pressed olive oil, crusty loaf of bread"
+      },
+      "visual_setting": "Intensive care recovery ward overrun by 14 vocal family members pulling up folding chairs around the patient bed",
+      "viral_tropes": [
+        "Hospital cafeteria food rejected as culinary insult",
+        "Nonna's illicit home cooking smuggled past ICU nurses",
+        "Extended family turning patient room into Sunday dinner"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Vespa passed between two fiat Pandas while gesturing with both hands.",
+        "public_transport": "Bus was scheduled for 2:15. It arrived on Thursday.",
+        "school": "Philosophy oral exam turned into a fiery philosophical argument about coffee.",
+        "supermarkets": "Grandmother inspected 32 melons by ear before selecting one.",
+        "winter": "Wore heavy down jacket because the air had 'un colpo d'aria'."
+      },
+      "satire_critique": "Affectionate tribute to Italy's unmatched culinary pride and fierce, all-encompassing family loyalty in medical crises."
+    },
+    "netherlands": {
+      "country": "Netherlands",
+      "slug": "netherlands",
+      "flag": "🇳🇱",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor gave me 500mg paracetamol and told me to cycle home on my broken hip.",
+      "archetype_character": {
+        "age": "Late 20s to early 40s",
+        "gender": "Any / Dutch",
+        "ethnicity": "Dutch / North European",
+        "expression": "Direct, no-nonsense frankness; cheerfully practical despite injury",
+        "attire": "Bright orange waterproof cycling jacket, jeans rolled up at right cuff, helmetless windblown hair",
+        "props": "Blister pack of generic paracetamol 500mg, upright Dutch Omafiets bicycle with front crate, crutch taped to bike frame"
+      },
+      "visual_setting": "Brick-paved canal street outside a neighbourhood 'Huisarts' general practice clinic with rows of parked bicycles in light drizzle",
+      "viral_tropes": [
+        "Paracetamol as the single remedy for every medical condition",
+        "Cycling home from serious orthopedic trauma",
+        "Uncompromising Dutch directness"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Yielded to 45 bicycles, 3 cargo bikes, and a swan before turning.",
+        "public_transport": "Tapped OV-chipkaart with one hand while eating raw herring.",
+        "school": "Biked 15 km through horizontal hail; arrived with fresh stroopwafel.",
+        "supermarkets": "Sent a €1.20 Tikkie for the Albert Heijn bread roll I shared.",
+        "winter": "Canals froze; entire nation abandoned work to skate 200 km."
+      },
+      "satire_critique": "Classic Dutch self-satire highlighting the legendary 'take two paracetamol and sleep it off' GP culture and universal bike reliance."
+    },
+    "germany": {
+      "country": "Germany",
+      "slug": "germany",
+      "flag": "🇩🇪",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Emergency surgery delayed until 42 DIN-spec forms are faxed in triplicate.",
+      "archetype_character": {
+        "age": "Mid-40s",
+        "gender": "Any / Administrator",
+        "ethnicity": "German / Central European",
+        "expression": "Stern, rule-abiding precision; clutching binder with methodical intensity",
+        "attire": "Jack Wolfskin technical fleece, neat spectacles, sensible trekking shoes",
+        "props": "Heavy lever-arch ring binder marked 'FORMULARE', thermal fax printout reel, blue stamp ink pad and official notary rubber stamp"
+      },
+      "visual_setting": "Brutalist concrete Klinikum admissions office with a functioning vintage Panasonic fax machine and labeled filing cabinets",
+      "viral_tropes": [
+        "Surviving medical emergency contingent on filling out DIN A4 paperwork",
+        "Unbroken loyalty to legacy fax machines (Telefax)",
+        "Zero exceptions to bureaucratic protocol"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Flashing high beams at 250 km/h in the left lane of the Autobahn.",
+        "public_transport": "Train delayed 3 minutes; conductor announced a formal apology.",
+        "school": "Class ended exactly when the bell rang; students rapped knuckles on desk.",
+        "supermarkets": "Cashier scanned 95 groceries in 4 seconds; customer had panic attack.",
+        "winter": "Opened every window at 6 AM for Lüften to exchange stale air."
+      },
+      "satire_critique": "Good-humored ribbing of legendary German bureaucratic paperwork, DIN standardization, and lingering institutional fondness for fax machines."
+    },
+    "france": {
+      "country": "France",
+      "slug": "france",
+      "flag": "🇫🇷",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Surgeon is on strike, nurses are protesting, ambulance drivers drinking espresso.",
+      "archetype_character": {
+        "age": "Late 30s",
+        "gender": "Any / Doctor or Nurse",
+        "ethnicity": "French",
+        "expression": "Philosophically detached shrug, elegant nonchalance, cigarette between fingers",
+        "attire": "Designer scarf knotted around neck, white lab coat casually unbuttoned over navy turtleneck",
+        "props": "Tiny espresso cup, cardboard protest placard reading 'EN GRÈVE', fresh baguette under arm"
+      },
+      "visual_setting": "Sidewalk café bistro directly across from hospital main gates where a crowd of healthcare workers in blue scrubs waves union flags",
+      "viral_tropes": [
+        "National strikes (grève) as a regular cultural fixture",
+        "Espresso breaks interrupting high-stakes triage",
+        "Uncompromising elegance under civil unrest"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Parallel parked by gently nudging the cars in front and behind.",
+        "public_transport": "RER line B suspended due to spontaneous union strike at lunch.",
+        "school": "Three-course school lunch served with fresh brie and baguette.",
+        "supermarkets": "Debated cheese vendor for 20 minutes over the terroir of Camembert.",
+        "winter": "Refused to wear a ski jacket that lacked sartorial silhouette."
+      },
+      "satire_critique": "Celebrates the proud French tradition of labor protests and café philosophy with affectionate, lighthearted flair."
+    },
+    "ireland": {
+      "country": "Ireland",
+      "slug": "ireland",
+      "flag": "🇮🇪",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "200 patients on trolleys in hallway; nurse prescribed flat 7-Up and mighty craic.",
+      "archetype_character": {
+        "age": "50s",
+        "gender": "Female / Nurse or Patient",
+        "ethnicity": "Irish",
+        "expression": "Rosy-cheeked, warm, irrepressibly talkative and witty",
+        "attire": "Green NHS/HSE nurse tunic or hospital pyjamas with thick Aran wool cardigan",
+        "props": "Two-liter bottle of 7-Up with the cap loosened overnight (flat 7-Up), pack of Tayto crisps, rosary beads"
+      },
+      "visual_setting": "Crammed hospital corridor lined wheel-to-wheel with patients on wheeled trolleys, all engaged in hilarious banter across stretchers",
+      "viral_tropes": [
+        "Corridor trolley overcrowding",
+        "Flat 7-Up as magical medicinal tonic for all ailments",
+        "Undying craic and storytelling in the midst of hospital gridlock"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Waved one finger off the steering wheel at every oncoming car on narrow boreen.",
+        "public_transport": "Bus driver had a 10-minute chat with passenger's aunt at green light.",
+        "school": "Wearing school uniform jumper; nun warned that dancing leads to ruin.",
+        "supermarkets": "Popped in for milk; left with a chicken fillet roll and 40-minute chat.",
+        "winter": "Just soft rain and heavy wind for 7 consecutive months."
+      },
+      "satire_critique": "Warm, universally recognized Irish trope of legendary hospital camaraderie and maternal flat 7-Up medicine."
+    },
+    "turkey": {
+      "country": "Turkey",
+      "slug": "turkey",
+      "flag": "🇹🇷",
+      "region": "Europe / Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Landed in Istanbul with receding hairline, left looking like a wrapped mummy.",
+      "archetype_character": {
+        "age": "Early 30s",
+        "gender": "Male / Medical Tourist",
+        "ethnicity": "International tourist / Mediterranean",
+        "expression": "Dazed optimism behind a black elastic forehead sweatband",
+        "attire": "Black clinic-branded compression headband, red donor-site gauze bandage on back of head, button-up shirt",
+        "props": "Neck pillow around neck, Istanbul airport duty-free bag, flyer for hair transplant & dental crown package deal"
+      },
+      "visual_setting": "Istanbul Airport international departures gate filled with 40 identical men sporting black headbands and red bandages drinking Turkish tea",
+      "viral_tropes": [
+        "Istanbul as the global hair restoration capital",
+        "Airport departure lounges full of bandaged medical tourists",
+        "Unending hospitality with glasses of hot çay"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Taxi driver switched 4 lanes without indicator while pouring hot cay.",
+        "public_transport": "Ferry passenger shared simit bread with 20 screaming seagulls.",
+        "school": "Drank 5 glasses of black tea while reciting epic poetry.",
+        "supermarkets": "Pesa bazaar seller insisted I sample 14 pistachios before buying.",
+        "winter": "Istanbul had 2 cm of snow; traffic halted, children built tea-drinking snowman."
+      },
+      "satire_critique": "Playfully spotlights Turkey's booming medical tourism industry and the iconic sight of bandaged tourists at IST airport."
+    },
+    "japan": {
+      "country": "Japan",
+      "slug": "japan",
+      "flag": "🇯🇵",
+      "region": "Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor bowed 25 times to apologize that waiting time exceeded 3 minutes.",
+      "archetype_character": {
+        "age": "Late 40s",
+        "gender": "Any / Physician",
+        "ethnicity": "Japanese / East Asian",
+        "expression": "Deeply apologetic 90-degree bow of profound institutional remorse",
+        "attire": "Crisp white medical coat over dark tie, immaculately ironed trousers, white clinical face mask",
+        "props": "Digital clipboard displaying exact timestamp down to milliseconds, thermal health insurance card, bowing posture"
+      },
+      "visual_setting": "Pristine, whisper-quiet clinic reception with spotless linoleum, automated robotic ticket kiosk, and soft chime bells",
+      "viral_tropes": [
+        "Exaggerated institutional politeness and apologies for microscopic delays",
+        "Obsessive precision and clean hospital etiquette",
+        "High-tech automated payment terminals"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Waved hazard lights twice to thank car that let them merge into traffic.",
+        "public_transport": "Train departed at 08:14:00; stationmaster bowed in sync.",
+        "school": "Students scrubbed the classroom floors clean before bowing to teacher.",
+        "supermarkets": "Square watermelon wrapped in silk ribbon costs $150.",
+        "winter": "Kotatsu heated table turned on; nobody left the living room until March."
+      },
+      "satire_critique": "Humorous celebration of Japanese punctuality, meticulous precision, and unmatched formal courtesy."
+    },
+    "australia": {
+      "country": "Australia",
+      "slug": "australia",
+      "flag": "🇦🇺",
+      "region": "Oceania",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Nurse wiped a huntsman spider off the heart monitor without looking up.",
+      "archetype_character": {
+        "age": "Late 20s",
+        "gender": "Any / Aussie Nurse",
+        "ethnicity": "Australian",
+        "expression": "Completely relaxed, sun-tanned, unbothered grin",
+        "attire": "Short-sleeved medical scrubs, Blundstone elastic boots or thongs (flip-flops), zinc sunscreen on nose",
+        "props": "Can of Vegemite on meal tray, rolled-up newspaper used as a spider swatter, broad-brim bush hat hanging on drip stand"
+      },
+      "visual_setting": "Air-conditioned Outback base hospital ward with ceiling fan rotating slowly and red dust visible through flyscreens outside",
+      "viral_tropes": [
+        "Extreme nonchalance toward terrifying venomous wildlife",
+        "Casual slang ('No worries mate')",
+        "Sunscreen and thongs in clinical settings"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Swerved around two kangaroos while listening to AC/DC in a ute.",
+        "public_transport": "Commuter got onto train barefoot with a surfboard under their arm.",
+        "school": "No hat, no play! Sat in shade under gum tree eating Vegemite toast.",
+        "supermarkets": "Grabbed hot roast chook and a snag from the Bunnings BBQ outside.",
+        "winter": "Temperature dropped to 16°C; locals pulled out Ugg boots and puffer jackets."
+      },
+      "satire_critique": "Classic Aussie 'no worries' humor poking fun at casual reactions to terrifying critters."
+    },
+    "switzerland": {
+      "country": "Switzerland",
+      "slug": "switzerland",
+      "flag": "🇨🇭",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Medical bill arrived in gold-embossed leather case with complimentary luxury watch.",
+      "archetype_character": {
+        "age": "Mid-50s",
+        "gender": "Any / Private Physician",
+        "ethnicity": "Swiss / Alpine",
+        "expression": "Discreet, immaculate neutrality; quiet satisfaction",
+        "attire": "Cashmere turtleneck, bespoke lab coat, gold wire-rimmed glasses",
+        "props": "Polished mahogany presentation box containing an itemized invoice, Swiss chocolate praline box, mechanical chronograph"
+      },
+      "visual_setting": "Private clinic suite overlooking snow-capped Lake Geneva and Alps with glass chandeliers and designer leather armchairs",
+      "viral_tropes": [
+        "Luxury banking aesthetic applied to hospital invoices",
+        "Legendary precision and neutral diplomacy",
+        "Astronomical bills delivered with ultra-high net worth courtesy"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Fined 400 francs for driving 2 km/h over speed limit on clean highway.",
+        "public_transport": "Train arrived at 12:03:00; passengers synchronized Rolex chronometers.",
+        "school": "School bell rang at 11:59; kids went home for 2-hour gourmet lunch.",
+        "supermarkets": "Paid 45 francs for 200 grams of Gruyère and felt completely neutral.",
+        "winter": "Snow plow cleared path before the first flake even hit the pavement."
+      },
+      "satire_critique": "Playfully mocks Swiss private banking elegance and perfectionism mapped onto healthcare."
+    },
+    "mexico": {
+      "country": "Mexico",
+      "slug": "mexico",
+      "flag": "🇲🇽",
+      "region": "Latin America",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Abuela and doctor agreed: rub VapoRub on chest and drink lemon Sprite.",
+      "archetype_character": {
+        "age": "60s",
+        "gender": "Abuela / Grandmother",
+        "ethnicity": "Mexican / Latina",
+        "expression": "Knowing, authoritative maternal smirk with eyebrow raised",
+        "attire": "Embroidered Mexican delantal (apron) over colourful dress, hair tied back with clip",
+        "props": "Blue tub of VapoRub ointment, bottle of ice-cold Mexican Sprite, wooden molinillo whisk"
+      },
+      "visual_setting": "Colourful family kitchen / clinic consultation room with lace curtains, framed image of Our Lady of Guadalupe, and citrus fruits on counter",
+      "viral_tropes": [
+        "VapoRub (Vick) as cure for every conceivable illness",
+        "Lemon Sprite as universal antibiotic",
+        "Abuela having veto power over licensed physicians"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Honked rhythmically to pass three speed bumps (topes) without braking.",
+        "public_transport": "Microbús blaring cumbia took a sharp corner on two wheels.",
+        "school": "Honored the national flag at 7 AM while eating conchas with hot chocolate.",
+        "supermarkets": "Bought 3 kg of fresh tortillas wrapped in brown paper still steaming.",
+        "winter": "Temperature hit 15°C; entire family put on heavy winter parkas."
+      },
+      "satire_critique": "Warm, beloved Hispanic home remedy trope celebrating maternal care and the legendary power of Vicks."
+    },
+    "brazil": {
+      "country": "Brazil",
+      "slug": "brazil",
+      "flag": "🇧🇷",
+      "region": "South America",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "ER waiting room playing samba; doctor entered wearing Havaianas flip-flops.",
+      "archetype_character": {
+        "age": "Late 20s to 30s",
+        "gender": "Any / Brazilian Doctor",
+        "ethnicity": "Afro-Brazilian / Latino",
+        "expression": "Infectious joyous smile, upbeat energy, rhythmically tapping foot",
+        "attire": "Pastel scrubs paired with blue Havaianas flip-flops, whistle around neck",
+        "props": "Small portable Bluetooth speaker playing pagode, cup of strong cafezinho, clipboard"
+      },
+      "visual_setting": "Sunlit municipal hospital triage lobby with open windows, lush palm trees outside, and patients humming along to music",
+      "viral_tropes": [
+        "Samba rhythm infusing stressful situations",
+        "Havaianas flip-flops as formal medical footwear",
+        "Irrepressible Brazilian warmth and optimism"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Motorcycle delivery zipped through a 20 cm gap between two buses.",
+        "public_transport": "Bus turnstile clicker clicked to the rhythm of pagode drums.",
+        "school": "Played football during 15-minute recess using a rolled-up juice carton.",
+        "supermarkets": "Paid for weekly groceries in 12 interest-free credit card installments.",
+        "winter": "21°C in Rio: beaches deserted, locals shivering in wool scarves."
+      },
+      "satire_critique": "Celebrates Brazil's unmatched positive energy, vibrant music, and relaxed tropical charm."
+    },
+    "poland": {
+      "country": "Poland",
+      "slug": "poland",
+      "flag": "🇵🇱",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Babushka in clinic lobby warned that sitting near an open window draft is lethal.",
+      "archetype_character": {
+        "age": "70s",
+        "gender": "Babcia / Grandmother",
+        "ethnicity": "Polish / Slavic",
+        "expression": "Stern, vigilant, deeply concerned about indoor airflow",
+        "attire": "Floral headscarf, thick wool cardigan, quilted slippers",
+        "props": "Thermos of hot mint tea, paper bag containing warm pierogi, tightly clenched woolen shawl"
+      },
+      "visual_setting": "Public health clinic (Przychodnia) corridor with varnished wooden benches and firmly shut windows marked 'NIE OTWIERAĆ!'",
+      "viral_tropes": [
+        "Mortal fear of 'przeciąg' (indoor drafts)",
+        "Babcia curing all woes with hot soup and pierogi",
+        "Grandmotherly policing of clinic waiting room temperature"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Dodged 14 potholes while listening to disco polo in a 2002 Passat.",
+        "public_transport": "Grandma glared until someone surrendered seat on tram 9.",
+        "school": "Changed into indoor slippers at school entrance or faced janitor wrath.",
+        "supermarkets": "Stood in Biedronka queue holding two crates of cabbage and pierogi.",
+        "winter": "Minus 15 outside; walked dog through blizzard wearing leather jacket."
+      },
+      "satire_critique": "Beloved Central European meme about the legendary dreaded draft (przeciąg) and caring grandmothers."
+    },
+    "greece": {
+      "country": "Greece",
+      "slug": "greece",
+      "flag": "🇬🇷",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor prescribed sea salt, oregano tea, and shouted at the pharmacist on phone.",
+      "archetype_character": {
+        "age": "Mid-50s",
+        "gender": "Any / Physician",
+        "ethnicity": "Greek / Mediterranean",
+        "expression": "Passionate, theatrical, gesturing wildly with one hand while holding landline",
+        "attire": "Short-sleeved white coat over linen shirt, evil eye (mati) bead bracelet",
+        "props": "Cup of iced freddo espresso, bundle of wild dried mountain oregano (rigani), worry beads (komboloi)"
+      },
+      "visual_setting": "Sunny island dispensary with blue shutters overlooking the turquoise Aegean Sea and cats lounging on the clinic steps",
+      "viral_tropes": [
+        "Passionate volume mistaken for anger",
+        "Greek mountain herbs and olive oil for all ailments",
+        "Consultations turning into theatrical debates"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Two drivers blocked entire narrow street to argue about politics out window.",
+        "public_transport": "Ferry docked 3 hours late because everyone was dancing at the port.",
+        "school": "Skipped morning class to drink freddo espresso at coastal café.",
+        "supermarkets": "Brought own 5-liter tin to grocery store for fresh local olive oil.",
+        "winter": "Rare snowfall in Athens; everyone took 500 photos of the Parthenon in snow."
+      },
+      "satire_critique": "Warm portrayal of Mediterranean passion, herbal remedies, and loud loving communication."
+    },
+    "spain": {
+      "country": "Spain",
+      "slug": "spain",
+      "flag": "🇪🇸",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Clinic closed from 2 PM to 5 PM for lunch and siesta; doctor said don't stress.",
+      "archetype_character": {
+        "age": "Early 40s",
+        "gender": "Any / Spanish Doctor",
+        "ethnicity": "Spanish / Iberian",
+        "expression": "Unbothered tranquility, relaxed warm smile",
+        "attire": "Casual medical polo shirt, sunglasses pushed up onto forehead, espadrilles",
+        "props": "Jamon serrano bocadillo sandwich in greaseproof paper, glass of sparkling water with lemon, clinic keys"
+      },
+      "visual_setting": "Quiet town plaza clinic with lowered metal shutters during blazing afternoon heat while terrace diners eat tapas nearby",
+      "viral_tropes": [
+        "Sacrosanct 3-hour afternoon siesta and lunch window",
+        "Calm 'tranquilo' philosophy applied to triage",
+        "No emergency justifies skipping a proper meal"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Roundabout has 4 informal lanes; whoever honks loudest gets right of way.",
+        "public_transport": "Metro packed at 1 AM with grandmas heading out for late tapas dinner.",
+        "school": "Lunch break is two hours; students eat jamón serrano bocadillo in sun.",
+        "supermarkets": "Whole jamón leg strapped into shopping cart like a toddler.",
+        "winter": "Put on heavy down coat when mercury dropped to 14°C in Madrid."
+      },
+      "satire_critique": "Playful celebration of Spanish priorities: work-life balance, delicious food, and living life without unnecessary stress."
+    },
+    "finland": {
+      "country": "Finland",
+      "slug": "finland",
+      "flag": "🇫🇮",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor prescribed 30 minutes in a 90°C sauna and total silence.",
+      "archetype_character": {
+        "age": "Mid-30s",
+        "gender": "Any / Finn",
+        "ethnicity": "Finnish / Nordic",
+        "expression": "Completely motionless, stoic, peaceful poker face",
+        "attire": "Linen sauna wrap towel over shoulders or Marimekko print tunic",
+        "props": "Birch branch whisk (vihta), wooden sauna bucket and ladle, tin of salmiakki salty licorice"
+      },
+      "visual_setting": "Wood-paneled cedar hospital recovery sauna with steam rising and frozen pine forest visible through the window",
+      "viral_tropes": [
+        "Sauna as primary medical cure for literally everything",
+        "Total aversion to small talk",
+        "Unmatched introverted comfort in silence"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Drifted a front-wheel-drive hatchback on ice with one hand on wheel.",
+        "public_transport": "Kept a 5-meter exclusion zone from other passengers at bus stop.",
+        "school": "Free gourmet school lunch eaten in total silence; zero standardized tests.",
+        "supermarkets": "Bought salmiakki licorice and rye bread without speaking a single word.",
+        "winter": "Minus 25°C; took a casual swim in a hole cut into frozen lake."
+      },
+      "satire_critique": "Iconic Nordic humor celebrating Finland's sacred sauna culture and legendary comfortable silence."
+    },
+    "norway": {
+      "country": "Norway",
+      "slug": "norway",
+      "flag": "🇳🇴",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Prescribed fresh mountain air and cross-country skiing for knee surgery recovery.",
+      "archetype_character": {
+        "age": "Late 30s",
+        "gender": "Any / Outdoors Enthusiast",
+        "ethnicity": "Norwegian",
+        "expression": "Glowing with outdoor vitality, rosy cheeks, unshakeable friluftsliv spirit",
+        "attire": "Knit Dale of Norway wool sweater, Gore-Tex wind pants, cross-country ski boots",
+        "props": "Pair of carbon-fiber cross-country ski poles, block of brown goat cheese (brunost), thermos of hot blackcurrant toddy"
+      },
+      "visual_setting": "Sunlit clinic at base of snowy fjord with ski racks outside the door and panoramic mountain peaks",
+      "viral_tropes": [
+        "Outdoor friluftsliv lifestyle as physical therapy",
+        "Brown goat cheese fueling all physical effort",
+        "Skiing as the default mode of transport"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Tesla autopilot paused to yield to 4 reindeer crossing snowy fjord road.",
+        "public_transport": "Commuters boarded electric catamaran ferry with brown goat cheese sandwiches.",
+        "school": "Outdoor kindergarten spent 6 hours outside during Arctic blizzard.",
+        "supermarkets": "Paid 180 kroner for a single frozen pizza and smiled politely.",
+        "winter": "Went cross-country skiing to the grocery store with headlight on."
+      },
+      "satire_critique": "Celebrates Norway's deep love of nature (friluftsliv) and extreme outdoor fitness culture."
+    },
+    "denmark": {
+      "country": "Denmark",
+      "slug": "denmark",
+      "flag": "🇩🇰",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor gave me herbal tea, lit a candle for hygge, and prescribed a bicycle ride.",
+      "archetype_character": {
+        "age": "Early 30s",
+        "gender": "Any / Dane",
+        "ethnicity": "Danish",
+        "expression": "Serene, stylishly relaxed, effortless hygge contentment",
+        "attire": "Architectural black cashmere coat, minimalist scarf, sleek leather ankle boots",
+        "props": "Designer ceramic mug of steaming chamomile tea, glowing beeswax candle in glass holder, Christiania cargo bike key"
+      },
+      "visual_setting": "Cozy Copenhagen clinic with warm ambient candlelight, wooden Danish design chairs, and rain tapping against glass",
+      "viral_tropes": [
+        "Applying 'hygge' coziness to medical situations",
+        "Prescribing bike rides for acute medical conditions",
+        "World-class minimalist interior design"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Bicycle rush hour has stricter traffic rules than highway motorway.",
+        "public_transport": "Clean metro runs on exact second; passengers quietly eat smørrebrød.",
+        "school": "Students sit in designer Arne Jacobsen chairs discussing collaborative design.",
+        "supermarkets": "Bought organic rugbrød, salted butter, and licorice candies in Netto.",
+        "winter": "Gale-force rain at 3°C; biked through it with fashionable scarf."
+      },
+      "satire_critique": "Good-natured satire of Danish hygge obsession and relentless lifestyle cycling."
+    },
+    "belgium": {
+      "country": "Belgium",
+      "slug": "belgium",
+      "flag": "🇧🇪",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Hospital cafeteria serves 14 Trappist abbey ales and fresh frites with mayo.",
+      "archetype_character": {
+        "age": "Mid-40s",
+        "gender": "Any / Belgian",
+        "ethnicity": "Belgian / European",
+        "expression": "Connoisseur's appreciative grin, diplomatic neutrality",
+        "attire": "Navy corduroy blazer, neat scarf, tortoiseshell glasses",
+        "props": "Paper cone of twice-cooked Belgian fries topped with yellow mayonnaise, chalice glass of Chimay ale, medical file"
+      },
+      "visual_setting": "Hospital bistro dining hall featuring a brass draught beer tap tower and patrons dipping frites into sauces",
+      "viral_tropes": [
+        "Trappist beer and fries featured in institutional dining",
+        "Multilingual administrative acrobatics",
+        "Uncompromising standards for fried potatoes"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Road surface abruptly switched from smooth tarmac to cobblestone minefield.",
+        "public_transport": "Train announcement in Dutch, French, German, and bureaucratic confusion.",
+        "school": "Debated linguistic border regulations during afternoon waffle break.",
+        "supermarkets": "Entire aisle of speculoos spread, chocolate praline boxes, and frites sauce.",
+        "winter": "Grey drizzle began in October; forecast says it clears up in May."
+      },
+      "satire_critique": "Playful nod to Belgian culinary delights (ale, frites, waffles) and intricate federal multilingualism."
+    },
+    "austria": {
+      "country": "Austria",
+      "slug": "austria",
+      "flag": "🇦🇹",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor greeted with 'Küss die Hand', prescribed mountain spa cure and apfelstrudel.",
+      "archetype_character": {
+        "age": "Late 50s",
+        "gender": "Herr Doktor / Physician",
+        "ethnicity": "Austrian / Viennese",
+        "expression": "Old-world aristocratic charm, formal Viennese courtesy",
+        "attire": "Tailored grey tweed vest, pristine white collar, loden wool overcoat",
+        "props": "Silver serving tray holding a warm slice of apple strudel dusted with powdered sugar, glass of water with spoon on top, spa voucher"
+      },
+      "visual_setting": "Grand historic Viennese medical building with high stucco ceilings, oil paintings, and dark mahogany wainscoting",
+      "viral_tropes": [
+        "Excessive old-world titles ('Herr Doktor Primar')",
+        "Kur (mountain sanatorium spa cure) as doctor's order",
+        "Strudel and Melange coffee as medical sustenance"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Vignette sticker inspected with magnifying glass at Alpine tunnel toll.",
+        "public_transport": "Conductor in formal uniform checked ticket with aristocratic bow.",
+        "school": "School trip climbed 2,000-meter Alpine peak before morning math class.",
+        "supermarkets": "Asked Billa deli for 100g Leberkäse in a fresh Semmel roll.",
+        "winter": "Toddler learned to ski down black diamond slope before learning to walk."
+      },
+      "satire_critique": "Warm parody of Viennese imperial nostalgia, formal etiquette, and legendary Kur health spa culture."
+    },
+    "czechia": {
+      "country": "Czechia",
+      "slug": "czechia",
+      "flag": "🇨🇿",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor nodded gravely and recommended two Pilsner Urquell beers for hydration.",
+      "archetype_character": {
+        "age": "Late 40s",
+        "gender": "Any / Czech",
+        "ethnicity": "Czech / Central European",
+        "expression": "Deadpan, humorous cynicism, easygoing practical smirk",
+        "attire": "Knitted sweater under lab coat, comfortable sandals with socks",
+        "props": "Heavy glass mug of golden Pilsner with thick white foam head, jar of pickled sausage (utopenec), medical chart"
+      },
+      "visual_setting": "Unpretentious Prague clinic office adjacent to a sunny beer garden where medical staff take peaceful lunch breaks",
+      "viral_tropes": [
+        "Beer officially treated as liquid bread and natural hydration",
+        "World-leading per capita beer consumption",
+        "Deadpan dry Czech humour under adversity"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Skoda Octavia estate overtaking everything on the D1 highway.",
+        "public_transport": "Rode Prague tram 22 while peeling a pickled sausage out of jar.",
+        "school": "Class went mushroom foraging in forest for mandatory nature biology lesson.",
+        "supermarkets": "Beer was literally cheaper than still bottled water in supermarket aisle.",
+        "winter": "Drank warm svařák mulled wine at town square while scraping ice off windshield."
+      },
+      "satire_critique": "Celebrates Czechia's world-famous brewing heritage, dry wit, and pragmatic lifestyle."
+    },
+    "hungary": {
+      "country": "Hungary",
+      "slug": "hungary",
+      "flag": "🇭🇺",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Prescribed 40 minutes soaking in thermal mineral bath and spoonful of paprika paste.",
+      "archetype_character": {
+        "age": "Early 50s",
+        "gender": "Any / Hungarian",
+        "ethnicity": "Hungarian",
+        "expression": "Warm, expressive, deeply proud of geothermal mineral riches",
+        "attire": "Terrycloth bath towel robe or medical lab coat over checkered shirt",
+        "props": "Tube of spicy Erős Pista crushed red paprika paste, entrance wristband to Széchenyi baths, chess piece"
+      },
+      "visual_setting": "Neo-baroque thermal bath courtyard with steaming turquoise water where patients play floating chess matches",
+      "viral_tropes": [
+        "Geothermal baths prescribed on government insurance",
+        "Paprika applied to every ailment inside and out",
+        "Playing chess in 38°C mineral pools"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Suzuki Swift sped through roundabout while driver cursed eloquently.",
+        "public_transport": "Budapest yellow vintage metro rattled past stations built in 1896.",
+        "school": "Rigorous Kodály music class requires singing complex 4-part choir harmony.",
+        "supermarkets": "Bought 2 kg of hot paprika powder and braided garlic wreath.",
+        "winter": "Drank shot of Palinka to 'disinfect throat from winter viruses'."
+      },
+      "satire_critique": "Affectionate parody of Hungary's famous thermal spa culture and sacred love affair with paprika."
+    },
+    "romania": {
+      "country": "Romania",
+      "slug": "romania",
+      "flag": "🇷🇴",
+      "region": "Europe",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Nurse tied red thread around wrist to ward off evil eye before giving injection.",
+      "archetype_character": {
+        "age": "Late 40s",
+        "gender": "Female / Nurse or Patient",
+        "ethnicity": "Romanian / Eastern European",
+        "expression": "Practical, superstitious, intensely caring",
+        "attire": "Traditional Romanian embroidered blouse (ie) under clinical nursing apron",
+        "props": "Red woolen thread bracelet, bottle of clear plum tuică brandy, jar of homemade pickled vegetables"
+      },
+      "visual_setting": "Classic provincial hospital room with ornate embroidered lace doilies on the bedside nightstand and garlic hung near doorway",
+      "viral_tropes": [
+        "Red thread against 'deochi' (the evil eye) combined with modern medicine",
+        "Tuică plum brandy as cure-all disinfectant",
+        "Deep family warmth and home-canned pickles"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Dacia Logan overtook horse-drawn cart at 130 km/h on rural road.",
+        "public_transport": "Train stopped in middle of field for 30 minutes; passengers drank tuică.",
+        "school": "Olympic math competition prep lasted until 9 PM with strict professor.",
+        "supermarkets": "Carried 10 kg bag of polenta cornmeal and pickled watermelon jar.",
+        "winter": "Shoveled car out of 1-meter snowdrift using wooden board and broom."
+      },
+      "satire_critique": "Good-spirited folklore humor blending ancient folk protection rituals with modern healthcare."
+    },
+    "singapore": {
+      "country": "Singapore",
+      "slug": "singapore",
+      "flag": "🇸🇬",
+      "region": "Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Hospital automated robot greeted me in 4 languages; hospital bill subsidized 80%.",
+      "archetype_character": {
+        "age": "Late 20s to 30s",
+        "gender": "Any / Singaporean",
+        "ethnicity": "Singaporean / East/South Asian",
+        "expression": "Ultra-efficient, smartphone in hand, checking Singpass app",
+        "attire": "Smart casual office attire, lanyard with transit pass, wireless earbuds",
+        "props": "Smartphone displaying MediSave account balance and QR code, takeaway cup of kopi-c peng"
+      },
+      "visual_setting": "Futuristic hospital concourse with autonomous service robots, lush indoor vertical gardens, and biometric check-in kiosks",
+      "viral_tropes": [
+        "Ruthless technocratic efficiency",
+        "Heavy fines for minor infractions",
+        "Four official languages spoken interchangeably with Singlish particles"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Certificate of Entitlement for sedan cost $106,000 before buying the car.",
+        "public_transport": "$500 fine for eating a candy on MRT train; floor clean enough to eat off.",
+        "school": "Primary 1 pupil carrying 12-subject assessment book to tuition center.",
+        "supermarkets": "Chilled aircon aisle in FairPrice was the coldest experience of my life.",
+        "winter": "Monsoon rain poured; temperature dropped to 24°C, wore thick hoodie."
+      },
+      "satire_critique": "Lighthearted poke at Singapore's hyper-organized, rule-abiding, futuristic efficiency and high-tech bureaucracy."
+    },
+    "china": {
+      "country": "China",
+      "slug": "china",
+      "flag": "🇨🇳",
+      "region": "Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor prescribed IV drip, herbal decoction, and drinking hot boiled water.",
+      "archetype_character": {
+        "age": "Mid-50s",
+        "gender": "Any / Physician",
+        "ethnicity": "Chinese / East Asian",
+        "expression": "Stern, earnest, thoroughly convinced of thermal balance",
+        "attire": "Modern lab coat over traditional Mandarin-collar shirt, reading glasses",
+        "props": "Glass thermos filled with hot water and goji berries, brown apothecary bottle of TCM herbs, IV drip pole"
+      },
+      "visual_setting": "Bustling Grade 3A urban mega-hospital hallway where patients sit in comfortable recliners receiving IV bags while holding insulated tea flasks",
+      "viral_tropes": [
+        "Drinking hot water (duo he re shui) as the ultimate panacea",
+        "Universal IV drips in outpatient clinic recliners",
+        "Herbal TCM combined seamlessly with modern biomedicine"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Navigation app yelled camera warning every 15 meters on expressway.",
+        "public_transport": "High-speed train hit 350 km/h; coin balanced on window edge didn't fall.",
+        "school": "6 AM morning recitation followed by 10 PM Gaokao practice exam.",
+        "supermarkets": "Live fish splashed out of supermarket tank directly into auntie's tote bag.",
+        "winter": "North has central heating; South sleeps in 3 layers of thermal long johns."
+      },
+      "satire_critique": "Culturally ubiquitous and affectionate satire of China's beloved 'drink hot water' cure and high-speed efficiency."
+    },
+    "egypt": {
+      "country": "Egypt",
+      "slug": "egypt",
+      "flag": "🇪🇬",
+      "region": "Middle East / North Africa",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor prescribed hot karkadeh hibiscus tea and said 'Inshallah you are cured'.",
+      "archetype_character": {
+        "age": "50s",
+        "gender": "Any / Egyptian Physician",
+        "ethnicity": "Egyptian / Arab",
+        "expression": "Warm, animated, hand over heart with reassuring grin",
+        "attire": "White medical coat over linen gallabeya or button-up shirt, watch on wrist",
+        "props": "Steaming glass cup of deep red karkadeh (hibiscus tea), prayer beads (misbaha), box of Egyptian dates"
+      },
+      "visual_setting": "Historic clinic office in downtown Cairo with ceiling fan, tall wooden shutters, and bustling street market visible below",
+      "viral_tropes": [
+        "Karkadeh tea for blood pressure",
+        "Deep faith and reassuring phrases ('Inshallah habibi')",
+        "Unending warmth and hospitality during illness"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "6 cars driving side-by-side on a 3-lane Cairo highway without lanes.",
+        "public_transport": "Jumped off moving microbus because driver didn't want to lose momentum.",
+        "school": "Private tutor came to house with 80-page handwritten exam summary booklet.",
+        "supermarkets": "Grocer stacked pyramids of oranges so high they defied modern physics.",
+        "winter": "18°C in Alexandria: residents wore leather coats and woollen beanies."
+      },
+      "satire_critique": "Warm, respectful depiction of Egyptian humor, legendary warmth, and cherished hibiscus tea remedy."
+    },
+    "nigeria": {
+      "country": "Nigeria",
+      "slug": "nigeria",
+      "flag": "🇳🇬",
+      "region": "Africa",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Mom declared the sickness was not your portion, sprayed Anointing Oil, gave Lucozade.",
+      "archetype_character": {
+        "age": "50s",
+        "gender": "Nigerian Mother / Matriarch",
+        "ethnicity": "West African / Nigerian",
+        "expression": "Commanding, fierce maternal faith and authority",
+        "attire": "Vibrant yellow and blue Ankara print dress with majestic matching gele headwrap",
+        "props": "Glass bottle of Lucozade Boost drink, small vial of holy Anointing Oil, King James Bible"
+      },
+      "visual_setting": "Spacious parlour living room with leather sofas, satellite TV broadcasting Nollywood, and ornate family portrait gallery",
+      "viral_tropes": [
+        "'It is not your portion!' declaring sickness illegal",
+        "Lucozade energy drink as universal convalescent medicine",
+        "Spiritual warfare against the common cold"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Lagos traffic yellow Danfo bus overtook through sandy sidewalk ditch.",
+        "public_transport": "Conductor hanging off bus doorway screaming 'Oshodi! Oshodi! Enter with change!'",
+        "school": "Teacher checked fingernails at assembly; cane ready for latecomers.",
+        "supermarkets": "Bought giant tub of Bournvita, powdered Peak milk, and Indomie carton.",
+        "winter": "Harmattan haze arrived; Vaseline applied heavily to lips and elbows."
+      },
+      "satire_critique": "Hilarious, widely celebrated Nigerian cultural meme about unstoppable mothers, Lucozade, and spiritual rebukes of illness."
+    },
+    "argentina": {
+      "country": "Argentina",
+      "slug": "argentina",
+      "flag": "🇦🇷",
+      "region": "South America",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor analyzed my soul on a psychoanalyst couch, then shared hot mate tea.",
+      "archetype_character": {
+        "age": "Late 40s",
+        "gender": "Any / Psychoanalyst",
+        "ethnicity": "Argentine",
+        "expression": "Deeply thoughtful, intellectual, psychoanalytic intensity",
+        "attire": "Turtleneck sweater, stylish corduroy jacket, unkempt scholarly hair",
+        "props": "Calabash gourd mate with silver bombilla straw, leather thermos under arm, Sigmund Freud notebook"
+      },
+      "visual_setting": "Psychoanalysis consulting room in Palermo, Buenos Aires with leather chaise lounge, towering bookshelves, and tango poster",
+      "viral_tropes": [
+        "Highest concentration of psychoanalysts in the world",
+        "Passing the mate gourd during therapy",
+        "Turning any medical symptom into an existential and economic debate"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Honked at green light after 0.2 seconds while shouting '¡Che, dale!'",
+        "public_transport": "Subte Line A smelled like vintage polished wood and economic debate.",
+        "school": "High school debate on inflation paused for dulce de leche alfajores.",
+        "supermarkets": "Meat counter butcher prepared 14 different cuts of beef with surgical care.",
+        "winter": "Wind from Patagonia blew; wrapped poncho tight while sipping mate."
+      },
+      "satire_critique": "Affectionate parody of Buenos Aires' famous passion for psychoanalysis, philosophical conversation, and sacred mate ritual."
+    },
+    "colombia": {
+      "country": "Colombia",
+      "slug": "colombia",
+      "flag": "🇨🇴",
+      "region": "South America",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor greeted me as 'Mi amor', prescribed aguapanela with lemon and cheese.",
+      "archetype_character": {
+        "age": "30s",
+        "gender": "Any / Physician",
+        "ethnicity": "Colombian / Latino",
+        "expression": "Radiant warmth, extremely polite and affectionate smile",
+        "attire": "Clean white medical coat over colourful polo shirt, stethoscope",
+        "props": "Steaming mug of brown cane sugar tea (aguapanela con limón), plate with block of white farmer cheese (queso campesino)"
+      },
+      "visual_setting": "Cozy Andean clinic consultation room with lush green mountains and flowering orchids visible outside",
+      "viral_tropes": [
+        "Calling patients 'mi amor' or 'corazón' naturally",
+        "Hot aguapanela with melted cheese as medicine for colds",
+        "Unrivaled politeness ('A la orden')"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Motorcycle zigzagged up mountain road carrying a refrigerator and a dog.",
+        "public_transport": "TransMilenio bus was packed; stranger helped hold my grocery bag.",
+        "school": "Class ended with spontaneous salsa dance circle in central courtyard.",
+        "supermarkets": "Free sample of warm arepa with fresh queso delivered with wide smile.",
+        "winter": "Rainy season in Bogotá; wool ruana poncho worn over tailored suit."
+      },
+      "satire_critique": "Warm tribute to legendary Colombian politeness, musical cheer, and the beloved aguapanela remedy."
+    },
+    "new_zealand": {
+      "country": "New Zealand",
+      "slug": "new_zealand",
+      "flag": "🇳🇿",
+      "region": "Oceania",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "ACC covered entire injury because I slipped chasing a stray sheep.",
+      "archetype_character": {
+        "age": "Late 20s",
+        "gender": "Any / Kiwi",
+        "ethnicity": "Kiwi / Pākehā / Māori",
+        "expression": "Cheeky friendly squint, unhurried easygoing grin",
+        "attire": "Black rugby hooped jersey, rugged stubbies shorts, ankle bandage",
+        "props": "ACC injury claim form with checkbox 'Sheep encounter', bottle of L&P soda, wool beanie"
+      },
+      "visual_setting": "Rural health clinic facing rolling emerald green pastures with sheep grazing and Southern Alps in distance",
+      "viral_tropes": [
+        "ACC (Accident Compensation Corporation) no-fault coverage for bizarre injuries",
+        "Rugby injuries treated with icy spray",
+        "Walking into medical facilities barefoot"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Swerved for kiwi bird crossing; waved politely at campervan.",
+        "public_transport": "Driver thanked each passenger by name; nobody wore shoes.",
+        "school": "Performed full school haka before lunch, then ate hot meat pie.",
+        "supermarkets": "Bought Whittaker's chocolate block and flat white at supermarket café.",
+        "winter": "Frost on lawn; locals walked to dairy in bare feet and stubbies shorts."
+      },
+      "satire_critique": "Playfully reflects New Zealand's famous ACC system, rural lifestyle, and barefoot Kiwi chill."
+    },
+    "south_africa": {
+      "country": "South Africa",
+      "slug": "south_africa",
+      "flag": "🇿🇦",
+      "region": "Africa",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Clinic power cut due to load-shedding; doctor finished stitches by phone torch.",
+      "archetype_character": {
+        "age": "Mid-30s",
+        "gender": "Any / South African Doctor",
+        "ethnicity": "South African / Rainbow Nation",
+        "expression": "Resilient, humorous shrug; 'Make a plan' determination",
+        "attire": "Green scrub top, khaki shorts, two-tone leather veldskoen shoes",
+        "props": "Rechargeable LED emergency camping lamp, smartphone flashlight clamped in teeth, strips of dried biltong in pocket"
+      },
+      "visual_setting": "Day clinic during Stage 6 load-shedding with backup generator humming faintly outside and jacaranda trees in purple bloom",
+      "viral_tropes": [
+        "Load-shedding rolling blackouts handled with casual improvisational grit",
+        "'Boer maak 'n plan' culture",
+        "Braai and biltong as morale lifesavers"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Navigated 4 broken traffic lights while buying biltong from street hawker.",
+        "public_transport": "White minibus taxi took sidewalk shortcut while blasting amapiano beats.",
+        "school": "Rugby practice at 6 AM; coach yelled 'tackle hard' through morning mist.",
+        "supermarkets": "Grabbed 2 kg boerewors sausage for tonight's braai barbecue.",
+        "winter": "Load-shedding hit; braai fired up outside because stove has no power."
+      },
+      "satire_critique": "Celebrates South African resilience, unstoppable humor, and camaraderie in the face of infrastructure hiccups."
+    },
+    "philippines": {
+      "country": "Philippines",
+      "slug": "philippines",
+      "flag": "🇵🇭",
+      "region": "Southeast Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Doctor and auntie agreed: Vicks VapoRub on forehead and drink ginger salabat.",
+      "archetype_character": {
+        "age": "50s",
+        "gender": "Tita / Auntie",
+        "ethnicity": "Filipino / Southeast Asian",
+        "expression": "Warm, protective, fussing over patient with immense motherly energy",
+        "attire": "Duster house dress in floral cotton, reading glasses on neck chain",
+        "props": "Vicks VapoRub jar, white porcelain mug of steaming yellow ginger tea (salabat), bottle of White Flower soothing oil"
+      },
+      "visual_setting": "Bright community health center (Barangay health station) with whirring stand fan and karaoke sounds drifting from next door",
+      "viral_tropes": [
+        "White Flower oil and Vicks applied to temples for literally everything",
+        "Tita curing colds with ginger salabat",
+        "Karaoke playing in background of all life milestones"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Jeepney squeezed between tricycle and truck while playing love song.",
+        "public_transport": "Passed fare hand-to-hand down 20 passengers shouting 'Bayad po!'",
+        "school": "Flag ceremony in humid sun; performed Zumba workout before English quiz.",
+        "supermarkets": "Bought 25 kg sack of Jasmine rice and 50 sachets of 3-in-1 coffee.",
+        "winter": "Temperature dropped to 22°C; entire family wore earmuffs in Tagaytay."
+      },
+      "satire_critique": "Beloved Filipino family culture celebrating devoted Titas, soothing oils, and warm ginger salabat."
+    },
+    "thailand": {
+      "country": "Thailand",
+      "slug": "thailand",
+      "flag": "🇹🇭",
+      "region": "Southeast Asia",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Went to hospital, walked into 5-star hotel lobby with free piano concert.",
+      "archetype_character": {
+        "age": "Late 20s",
+        "gender": "Any / Thai Host",
+        "ethnicity": "Thai / Southeast Asian",
+        "expression": "Graceful, hospitable wai greeting with polite gentle smile",
+        "attire": "Silk-trimmed nurse uniform or stylish linen scrubs, hair neatly pinned",
+        "props": "Welcome glass of iced butterfly pea tea, registration iPad, flower garland (phuang malai)"
+      },
+      "visual_setting": "Five-star Bangkok international hospital atrium with marble water fountain, grand piano player, and luxury cafe franchises",
+      "viral_tropes": [
+        "Private hospitals indistinguishable from 7-star luxury hotels",
+        "Universal warm 'wai' greeting",
+        "World-renowned medical hospitality"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Scooter carried family of four, golden retriever, and a basket of durians.",
+        "public_transport": "Bangkok canal boat splashed green water; commuters raised side plastic tarp.",
+        "school": "Students bowed to gate guard at 7:30 AM before morning anthem.",
+        "supermarkets": "7-Eleven toasted ham-and-cheese sandwich warmed up at 2 AM was peak dining.",
+        "winter": "20°C in Chiang Mai; locals pulled out heavy winter coats and beanies."
+      },
+      "satire_critique": "Playfully highlights Thailand's world-famous luxury private hospitals and warm cultural hospitality ('Land of Smiles')."
+    },
+    "jamaica": {
+      "country": "Jamaica",
+      "slug": "jamaica",
+      "flag": "🇯🇲",
+      "region": "Caribbean",
+      "primary_theme": "Hospitals / Healthcare",
+      "primary_punchline": "Nurse brewed cerasee bitter tea and told me 'No worry yuhself, everyting irie'.",
+      "archetype_character": {
+        "age": "Late 40s",
+        "gender": "Female / Nurse",
+        "ethnicity": "Afro-Caribbean / Jamaican",
+        "expression": "Commanding yet soothing maternal poise; radiant cool calm",
+        "attire": "Crisp white nursing uniform with yellow-and-green accent trim, red pen in pocket",
+        "props": "Enamel mug of steaming cerasee tea, bottle of Jamaican white rum with lime, fresh ginger root"
+      },
+      "visual_setting": "Veranda parish health clinic overlooking lush green tropical hills with a gentle Caribbean breeze swaying the palm leaves",
+      "viral_tropes": [
+        "Cerasee tea as herbal cure for blood purification",
+        "Incomparable Caribbean chill ('Everyting irie')",
+        "White rum with lime as topical and internal cure"
+      ],
+      "multi_theme_punchlines": {
+        "driving": "Route taxi took hairpin turn on country road honking musical horn.",
+        "public_transport": "Bus had 4 subwoofers under rear seats playing heavy reggae bass.",
+        "school": "Devotions assembly had whole school harmonizing gospel songs in unison.",
+        "supermarkets": "Left with cocoa bread, spicy beef patty, and fresh tin of Milo.",
+        "winter": "Rain started falling; entire town came to a complete standstill."
+      },
+      "satire_critique": "Warm, respectful celebration of Jamaican herbal traditions, calming wisdom, and vibrant musical soul."
+    }
+  }
+}

@@ -271,6 +271,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Upload the rendered long-form video to YouTube after rendering",
     )
+    longform_parser.add_argument(
+        "--aspect-ratio",
+        choices=["16:9", "9:16"],
+        default="16:9",
+        help="Video aspect ratio: 16:9 (Landscape default) or 9:16 (YouTube Shorts)",
+    )
+    longform_parser.add_argument(
+        "--shorts",
+        action="store_true",
+        default=False,
+        help="Generate vertical YouTube Shorts (9:16) instead of 16:9 landscape video",
+    )
+    longform_parser.add_argument(
+        "--segments",
+        type=int,
+        default=7,
+        help="Number of country segments for Wojak Shorts (6-10, default 7)",
+    )
 
     # 8. cleanup-work command
     cleanup_work_parser = subparsers.add_parser(
@@ -350,6 +368,86 @@ def build_parser() -> argparse.ArgumentParser:
         "types-of", help="Generate Types Of... anime comedy meme video"
     )
     _add_meme_args(types_parser, default_mode="types_of", default_cat="relatable")
+
+    # 10. wojak command (SapX-style 16:9 long-form meme video)
+    wojak_parser = subparsers.add_parser(
+        "wojak", help="Generate SapX-style 16:9 long-form Wojak meme video"
+    )
+    wojak_parser.add_argument(
+        "--aspect-ratio",
+        type=str,
+        default="16:9",
+        choices=["16:9", "9:16"],
+        help="Aspect ratio (16:9 for landscape longform, 9:16 for vertical YouTube Shorts)",
+    )
+    wojak_parser.add_argument(
+        "--shorts",
+        action="store_true",
+        default=False,
+        help="Generate a vertical (9:16) Wojak YouTube Shorts video",
+    )
+    wojak_parser.add_argument(
+        "--topic",
+        type=str,
+        default="hospital",
+        help="Topic for the Wojak video (hospital, school, transport, or custom)",
+    )
+    wojak_parser.add_argument(
+        "--countries",
+        type=str,
+        default=None,
+        help="Comma-separated country list or number of countries",
+    )
+    wojak_parser.add_argument(
+        "--segments",
+        "--count",
+        type=int,
+        default=None,
+        help="Number of country segments (default: all curated for topic)",
+    )
+    wojak_parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default=None,
+        help="Output video file or directory path",
+    )
+    wojak_parser.add_argument(
+        "--fps",
+        type=int,
+        default=30,
+        help="Video frame rate (default 30)",
+    )
+    wojak_parser.add_argument(
+        "--music",
+        type=str,
+        default=None,
+        help="Path to custom BGM audio file",
+    )
+    wojak_parser.add_argument(
+        "--disclaimer-seconds",
+        type=float,
+        default=3.5,
+        help="Duration of Scene 0 parody disclaimer card in seconds (default 3.5)",
+    )
+    wojak_parser.add_argument(
+        "--scene-seconds",
+        type=float,
+        default=4.5,
+        help="Duration of each country meme scene in seconds (default 4.5)",
+    )
+    wojak_parser.add_argument(
+        "--no-thumbnail",
+        action="store_true",
+        default=False,
+        help="Disable high-CTR YouTube thumbnail generation",
+    )
+    wojak_parser.add_argument(
+        "--publish",
+        action="store_true",
+        default=False,
+        help="Upload the rendered Wojak video to YouTube after rendering",
+    )
 
     return parser
 
@@ -619,7 +717,7 @@ def cmd_edge_login(args: argparse.Namespace, config: Settings, state_manager: St
 
 
 def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
-    """Render a long-form stick-figure video and print the result paths."""
+    """Render a long-form stick-figure video or Wojak Shorts video and print the result paths."""
     from autoshorts.longform.render import render_longform
 
     target_topic = args.topic or "science"
@@ -641,6 +739,42 @@ def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: Stat
         except Exception as e:
             logger.warning("Could not extract YouTube transcript for longform: %s", e)
             target_topic = target_topic or "science"
+
+    aspect_ratio = getattr(args, "aspect_ratio", "16:9")
+    is_shorts = getattr(args, "shorts", False) or aspect_ratio == "9:16"
+
+    if is_shorts:
+        from autoshorts.longform.wojak_shorts import render_wojak_shorts_video
+
+        seg_count = getattr(args, "segments", 7)
+        try:
+            result = render_wojak_shorts_video(
+                topic=target_topic,
+                segment_count=seg_count,
+                config=config,
+                state_manager=state_manager,
+            )
+        except (ValueError, RuntimeError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+
+        print(f"Title: {result.title}")
+        print(f"Video: {result.video_path}")
+        print(f"Thumbnail: {result.thumbnail_path}")
+        print(f"Duration: {result.duration:.1f}s")
+        print(f"Aspect Ratio: 9:16")
+
+        if getattr(args, "publish", False):
+            try:
+                from autoshorts.longform.publish import publish_longform
+
+                print("Uploading Wojak Shorts video to YouTube...")
+                yt_url = publish_longform(result, config=config, state_manager=state_manager)
+                print(f"Published to YouTube: {yt_url}")
+            except Exception as p_err:
+                print(f"Failed to upload video: {p_err}", file=sys.stderr)
+                return 1
+        return 0
 
     try:
         result = render_longform(target_topic, args.minutes, args.provider, config)
@@ -713,6 +847,145 @@ def cmd_meme(args: argparse.Namespace, config: Settings, state_manager: StateMan
     return 0
 
 
+def cmd_wojak(args: argparse.Namespace, config: Settings, state_manager: StateManager) -> int:
+    """Render a SapX-style 16:9 long-form Wojak meme video (or 9:16 Shorts) and print result paths."""
+    aspect_ratio = getattr(args, "aspect_ratio", "16:9")
+    is_shorts = getattr(args, "shorts", False) or aspect_ratio == "9:16"
+
+    if is_shorts:
+        from autoshorts.longform.wojak_shorts import render_wojak_shorts_video
+
+        topic = getattr(args, "topic", "hospital") or "hospital"
+        seg_count = getattr(args, "segments", None)
+        countries_arg = getattr(args, "countries", None)
+        if seg_count is None and countries_arg and str(countries_arg).strip().isdigit():
+            seg_count = int(countries_arg)
+        if seg_count is None:
+            seg_count = 7
+
+        try:
+            result = render_wojak_shorts_video(
+                topic=topic,
+                segment_count=seg_count,
+                config=config,
+                state_manager=state_manager,
+            )
+        except (ValueError, RuntimeError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+
+        print(f"Title: {result.title}")
+        print(f"Video: {result.video_path}")
+        print(f"Thumbnail: {result.thumbnail_path}")
+        print(f"Duration: {result.duration:.1f}s")
+        print(f"Aspect Ratio: 9:16")
+
+        if getattr(args, "publish", False):
+            try:
+                from autoshorts.longform.publish import publish_longform
+
+                print("Uploading Wojak Shorts video to YouTube...")
+                yt_url = publish_longform(result, config=config, state_manager=state_manager)
+                print(f"Published to YouTube: {yt_url}")
+            except Exception as p_err:
+                print(f"Failed to upload video: {p_err}", file=sys.stderr)
+                return 1
+        return 0
+
+    from autoshorts.longform.wojak_pipeline import (
+        WojakPipelineConfig,
+        WojakScene,
+        resolve_topic_scenes,
+        run_wojak_pipeline,
+    )
+
+    topic = getattr(args, "topic", "hospital") or "hospital"
+    scene_count = getattr(args, "segments", None)
+
+    countries_arg = getattr(args, "countries", None)
+    scenes: list[WojakScene] = []
+    title = f"Every Country's {topic.capitalize()}"
+    if countries_arg:
+        if isinstance(countries_arg, str) and not countries_arg.strip().isdigit():
+            c_list = [c.strip() for c in countries_arg.split(",") if c.strip()]
+            for idx, c in enumerate(c_list):
+                side = "left" if idx % 2 == 0 else "right"
+                scenes.append(
+                    WojakScene(
+                        country=c,
+                        caption=f"Meme scene for {c}",
+                        character_side=side,
+                        setting=topic,
+                    )
+                )
+        elif str(countries_arg).strip().isdigit():
+            scene_count = int(countries_arg)
+
+    if not scenes:
+        title, scenes = resolve_topic_scenes(topic, scene_count=scene_count)
+    elif scene_count and scene_count > 0:
+        scenes = scenes[:scene_count]
+
+    out_arg = getattr(args, "output", None)
+    if out_arg:
+        out_p = Path(out_arg)
+        if out_p.suffix == ".mp4":
+            out_dir = out_p.parent
+        else:
+            out_dir = out_p
+    else:
+        out_dir = Path("work") / "wojak"
+
+    cfg = WojakPipelineConfig(
+        topic=topic,
+        title=title,
+        scenes=scenes,
+        fps=getattr(args, "fps", 30),
+        disclaimer_duration=getattr(args, "disclaimer_seconds", 3.5),
+        scene_duration=getattr(args, "scene_seconds", 4.5),
+        output_dir=out_dir,
+        music_file_path=getattr(args, "music", None),
+        generate_thumbnail=not getattr(args, "no_thumbnail", False),
+    )
+
+    try:
+        result = run_wojak_pipeline(cfg)
+    except Exception as e:
+        print(f"Error rendering Wojak video: {e}", file=sys.stderr)
+        return 1
+
+    print(f"Title: {result.title}")
+    print(f"Video: {result.video_path}")
+    if result.thumbnail_path:
+        print(f"Thumbnail: {result.thumbnail_path}")
+    print(f"Duration: {result.duration_sec:.1f}s ({result.scene_count} scenes)")
+    print(f"Streaming FPS: {result.streaming_fps:.1f} fps (Rendered in {result.render_time_sec:.2f}s)")
+
+    if getattr(args, "publish", False):
+        try:
+            from autoshorts.longform.publish import publish_longform
+            from autoshorts.longform.types import LongformResult
+
+            print("Uploading Wojak long-form video to YouTube...")
+            lf_result = LongformResult(
+                topic=result.topic,
+                title=result.title,
+                video_path=result.video_path,
+                thumbnail_path=result.thumbnail_path or result.video_path,
+                duration=result.duration_sec,
+                description=f"{result.title}\n\nParody meme video in the style of Wojak country comparisons. Created for entertainment purposes.",
+                hashtags=["#wojak", "#memes", "#everycountry", "#countrymemes"],
+                provider="wojak_pipeline",
+            )
+            yt_url = publish_longform(lf_result, config=config, state_manager=state_manager)
+            print(f"Published to YouTube: {yt_url}")
+        except Exception as p_err:
+            print(f"Failed to upload Wojak video: {p_err}", file=sys.stderr)
+            return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Master CLI entry point."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -769,6 +1042,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return cmd_longform(args, config, state_manager)
     elif args.command in ("meme", "types-of"):
         return cmd_meme(args, config, state_manager)
+    elif args.command == "wojak":
+        return cmd_wojak(args, config, state_manager)
 
     parser.print_help()
     return 0
