@@ -272,6 +272,30 @@ CURATED_TRANSPORT_SCENES: list[dict[str, str]] = [
 
 def resolve_topic_scenes(topic: str, scene_count: int | None = None) -> tuple[str, list[WojakScene]]:
     """Resolve a topic name to title and list of WojakScene instances."""
+    from autoshorts.longform.wojak_archetypes import resolve_archetype_topic
+
+    # 1. Check Wojak Explainer Archetype Topics (Introverts, Gym, Generations, Coders, Students)
+    arch_data = resolve_archetype_topic(topic)
+    if arch_data:
+        title = arch_data["title"]
+        segs = arch_data["segments"]
+        if scene_count and scene_count > 0:
+            segs = segs[:scene_count]
+        scenes: list[WojakScene] = []
+        for idx, seg in enumerate(segs):
+            side = "left" if idx % 2 == 0 else "right"
+            scenes.append(
+                WojakScene(
+                    country=seg.archetype_title,
+                    caption=seg.caption,
+                    emotion=seg.expression,
+                    prop=seg.prop,
+                    character_side=side,
+                    setting=seg.setting,
+                )
+            )
+        return title, scenes
+
     t_clean = topic.strip().lower()
     if "school" in t_clean or "lunch" in t_clean or "education" in t_clean:
         title = "Every Country's High School"
