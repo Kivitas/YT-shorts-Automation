@@ -23,7 +23,11 @@ from autoshorts.core.models import UploadResult
 from autoshorts.core.paths import atomic_write, get_data_dir
 from autoshorts.core.resilience import classify_network_or_outage_error
 from autoshorts.quota.quota_tracker import QuotaTracker
-from autoshorts.uploader.description_builder import truncate_on_word
+from autoshorts.uploader.description_builder import (
+    LONGFORM_BROAD_LAYER,
+    build_hashtag_pyramid,
+    truncate_on_word,
+)
 from autoshorts.uploader.errors import (
     AuthError,
     PermanentUploadError,
@@ -722,12 +726,12 @@ class YouTubeApiUploader:
                     if curr_len + cost <= 500:
                         effective_tags.append(vt)
                         curr_len += cost
-            viral_hashtags = (
-                "\n\n#viral #trending #fyp #explore #foryou #youtube #podcast "
-                "#mindset #motivation #discipline #success #algorithm"
+            # Hashtag pyramid (3-5 tags, layered) instead of a fixed 12-tag block.
+            pyramid = build_hashtag_pyramid(
+                str(title or ""), broad=LONGFORM_BROAD_LAYER, niche_anchor=None
             )
-            if "#viral" not in (description or ""):
-                description = f"{(description or '').strip()}{viral_hashtags}"
+            if "#viral" not in (description or "").lower():
+                description = f"{(description or '').strip()}\n\n{' '.join(pyramid)}"
 
         # Enforce YouTube API's 5000-character description cap (word-boundary cut)
         final_description = build_upload_description(description)

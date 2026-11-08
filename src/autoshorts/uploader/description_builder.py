@@ -530,25 +530,101 @@ _HASHTAG_STOPWORDS = frozenset(
         "shorts",
     }
 )
-MAX_HASHTAGS = 15
+# Hashtag pyramid: 3 to 5 tags in three layers.
+#   Layer 1 broad:    1-2 discovery tags (Shorts/longform differ)
+#   Layer 2 niche:    1-2 tags for the audience/category
+#   Layer 3 specific: exactly 1 tag from the clip's own key term
+HASHTAG_MIN = 3
+HASHTAG_MAX = 5
+MAX_HASHTAGS = HASHTAG_MAX
+SHORTS_BROAD_LAYER = ("#Shorts", "#Viral")
+LONGFORM_BROAD_LAYER = ("#Viral", "#Trending")
+SHORTS_NICHE_ANCHOR = "#FYP"
+_FALLBACK_NICHE_TAG = "#Facts"
+_FALLBACK_SPECIFIC_TAG = "#Explained"
 
 
-def build_viral_hashtags(title: str, hook: str = "", max_tags: int = MAX_HASHTAGS) -> list[str]:
-    """Return a viral tag set: broad discovery tags plus keywords taken from the clip itself."""
+def _ordered_keyword_tags(texts: Sequence[str], exclude: set[str]) -> list[str]:
+    """Return unique #Tags from the texts in order, skipping stopwords and excluded tags."""
     import re
 
-    tags: list[str] = list(VIRAL_BASE_HASHTAGS)
-    words = re.findall(r"[A-Za-z]{5,}", f"{title} {hook}")
-    for word in words:
-        lowered = word.lower()
-        if lowered in _HASHTAG_STOPWORDS:
-            continue
-        tag = f"#{word.capitalize()}"
-        if tag.lower() not in {t.lower() for t in tags}:
-            tags.append(tag)
-        if len(tags) >= max_tags:
+    out: list[str] = []
+    seen: set[str] = set(exclude)
+    for text in texts:
+        for word in re.findall(r"[A-Za-z]{5,}", text or ""):
+            lowered = word.lower()
+            if lowered in _HASHTAG_STOPWORDS:
+                continue
+            tag = f"#{word.capitalize()}"
+            if tag.lower() in seen:
+                continue
+            seen.add(tag.lower())
+            out.append(tag)
+    return out
+
+
+def hashtag_layers(
+    title: str,
+    hook: str = "",
+    *,
+    max_tags: int = HASHTAG_MAX,
+    broad: Sequence[str] = SHORTS_BROAD_LAYER,
+    niche_anchor: str | None = SHORTS_NICHE_ANCHOR,
+) -> tuple[list[str], list[str], list[str]]:
+    """Return (broad, niche, specific) layers for a pyramid of 3-5 hashtags.
+
+    The specific tag comes from the hook (falling back to the title), the niche tags
+    are the optional anchor plus the next keyword, and the broad layer is ``broad``.
+    The total is clamped to ``max_tags`` (itself clamped to 3-5) by trimming niche
+    first, then the second broad tag.
+    """
+    cap = max(HASHTAG_MIN, min(int(max_tags), HASHTAG_MAX))
+    broad_list = list(broad)[:2]
+    anchor = niche_anchor or ""
+    exclude = {t.lower() for t in broad_list} | ({anchor.lower()} if anchor else set())
+    keywords = _ordered_keyword_tags([hook, title], exclude)
+
+    specific = [keywords[0] if keywords else _FALLBACK_SPECIFIC_TAG]
+    niche = ([anchor] if anchor else []) + keywords[1:]
+    niche = niche[:2] or [_FALLBACK_NICHE_TAG]
+
+    while len(broad_list) + len(niche) + len(specific) > cap:
+        if len(niche) > 1:
+            niche.pop()
+        elif len(broad_list) > 1:
+            broad_list.pop()
+        else:
             break
-    return tags[:max_tags]
+    return broad_list, niche, specific
+
+
+def build_hashtag_pyramid(
+    title: str,
+    hook: str = "",
+    *,
+    max_tags: int = HASHTAG_MAX,
+    broad: Sequence[str] = SHORTS_BROAD_LAYER,
+    niche_anchor: str | None = SHORTS_NICHE_ANCHOR,
+) -> list[str]:
+    """Flat 3-5 tag pyramid; see ``hashtag_layers`` for the layer rules."""
+    return build_viral_hashtags(
+        title, hook, max_tags=max_tags, broad=broad, niche_anchor=niche_anchor
+    )
+
+
+def build_viral_hashtags(
+    title: str,
+    hook: str = "",
+    max_tags: int = HASHTAG_MAX,
+    *,
+    broad: Sequence[str] = SHORTS_BROAD_LAYER,
+    niche_anchor: str | None = SHORTS_NICHE_ANCHOR,
+) -> list[str]:
+    """Return a layered 3-5 hashtag set: broad discovery, niche, then one specific tag."""
+    broad_layer, niche_layer, specific_layer = hashtag_layers(
+        title, hook, max_tags=max_tags, broad=broad, niche_anchor=niche_anchor
+    )
+    return [*broad_layer, *niche_layer, *specific_layer]
 
 
 def build_short_title(

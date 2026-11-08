@@ -18,6 +18,7 @@ from autoshorts.longform.topics import (
     title_for,
 )
 from autoshorts.longform.types import MAX_VIDEO_SECONDS, LongformScript, Section
+from autoshorts.uploader.description_builder import LONGFORM_BROAD_LAYER, build_hashtag_pyramid
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,9 @@ def description_for(script: LongformScript) -> str:
     lines = [script.hook.strip(), ""]
     for i, s in enumerate(script.sections, 1):
         lines.append(f"{i}. {s.heading}")
-    tags = ["#shorts", *(script.hashtags or hashtags_for(script.topic))[:7]]
+    tags = build_hashtag_pyramid(
+        script.title, script.hook, broad=LONGFORM_BROAD_LAYER, niche_anchor=None
+    )
     lines += ["", spec.safety_note, "", " ".join(tags)]
     return "\n".join(lines).strip()
 
