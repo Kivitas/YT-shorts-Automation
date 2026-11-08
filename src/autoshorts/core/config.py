@@ -380,6 +380,10 @@ class RenderConfig(BaseModel):
         default_factory=lambda: {"raea": 1, "remotion": 1, "ffmpeg": 2},
         description="Concurrent renders allowed per method (heavy renderers must not oversubscribe).",
     )
+    longform_presenter_stage: bool = Field(
+        default=False,
+        description="Draw the animated presenter stage on long-form frames (off = frames unchanged).",
+    )
 
     @field_validator("method")
     @classmethod

@@ -12,7 +12,7 @@ import math
 import re
 from collections.abc import Iterator, Sequence
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -29,6 +29,16 @@ from autoshorts.core.theme import (
     lerp_rgb,
 )
 from autoshorts.longform import motion
+from autoshorts.longform.background_director import (
+    BackgroundDirector,
+    SentenceBeat,
+    get_background_director,
+    paint_cyber_matrix,
+    paint_financial_ledger,
+    paint_molecular_lab,
+    paint_parchment_map,
+    paint_space_cosmic,
+)
 from autoshorts.longform.beats import BeatPlan, draw_beat, draw_beat_text, plan_beat
 from autoshorts.longform.engines import font_candidates
 from autoshorts.longform.fx import camera_shake_offset, impact_flash_alpha
@@ -773,6 +783,13 @@ SCENE_PAINTERS = {
     "comparison": _paint_dark_studio,
     "finance": _paint_dark_studio,
     "motivation": _paint_dark_studio,
+    "space_cosmic": lambda img: paint_space_cosmic(img, 0.0),
+    "molecular_lab": lambda img: paint_molecular_lab(img, 0.0),
+    "cyber_matrix": lambda img: paint_cyber_matrix(img, 0.0),
+    "financial_ledger": lambda img: paint_financial_ledger(img, 0.0),
+    "blueprint": lambda img: paint_financial_ledger(img, 0.0),  # legacy name for the ledger scene
+    "parchment_map": lambda img: paint_parchment_map(img, 0.0),
+    "dynamic": lambda img: paint_space_cosmic(img, 0.0),
 }
 DEFAULT_SCENES = ("bedroom", "street", "gym", "office", "beach", "kitchen", "money")
 TOPIC_SCENES = {
@@ -1111,6 +1128,10 @@ def _impact_flash(img: Image.Image, shot: Shot, t_in_shot: float) -> Image.Image
     return Image.blend(img, white, FLASH_PEAK * alpha)
 
 
+if TYPE_CHECKING:  # presenter_stage imports this module, so only type-check against it
+    from autoshorts.longform.presenter_stage import PresenterStage
+
+
 def _draw_scene(
     sa: SectionAudio,
     title: str,
@@ -1121,13 +1142,47 @@ def _draw_scene(
     t_in_shot: float,
     section_seconds: float,
     camera_zoom: float = 1.0,
+    background_director: BackgroundDirector | None = None,
+    beats: Sequence[SentenceBeat] | None = None,
+    presenter: PresenterStage | None = None,
 ) -> Image.Image:
-    """One frame: the beat scene at section time ``t``, then shot camera, heading and chrome."""
+    """One frame: the beat scene at section time ``t``, then shot camera, heading and chrome.
+
+    ``presenter`` (optional) draws the presenter stage over the scene after the camera,
+    under the narration text. None (the default) leaves the frame unchanged.
+    """
     img = Image.new("RGB", (WIDTH, HEIGHT))
     # The beat runs on section time: the pose, props, sprites and narration start once per
     # section. A shot cut only changes the camera, so nothing replays its entrance at each cut.
-    draw_beat(img, plan, t, 0.0, section_seconds, sa.section.narration, sa.words, text=False)
+    if background_director is not None:
+        if beats is None:
+            beats = background_director.plan_section(
+                narration=sa.section.narration,
+                duration=section_seconds,
+                words=sa.words,
+                section_idx=index,
+            )
+        bg = background_director.render_frame(t, beats, apply_camera=True)
+        img.paste(bg)
+        draw_beat(
+            img,
+            plan,
+            t,
+            0.0,
+            section_seconds,
+            sa.section.narration,
+            sa.words,
+            text=False,
+            draw_background=False,
+        )
+    else:
+        draw_beat(img, plan, t, 0.0, section_seconds, sa.section.narration, sa.words, text=False)
+
     img = _shot_camera(img, shot, t_in_shot, camera_zoom)
+    if presenter is not None:
+        # Presenter stage: no stage floor line (the scene owns the frame), narration words
+        # drive the mouth. Dismissed or hidden presenters draw nothing.
+        presenter.update_and_draw(img, t, words=sa.words, draw_stage_floor=False)
     # Text goes on after the camera, so the zoom cannot push the narration into the letterbox.
     draw_beat_text(img, plan, t, 0.0, section_seconds, sa.section.narration)
     _draw_chrome(ImageDraw.Draw(img), index, sa.section.heading or title, sa.section.narration)
@@ -1145,6 +1200,7 @@ def render_scene_frame(
     t: float = 0.0,
     camera_zoom: float = 1.0,
     focus_xy: tuple[float, float] | None = None,
+    background_director: BackgroundDirector | None = None,
 ) -> Image.Image:
     """Render a single frame of a section audio beat at section time ``t``."""
     plan = plan_beat(index, sa.section.heading, sa.section.narration, _speaker(sa), False)
@@ -1154,7 +1210,29 @@ def render_scene_frame(
     t_in_shot = max(0.0, f - shot_start) / FPS
 
     img = Image.new("RGB", (WIDTH, HEIGHT))
-    draw_beat(img, plan, t, 0.0, sa.duration, sa.section.narration, sa.words, text=False)
+    if background_director is not None:
+        beats = background_director.plan_section(
+            narration=sa.section.narration,
+            duration=sa.duration,
+            words=sa.words,
+            section_idx=index,
+        )
+        bg = background_director.render_frame(t, beats, apply_camera=True)
+        img.paste(bg)
+        draw_beat(
+            img,
+            plan,
+            t,
+            0.0,
+            sa.duration,
+            sa.section.narration,
+            sa.words,
+            text=False,
+            draw_background=False,
+        )
+    else:
+        draw_beat(img, plan, t, 0.0, sa.duration, sa.section.narration, sa.words, text=False)
+
     img = _shot_camera(img, shot, t_in_shot, camera_zoom, focus_xy=focus_xy)
     draw_beat_text(img, plan, t, 0.0, sa.duration, sa.section.narration)
     _draw_chrome(ImageDraw.Draw(img), index, sa.section.heading or title, sa.section.narration)
@@ -1227,12 +1305,20 @@ def render_scene_frames(
     title: str,
     max_seconds_per_section: float | None = None,
     scenes: Sequence[str] | None = None,
+    background_director: BackgroundDirector | None = None,
+    meme_engine: bool | None = None,
+    presenter: PresenterStage | None = None,
 ) -> Iterator[bytes]:
     """Yield raw RGB24 frames (1920x1080) for each scene in order.
 
     Raises ValueError before drawing if the total duration exceeds MAX_VIDEO_SECONDS.
     ``max_seconds_per_section`` is only for quick previews/tests. ``scenes`` picks the sets
     in order (defaults to DEFAULT_SCENES); section i uses ``scenes[i % len(scenes)]``.
+    If ``background_director`` is passed (or if any scene is 'dynamic'), sentence-driven
+    procedural backgrounds with Kurzgesagt saturated void aesthetics, cubic Hermite
+    crossfades and Ken-Burns drift will be rendered.
+    ``meme_engine`` turns on the "Types Of..." countryball vignettes; None reads the
+    AUTOSHORTS_MEME_ENGINE env var. Off by default, so frames are unchanged.
     """
     total = float(sum(sa.duration for sa in sections))
     if total > MAX_VIDEO_SECONDS:
@@ -1241,7 +1327,24 @@ def render_scene_frames(
     unknown = [name for name in chosen if name not in SCENE_PAINTERS]
     if unknown:
         raise ValueError(f"Unknown scene(s): {unknown}")
-    return _frames(list(sections), title, total, max_seconds_per_section, chosen)
+
+    director = background_director
+    if director is None and any(s == "dynamic" for s in chosen):
+        director = get_background_director()
+
+    from autoshorts.longform.meme_engine import resolve_meme_overlay  # avoids import cycle
+
+    meme_overlay = resolve_meme_overlay(meme_engine)
+    return _frames(
+        list(sections),
+        title,
+        total,
+        max_seconds_per_section,
+        chosen,
+        background_director=director,
+        meme_overlay=meme_overlay,
+        presenter=presenter,
+    )
 
 
 def _frames(
@@ -1250,6 +1353,9 @@ def _frames(
     total: float,
     max_seconds: float | None,
     scenes: tuple[str, ...],
+    background_director: BackgroundDirector | None = None,
+    meme_overlay: Any | None = None,
+    presenter: PresenterStage | None = None,
 ) -> Iterator[bytes]:
     # ``total`` and ``scenes`` stay in the signature; beats paints its own backdrop per section.
     trans_frames = max(1, int(TRANSITION_SECONDS * FPS))
@@ -1263,14 +1369,39 @@ def _frames(
             idx, sa.section.heading, sa.section.narration, _speaker(sa), idx == last_index
         )
         shots = _section_shots(sa) or [Shot(0.0, max(dur, 0.0), "wide")]
+
+        # Global start of this section, for meme vignettes timed on the whole video.
+        sec_start = sum(s.duration for s in sections[:idx]) if meme_overlay is not None else 0.0
+        sec_beats = None
+        if background_director is not None:
+            sec_beats = background_director.plan_section(
+                narration=sa.section.narration,
+                duration=sa.duration,
+                words=sa.words,
+                section_idx=idx,
+            )
+
         img: Image.Image | None = None
         for f in range(n):
             t = f / FPS
             shot, shot_start = _locate_frame(shots, f)
             camera = _camera_zoom(idx, f, n)
             img = _draw_scene(
-                sa, title, idx, plan, shot, t, max(0, f - shot_start) / FPS, sa.duration, camera
+                sa,
+                title,
+                idx,
+                plan,
+                shot,
+                t,
+                max(0, f - shot_start) / FPS,
+                sa.duration,
+                camera,
+                background_director=background_director,
+                beats=sec_beats,
+                presenter=presenter,
             )
+            if meme_overlay is not None:
+                meme_overlay.apply(img, sec_start + t)
             if prev_last is not None and f < trans_frames:
                 img = _transition(kind, prev_last, img, ease_in_out_cubic((f + 1) / trans_frames))
                 if idx == SHAKE_SECTION:

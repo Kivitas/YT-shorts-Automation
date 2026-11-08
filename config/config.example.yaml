@@ -190,6 +190,7 @@ render:
     raea: 1
     remotion: 1
     ffmpeg: 2
+  longform_presenter_stage: false  # Long-form only: draw the animated presenter (auto-hides behind diagrams/charts). Off = frames unchanged
   # variants: the first entry of `methods` is the primary file (job.rendered_video_path, used by
   # upload); the other methods are written to output/<job>/<method>.mp4 for comparison.
 
