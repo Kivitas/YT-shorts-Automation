@@ -12,9 +12,7 @@ Orchestrates:
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -58,6 +56,12 @@ class WojakScene:
     character_side: str = "left"  # left or right (punchline card goes to opposite side)
     setting: str = "hospital"
     custom_photo_path: str | None = None
+    gender: str | None = None
+    race: str | None = None
+    height: str | None = None
+    age: str | None = None
+    clothing: str | None = None
+    hair: str | None = None
 
 
 @dataclass
@@ -75,6 +79,42 @@ class WojakPipelineConfig:
     music_file_path: Path | str | None = None
     generate_thumbnail: bool = True
     custom_disclaimer_text: str | None = None
+    width: int = FRAME_WIDTH
+    height: int = FRAME_HEIGHT
+    # Opt-in: build (or load cached) format profiles for the reference channels before rendering.
+    research_channel_profiles: bool = False
+
+
+# Reference channels whose format the Wojak videos imitate (research only; no content is copied).
+CHANNEL_PROFILE_URLS: tuple[str, ...] = (
+    "https://www.youtube.com/@SapX",
+    "https://www.youtube.com/@Wojak-Explainer",
+)
+
+
+def _log_channel_profiles() -> None:
+    """Log format profiles of the reference channels. Research failures never fail the render."""
+    try:
+        from autoshorts.longform.wojak_web_research import build_format_profile
+    except Exception as exc:
+        logger.warning("Channel research unavailable: %s", exc)
+        return
+    for url in CHANNEL_PROFILE_URLS:
+        try:
+            profile = build_format_profile(url)
+        except Exception as exc:
+            logger.warning("Channel research failed for %s: %s", url, exc)
+            continue
+        if profile is None:
+            logger.info("No channel profile available for %s", url)
+            continue
+        logger.info(
+            "Channel %s: %d videos, median %.0fs, top title patterns %s",
+            url,
+            profile.video_count,
+            profile.median_duration_seconds or 0.0,
+            list(profile.title_patterns[:3]),
+        )
 
 
 @dataclass
@@ -270,7 +310,9 @@ CURATED_TRANSPORT_SCENES: list[dict[str, str]] = [
 ]
 
 
-def resolve_topic_scenes(topic: str, scene_count: int | None = None) -> tuple[str, list[WojakScene]]:
+def resolve_topic_scenes(
+    topic: str, scene_count: int | None = None
+) -> tuple[str, list[WojakScene]]:
     """Resolve a topic name to title and list of WojakScene instances."""
     from autoshorts.longform.wojak_archetypes import resolve_archetype_topic
 
@@ -292,6 +334,8 @@ def resolve_topic_scenes(topic: str, scene_count: int | None = None) -> tuple[st
                     prop=seg.prop,
                     character_side=side,
                     setting=seg.setting,
+                    gender=getattr(seg, "gender", None),
+                    race=getattr(seg, "race", None),
                 )
             )
         return title, scenes
@@ -346,12 +390,71 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
     """
     start_time = time.perf_counter()
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    stage_secs = {"background": 0.0, "character": 0.0}
+    if config.research_channel_profiles:
+        _log_channel_profiles()
 
     # 1. Resolve scenes & script
     scenes = config.scenes
     title = config.title
     disclaimer_text = config.custom_disclaimer_text
     disclaimer_heading = "⚠️  PARODY & SATIRE DISCLAIMER"
+
+    # Automated research & improvement if no pre-defined scenes are passed
+    if not scenes and config.script is None:
+        try:
+            from autoshorts.longform.wojak_improver import improve_wojak_script
+            from autoshorts.longform.wojak_researcher import research_viral_wojak_ideas
+
+            aspect = (
+                "9:16"
+                if getattr(config, "height", FRAME_HEIGHT) > getattr(config, "width", FRAME_WIDTH)
+                else "16:9"
+            )
+            briefs = research_viral_wojak_ideas(query=config.topic, aspect_ratio=aspect)
+            if briefs:
+                best_brief = briefs[0]
+                title = best_brief.title
+                raw_scenes = [
+                    {
+                        "heading": s.heading,
+                        "punchline": s.punchline,
+                        "emotion": s.emotion,
+                        "prop": s.prop,
+                        "setting": s.setting,
+                        "gender": s.gender,
+                        "race": s.race,
+                        "height": s.height,
+                        "clothing": s.clothing,
+                        "character_side": s.character_side,
+                    }
+                    for s in best_brief.scenes
+                ]
+                report = improve_wojak_script(raw_scenes, topic=config.topic)
+                scenes = []
+                for s in report.improved_scenes:
+                    scenes.append(
+                        WojakScene(
+                            country=s.get("heading") or s.get("country", ""),
+                            caption=s.get("punchline") or s.get("caption", ""),
+                            emotion=s.get("emotion", "shocked"),
+                            prop=s.get("prop", "bill"),
+                            character_side=s.get("character_side", "left"),
+                            setting=s.get("setting", config.topic),
+                            gender=s.get("gender"),
+                            race=s.get("race"),
+                            height=s.get("height"),
+                            clothing=s.get("clothing"),
+                        )
+                    )
+                logger.info(
+                    "Auto-researched '%s' (%d scenes, diversity=%.2f)",
+                    title,
+                    len(scenes),
+                    report.diversity_score,
+                )
+        except Exception as r_exc:
+            logger.debug("Automated research/improver fallback: %s", r_exc)
 
     if config.script is not None:
         script = config.script
@@ -367,7 +470,8 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
                 char_ctx = getattr(seg, "character_context", {}) or {}
                 scenes.append(
                     WojakScene(
-                        country=getattr(seg, "heading", None) or getattr(seg, "country", f"Country {idx+1}"),
+                        country=getattr(seg, "heading", None)
+                        or getattr(seg, "country", f"Country {idx + 1}"),
                         caption=getattr(seg, "joke_text", ""),
                         emotion=char_ctx.get("expression", "shocked"),
                         prop=char_ctx.get("prop", "bill"),
@@ -504,31 +608,70 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
         )
 
         # Resolve background
+        _t_bg = time.perf_counter()
         bg_img = get_wojak_background(
             country=scene.country,
             setting=scene.setting,
             custom_photo_path=scene.custom_photo_path,
         )
+        stage_secs["background"] += time.perf_counter() - _t_bg
 
         # Resolve character
         char_img: Image.Image | None = None
+        _t_char = time.perf_counter()
         try:
-            char_png_path = wojak_for_context(
-                country=scene.country,
-                setting=scene.setting,
-                scenario=scene.caption,
-                expression=scene.emotion,
-                prop=scene.prop,
-            )
-            if char_png_path and Path(char_png_path).is_file():
-                with Image.open(char_png_path) as c_file:
-                    char_img = c_file.convert("RGBA")
+            # 1. Attempt on-demand single image fetch via Playwright browser without storing on disk
+            try:
+                from autoshorts.longform.wojak_temp_assets import (
+                    category_from_context,
+                    choose_category_with_llm,
+                    temporary_wojak_asset,
+                )
+                from autoshorts.longform.wojak_library import load_library_character
+
+                cat = category_from_context(
+                    expression=scene.emotion,
+                    gender=scene.gender,
+                    clothing=scene.clothing,
+                    prop=scene.prop,
+                    heading=scene.country,
+                )
+                if not cat:
+                    cat = choose_category_with_llm(f"{scene.country} {scene.caption}")
+                if cat:
+                    with temporary_wojak_asset(cat) as temp_p:
+                        if temp_p and temp_p.is_file():
+                            char_img = load_library_character(temp_p)
+            except Exception as play_exc:
+                logger.debug("On-demand Playwright asset fetch bypassed: %s", play_exc)
+
+            # 2. If not fetched from web/drive, resolve via local indexed library or procedural drawing
+            if char_img is None:
+                char_png_path = wojak_for_context(
+                    country=scene.country,
+                    setting=scene.setting,
+                    scenario=scene.caption,
+                    expression=scene.emotion,
+                    prop=scene.prop,
+                    gender=scene.gender,
+                    race=scene.race,
+                    height=scene.height,
+                    age=scene.age,
+                    clothing=scene.clothing,
+                    hair=scene.hair,
+                )
+                if char_png_path and Path(char_png_path).is_file():
+                    with Image.open(char_png_path) as c_file:
+                        char_img = c_file.convert("RGBA")
         except Exception as c_exc:
             logger.warning("Character resolution fallback for %s: %s", scene.country, c_exc)
+        stage_secs["character"] += time.perf_counter() - _t_char
 
         # Stream raw bytes into FFmpeg pipe with cinematic Ken-Burns camera breathing
         num_frames = int(fps * scene_dur)
-        step_frames = 4  # Refresh camera push every 4 frames (7.5 fps motion rate) for speed + smoothness
+        step_frames = (
+            4  # Refresh camera push every 4 frames (7.5 fps motion rate) for speed + smoothness
+        )
         f_idx = 0
         while f_idx < num_frames:
             prog = f_idx / max(1, num_frames - 1)
@@ -553,7 +696,9 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
     if proc.returncode != 0:
         err_msg = stderr.decode("utf-8", errors="replace") if stderr else "Unknown error"
         logger.error("FFmpeg streaming encoding failed: %s", err_msg)
-        raise RuntimeError(f"FFmpeg encoding failed with exit code {proc.returncode}: {err_msg[:400]}")
+        raise RuntimeError(
+            f"FFmpeg encoding failed with exit code {proc.returncode}: {err_msg[:400]}"
+        )
 
     elapsed = time.perf_counter() - start_time
     streaming_fps = total_frames / max(0.001, elapsed)
@@ -563,6 +708,13 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
         elapsed,
         streaming_fps,
         output_video_path,
+    )
+    logger.info(
+        "Stage timings: background %.2fs, character %.2fs, compositing+encoding %.2fs (total %.2fs)",
+        stage_secs["background"],
+        stage_secs["character"],
+        max(0.0, elapsed - stage_secs["background"] - stage_secs["character"]),
+        elapsed,
     )
 
     # 7. Generate High-CTR Thumbnail
@@ -581,8 +733,12 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
             if p and Path(p).is_file():
                 with Image.open(p) as cf:
                     first_char = cf.convert("RGBA")
-        except Exception:
-            pass
+        except Exception as thumb_exc:
+            logger.debug(
+                "Thumbnail character unavailable, using default art: %s",
+                thumb_exc,
+                exc_info=True,
+            )
 
         generate_wojak_thumbnail(
             topic_title=title.upper(),
