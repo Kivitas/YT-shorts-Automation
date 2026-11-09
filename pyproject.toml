@@ -35,7 +35,7 @@ dependencies = [
     "faster-whisper>=1.0.3",
     "av>=15,<19",
     # Facecam auto-detection for the cam_gameplay layout (media/cam_detect.py).
-    "opencv-python-headless>=4.9.0,<5",
+    "opencv-python-headless>=4.9.0,<6",
     "torch>=2.1.0",
     "scipy>=1.11.0",
 ]
