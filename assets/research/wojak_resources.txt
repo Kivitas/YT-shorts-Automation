@@ -1,0 +1,22 @@
+# Wojak External Resources & Repositories
+
+This file contains canonical web repositories, community databases, template archives, and image drives for Wojak characters, archetypes, and meme assets.
+
+## Primary Databases & Search Engines
+- https://wojakdb.com/posts
+- https://www.reddit.com/r/WojakCompass/comments/1bqetar/wojak_resources_and_sites/
+- https://web.archive.org/web/20240105213216/https://wojakparadise.net/
+- https://wojakland.com/
+
+## Transparent PNG Catalogs & Stock Sites
+- https://pngimg.com/images/memes/wojak
+- https://www.pngmart.com/image/tag/wojak
+
+## Interactive Web Studios & Builders
+- https://wojak-studio.com/
+- https://wojakstudiopro.com/
+
+## Community Google Drive & Photos Collections
+- https://photos.google.com/share/AF1QipPG7VB-h0cNSg4EwQaOjlpFKQyXsGqr4ZhEeTaSj7dRS_XZR_eXtc7uqgA8k6IPkg?pli=1&key=NVpBT2IyUnY2R2xQWnNqeUV2cWwyb3hyVVhFQmdR
+- https://drive.google.com/drive/folders/1fjYfXHC50jUlS5n1u6Rr45Tgpp4rfYq_
+- https://drive.google.com/drive/folders/1Qsh2W8d5fquTEAiKKV21IRvyst4dW_YY
