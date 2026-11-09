@@ -76,11 +76,55 @@ _KEYWORD_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("NPCs", ("npc", "npcs")),
     ("Soyjaks", ("soyjak", "soyjaks", "smug")),
     ("Brainlets", ("brainlet", "brainlets")),
-    ("Brainiaks", ("brainiak", "brainiaks", "brainiac", "genius")),
+    (
+        "Brainiaks",
+        (
+            "brainiak",
+            "brainiaks",
+            "brainiac",
+            "genius",
+            "form",
+            "forms",
+            "paperwork",
+            "clipboard",
+            "bureaucracy",
+            "documents",
+        ),
+    ),
     ("Female wojaks", ("female", "tradwife", "doomer girl", "woman", "women", "girl")),
-    ("Rage wojaks", ("rage", "angry", "furious", "enraged")),
-    ("Doomers", ("doomer", "doomers", "sad", "sadness", "depressed", "hopeless")),
-    ("Chads", ("chad", "chads", "gigachad", "buff", "muscular", "alpha")),
+    (
+        "Rage wojaks",
+        ("rage", "angry", "furious", "enraged", "shocked", "annoyed", "irritated", "outraged"),
+    ),
+    (
+        "Doomers",
+        (
+            "doomer",
+            "doomers",
+            "sad",
+            "sadness",
+            "depressed",
+            "hopeless",
+            "tired",
+            "exhausted",
+            "waiting",
+        ),
+    ),
+    (
+        "Chads",
+        (
+            "chad",
+            "chads",
+            "gigachad",
+            "buff",
+            "muscular",
+            "alpha",
+            "happy",
+            "cheerful",
+            "confident",
+            "proud",
+        ),
+    ),
     ("Regular wojaks", ("regular", "neutral")),
 )
 _KEYWORD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
@@ -220,6 +264,37 @@ def _browser_context() -> Iterator[Any]:
             browser.close()
 
 
+_SCROLL_JS = """() => {
+  const first = document.querySelector('tr[data-id]');
+  let el = first ? first.parentElement : null;
+  while (el && el.scrollHeight <= el.clientHeight + 4) el = el.parentElement;
+  if (!el) return false;
+  el.scrollTop = el.scrollTop + el.clientHeight;
+  return true;
+}"""
+MAX_SCROLL_STEPS = 60
+
+
+def _collect_all_rows(page: Any) -> list[dict[str, Any]]:
+    """Scroll the Drive listing until every row has rendered (Drive virtualises long lists)."""
+    seen: dict[str, dict[str, Any]] = {}
+    stable = 0
+    for _ in range(MAX_SCROLL_STEPS):
+        for row in page.evaluate(_ROWS_JS):
+            if row.get("id"):
+                seen.setdefault(str(row["id"]), row)
+        before = len(seen)
+        page.evaluate(_SCROLL_JS)
+        page.wait_for_timeout(700)
+        for row in page.evaluate(_ROWS_JS):
+            if row.get("id"):
+                seen.setdefault(str(row["id"]), row)
+        stable = stable + 1 if len(seen) == before else 0
+        if stable >= 3:
+            break
+    return list(seen.values())
+
+
 def _playwright_fetchers(context: Any) -> tuple[ListingFetcher, FileFetcher]:
     timeout_ms = int(REQUEST_TIMEOUT_SECONDS * 1000)
 
@@ -232,8 +307,7 @@ def _playwright_fetchers(context: Any) -> tuple[ListingFetcher, FileFetcher]:
                 timeout=timeout_ms * 3,
             )
             page.wait_for_selector("tr[data-id]", timeout=timeout_ms * 2)
-            page.wait_for_timeout(1000)
-            rows = page.evaluate(_ROWS_JS)
+            rows = _collect_all_rows(page)
         finally:
             page.close()
         return [entry for entry in (_row_to_entry(r) for r in rows) if entry is not None]
@@ -357,10 +431,106 @@ def temporary_wojak_asset(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _safe_filename(name: str) -> str:
+    cleaned = re.sub(r"[^\w.\- ]+", "_", name).strip() or "wojak"
+    return cleaned[:120]
+
+
+def fetch_category_tree(
+    dest_dir: Path,
+    *,
+    listing: ListingFetcher | None = None,
+    file_fetch: FileFetcher | None = None,
+    max_depth: int = 4,
+    max_images: int = 5000,
+) -> list[dict[str, Any]]:
+    """Download every image in the public Wojak folder tree into ``dest_dir`` in one pass.
+
+    Walks nested folders up to ``max_depth``. Each top-level folder is a category; files keep
+    their category and sub-path so the selector can use them. Writes ``index.json`` next to
+    the images and returns the index records. One browser session is used unless fetchers
+    are injected (tests).
+    """
+    import json
+
+    def run(list_fn: ListingFetcher, file_fn: FileFetcher) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def walk(folder_id: str, parts: tuple[str, ...], category: str | None, depth: int) -> None:
+            if depth > max_depth or len(records) >= max_images:
+                return
+            try:
+                entries = list_fn(folder_id)
+            except Exception as exc:
+                logger.info(
+                    "Skipping folder %s: %s", "/".join(parts) or folder_id, type(exc).__name__
+                )
+                return
+            for entry in entries:
+                if len(records) >= max_images:
+                    return
+                entry_id = str(entry.get("id") or "")
+                if not entry_id or entry_id in seen_ids:
+                    continue
+                seen_ids.add(entry_id)
+                name = str(entry.get("name") or entry_id)
+                if entry.get("mimeType") == DRIVE_FOLDER_MIME:
+                    child_category = category or _canonical_category(name) or name
+                    walk(entry_id, (*parts, name), child_category, depth + 1)
+                    continue
+                if entry.get("mimeType") not in ALLOWED_IMAGE_MIMES:
+                    continue
+                size = _entry_size(entry)
+                if size is not None and size > MAX_IMAGE_BYTES:
+                    continue
+                try:
+                    data = file_fn(entry_id)
+                except Exception as exc:
+                    logger.info("Skipping file %s: %s", name, type(exc).__name__)
+                    continue
+                if (
+                    not isinstance(data, bytes | bytearray)
+                    or not data
+                    or len(data) > MAX_IMAGE_BYTES
+                ):
+                    continue
+                cat_name = category or "uncategorised"
+                target_dir = dest_dir / _safe_filename(cat_name)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                stem = Path(_safe_filename(name)).stem
+                suffix = ALLOWED_IMAGE_MIMES[str(entry["mimeType"])]
+                target = target_dir / f"{stem}_{entry_id[:8]}{suffix}"
+                target.write_bytes(bytes(data))
+                records.append(
+                    {
+                        "path": str(target.relative_to(dest_dir)).replace("\\", "/"),
+                        "category": cat_name,
+                        "subpath": "/".join(parts),
+                        "id": entry_id,
+                        "bytes": len(data),
+                    }
+                )
+
+        walk(PUBLIC_FOLDER_ID, (), None, 0)
+        return records
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if listing is not None and file_fetch is not None:
+        records = run(listing, file_fetch)
+    else:
+        with _browser_context() as context:
+            default_listing, default_file = _playwright_fetchers(context)
+            records = run(listing or default_listing, file_fetch or default_file)
+    (dest_dir / "index.json").write_text(json.dumps(records, indent=1), encoding="utf-8")
+    return records
+
+
 __all__ = [
     "CATEGORIES",
     "PUBLIC_FOLDER_ID",
     "category_from_context",
     "choose_category_with_llm",
+    "fetch_category_tree",
     "temporary_wojak_asset",
 ]

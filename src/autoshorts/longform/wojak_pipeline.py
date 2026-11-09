@@ -29,7 +29,7 @@ from autoshorts.longform.wojak_compositor import (
     render_disclaimer_frame,
     render_wojak_scene_frame,
 )
-from autoshorts.longform.wojak_generator import wojak_for_context
+from autoshorts.longform.wojak_generator import purge_remote_tmp, wojak_for_context
 from autoshorts.longform.wojak_thumbnail import generate_wojak_thumbnail
 from autoshorts.media.encoder_probe import get_ffmpeg_path
 
@@ -622,12 +622,12 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
         try:
             # 1. Attempt on-demand single image fetch via Playwright browser without storing on disk
             try:
+                from autoshorts.longform.wojak_library import load_library_character
                 from autoshorts.longform.wojak_temp_assets import (
                     category_from_context,
                     choose_category_with_llm,
                     temporary_wojak_asset,
                 )
-                from autoshorts.longform.wojak_library import load_library_character
 
                 cat = category_from_context(
                     expression=scene.emotion,
@@ -749,6 +749,7 @@ def run_wojak_pipeline(config: WojakPipelineConfig) -> WojakPipelineResult:
             setting=scenes[0].setting if scenes else "hospital",
         )
 
+    purge_remote_tmp()
     return WojakPipelineResult(
         video_path=output_video_path,
         thumbnail_path=thumb_path,

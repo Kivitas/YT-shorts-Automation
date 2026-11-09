@@ -72,14 +72,18 @@ COUNTRY_TO_ISO: Final[dict[str, str]] = {
 
 
 def resolve_iso_code(country_name: str) -> str | None:
-    """Resolve a country name to its 2-letter ISO 3166-1 alpha-2 code."""
+    """Resolve a country name to its 2-letter ISO 3166-1 alpha-2 code.
+
+    The country catalog already stores each country's ISO code, so it is checked first.
+    Aliases are matched exactly; a loose substring match could map unrelated names.
+    """
+    from autoshorts.longform.wojak_topics import COUNTRY_CATALOG
+
     c_clean = country_name.strip().lower()
-    if c_clean in COUNTRY_TO_ISO:
-        return COUNTRY_TO_ISO[c_clean]
-    for key, iso in COUNTRY_TO_ISO.items():
-        if key in c_clean or c_clean in key:
-            return iso
-    return None
+    for name, meta in COUNTRY_CATALOG.items():
+        if c_clean == name.lower() or c_clean == meta.country_code.lower():
+            return meta.country_code.lower()
+    return COUNTRY_TO_ISO.get(c_clean)
 
 
 def get_country_flag(country_name: str, target_height: int = 50) -> Image.Image | None:
@@ -101,6 +105,7 @@ def get_country_flag(country_name: str, target_height: int = 50) -> Image.Image 
         # Try downloading if missing
         try:
             import urllib.request
+
             FLAGS_DIR.mkdir(parents=True, exist_ok=True)
             url = f"https://flagcdn.com/w160/{iso}.png"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})

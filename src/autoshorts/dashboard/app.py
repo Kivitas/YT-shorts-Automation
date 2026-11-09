@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from autoshorts import __version__
@@ -46,6 +46,27 @@ from autoshorts.core.settings_manager import (
     save_youtube_client_secret,
 )
 from autoshorts.core.state_manager import StateManager, get_pt_timezone
+from autoshorts.dashboard.schemas import (
+    AnalyticsSyncPayload,
+    BackgroundDownloadRequest,
+    JobPatchRequest,
+    JobSubmitRequest,
+    LinkPreviewRequest,
+    LongformRequest,
+    MemeRequest,
+    MoneyPrinterScriptPayload,
+    MusicDownloadPayload,
+    PipelineHandoffPayload,
+    ResearchBriefPayload,
+    SchedulerToggleRequest,
+    SparkImportRequest,
+    StoryJobRequest,
+    TestProviderRequest,
+    WojakGenerateRequest,
+    WojakImproveRequest,
+    WojakResearchRequest,
+)
+from autoshorts.dashboard.wojak_resources_api import router as wojak_resources_router
 from autoshorts.discovery.url_validator import parse_links_input
 from autoshorts.integrations.spark import parse_spark_import
 from autoshorts.media.encoder_probe import probe_encoder
@@ -534,162 +555,6 @@ def _save_channel_profile(channel: dict[str, Any]) -> dict[str, Any]:
     return channel
 
 
-class JobSubmitRequest(BaseModel):
-    links: str = Field(..., description="Newline separated links with optional : instructions")
-    custom_instructions: str | None = Field(default=None)
-    provider: str | None = Field(default=None)
-    background: str | None = Field(default=None)
-    dopamine: str | None = Field(default=None)
-    upload_mode: str | None = Field(default=None)
-    auto_upload: bool = Field(default=False)
-    immediate_upload: bool = Field(default=False)
-    style_preset: str | None = Field(default=None)
-    privacy_status: str | None = Field(default=None)
-    # Advanced customization and upload fields
-    layout_mode: str | None = Field(default=None)
-    color_grading: str | None = Field(default=None)
-    watermark_text: str | None = Field(default=None)
-    watermark_position: str | None = Field(default=None)
-    progress_bar_position: str | None = Field(default=None)
-    text_transform: str | None = Field(default=None)
-    subtitle_position: str | None = Field(default=None)
-    hook_banner_style: str | None = Field(default=None)
-    enable_emojis: bool | None = Field(default=None)
-    category_id: str | None = Field(default=None)
-    altered_content: bool | None = Field(default=None)
-    custom_tags: list[str] | str | None = Field(default=None)
-    auto_pin_comment: bool | None = Field(default=None)
-    pin_comment_text: str | None = Field(default=None)
-    link_related_video: bool | None = Field(default=None)
-    related_video_url: str | None = Field(default=None)
-    publish_at: str | None = Field(default=None)
-    channel_profile_id: str | None = Field(default=None)
-    crop_focus: str | None = Field(default=None)
-    auto_trim_silence: bool | None = Field(default=None)
-    skip_sponsors: bool | None = Field(default=None)
-    # Render method selection (auto|raea|remotion|ffmpeg) and multi-method batches
-    render_method: str | None = Field(default=None)
-    render_methods: list[str] | str | None = Field(default=None)
-    render_strategy: str | None = Field(default=None)
-
-
-SubmitJobsRequest = JobSubmitRequest
-
-
-class StoryJobRequest(BaseModel):
-    mood: str | None = Field(default=None)
-    topic: str | None = Field(default=None)
-    provider: str | None = Field(default=None)
-
-
-class LongformRequest(BaseModel):
-    topic: str
-    source_url: str | None = None
-    genre: str = "auto"
-    minutes: float = Field(default=3.0, ge=0.5, le=15.0)
-    provider: str = "api"
-    visual_style: str = "kinetic_dark"
-    publish: bool = False
-
-
-class MemeRequest(BaseModel):
-    mode: str = "country_meme"  # "country_meme" or "types_of"
-    topic: str = ""
-    category: str = "countries"
-    segment_count: int = Field(default=6, ge=3, le=12)
-    aspect_ratio: str = "9:16"  # "9:16" or "16:9"
-    visual_style: str = "anime_color"  # "anime_color" or "manga_bw"
-    voice: str = "en-US-ChristopherNeural"
-    publish: bool = False
-
-
-class LinkPreviewRequest(BaseModel):
-    links_text: str = Field(..., description="Raw text containing one or more video URLs")
-
-
-class JobPatchRequest(BaseModel):
-    clip_title: str | None = Field(default=None, description="Updated clip title")
-    hook_text: str | None = Field(default=None, description="Updated hook text")
-    background_category: str | None = Field(default=None, description="Updated background category")
-    dopamine_level: str | None = Field(default=None, description="Updated dopamine level")
-    custom_instructions: str | None = Field(default=None, description="Updated custom instructions")
-    # Advanced customization and upload fields
-    layout_mode: str | None = Field(default=None)
-    style_preset: str | None = Field(default=None)
-    color_grading: str | None = Field(default=None)
-    watermark_text: str | None = Field(default=None)
-    watermark_position: str | None = Field(default=None)
-    progress_bar_position: str | None = Field(default=None)
-    text_transform: str | None = Field(default=None)
-    subtitle_position: str | None = Field(default=None)
-    hook_banner_style: str | None = Field(default=None)
-    enable_emojis: bool | None = Field(default=None)
-    category_id: str | None = Field(default=None)
-    altered_content: bool | None = Field(default=None)
-    custom_tags: list[str] | str | None = Field(default=None)
-    auto_pin_comment: bool | None = Field(default=None)
-    pin_comment_text: str | None = Field(default=None)
-    link_related_video: bool | None = Field(default=None)
-    related_video_url: str | None = Field(default=None)
-    publish_at: str | None = Field(default=None)
-    channel_profile_id: str | None = Field(default=None)
-    privacy_status: str | None = Field(default=None)
-    crop_focus: str | None = Field(default=None)
-    auto_trim_silence: bool | None = Field(default=None)
-    skip_sponsors: bool | None = Field(default=None)
-
-
-class TestProviderRequest(BaseModel):
-    provider: str = Field(..., description="LLM provider name: 'gemini', 'openrouter', or 'local'")
-    api_key: str | None = Field(default=None, description="Optional temporary API key")
-
-
-class SparkImportRequest(BaseModel):
-    text: str = Field(..., description="Markdown or text containing Spark clips")
-
-
-class SchedulerToggleRequest(BaseModel):
-    paused: bool | None = None
-
-
-class BackgroundDownloadRequest(BaseModel):
-    categories: list[str] = Field(default_factory=lambda: ["minecraft", "subway"])
-    min_clips: int = Field(default=1)
-
-
-class MusicDownloadPayload(BaseModel):
-    track_id: str = Field(..., description="Target track ID")
-    custom_url: str | None = Field(default=None, description="Optional custom source URL")
-
-
-class ResearchBriefPayload(BaseModel):
-    niche: str = Field(default="ai_tech", description="Niche identifier")
-    custom_query: str | None = Field(default=None, description="Optional search query")
-
-
-class PipelineHandoffPayload(BaseModel):
-    url: str = Field(..., description="YouTube video URL")
-    niche: str = Field(default="ai_tech", description="Niche category")
-    focus_prompt: str | None = Field(default=None, description="Focus prompt for clipping")
-    recommended_studio_profile: str = Field(
-        default="hormozi", description="Recommended Studio Profile"
-    )
-    recommended_background: str = Field(
-        default="minecraft", description="Recommended background category"
-    )
-    auto_upload: bool = Field(default=False, description="Whether to trigger auto-upload")
-
-
-class MoneyPrinterScriptPayload(BaseModel):
-    niche: str = Field(default="ai_tech", description="Target niche")
-    topic: str | None = Field(default=None, description="Custom topic prompt")
-    language: str = Field(default="en", description="Language code")
-
-
-class AnalyticsSyncPayload(BaseModel):
-    force: bool = Field(default=False, description="Force sync flag")
-
-
 _TRACK_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # Job ids name work/<job_id> folders, so only plain id characters are accepted.
 _SAFE_JOB_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,96}")
@@ -839,6 +704,7 @@ def create_app(
         description="On-Device Video Clipping and Quota Pacing Orchestrator",
         lifespan=lifespan,
     )
+    app.include_router(wojak_resources_router)
 
     # Only loopback origins may make cross-origin requests (no credentials).
     app.add_middleware(
@@ -1418,6 +1284,248 @@ def create_app(
             "qc_passed": result.qc_passed,
             "youtube_url": result.youtube_url,
         }
+
+    # =========================================================================
+    # Wojak Meme Studio Endpoints (Researcher, Improver, Character Preview, Generator)
+    # =========================================================================
+
+    @app.get("/api/wojak/topics")
+    def list_wojak_topics() -> dict[str, Any]:
+        """Return available Wojak Explainer archetypes, country topics, and canonical options."""
+        from autoshorts.longform.wojak_archetypes import ARCHETYPE_TOPICS
+        from autoshorts.longform.wojak_generator import (
+            AGES,
+            BUILDS,
+            CLOTHINGS,
+            EXPRESSIONS,
+            GENDERS,
+            HEIGHTS,
+            PROPS,
+            RACES,
+        )
+
+        archetype_list = [
+            {
+                "id": k,
+                "title": v["title"],
+                "setting": v["setting"],
+                "segment_count": len(v["segments"]),
+            }
+            for k, v in ARCHETYPE_TOPICS.items()
+        ]
+        country_list = [
+            {"id": "hospital", "title": "Every Country's Hospital Bill", "setting": "hospital"},
+            {
+                "id": "transport",
+                "title": "Every Country's Public Transport",
+                "setting": "transport",
+            },
+            {"id": "school", "title": "Every Country's High School Lunch", "setting": "school"},
+        ]
+        return {
+            "archetypes": archetype_list,
+            "country_topics": country_list,
+            "canonical_options": {
+                "genders": list(GENDERS),
+                "races": list(RACES),
+                "heights": list(HEIGHTS),
+                "builds": list(BUILDS),
+                "ages": list(AGES),
+                "expressions": list(EXPRESSIONS),
+                "props": list(PROPS),
+                "clothings": list(CLOTHINGS),
+            },
+        }
+
+    @app.post("/api/wojak/research")
+    def research_wojak_ideas_endpoint(req: WojakResearchRequest) -> dict[str, Any]:
+        """Research viral Wojak video ideas and generate structured briefs."""
+        from autoshorts.longform.wojak_researcher import research_viral_wojak_ideas
+
+        briefs = research_viral_wojak_ideas(
+            query=req.query,
+            category=req.category,
+            aspect_ratio=req.aspect_ratio,
+            segment_count=req.segment_count,
+        )
+        return {
+            "briefs": [
+                {
+                    "title": b.title,
+                    "category": b.category,
+                    "format": b.format,
+                    "hook": b.hook,
+                    "target_duration_sec": b.target_duration_sec,
+                    "recommended_bgm_mood": b.recommended_bgm_mood,
+                    "scenes": [
+                        {
+                            "heading": s.heading,
+                            "country": s.heading,
+                            "caption": s.punchline,
+                            "punchline": s.punchline,
+                            "emotion": s.emotion,
+                            "prop": s.prop,
+                            "setting": s.setting,
+                            "gender": s.gender,
+                            "race": s.race,
+                            "height": s.height,
+                            "clothing": s.clothing,
+                            "character_side": s.character_side,
+                        }
+                        for s in b.scenes
+                    ],
+                }
+                for b in briefs
+            ]
+        }
+
+    @app.post("/api/wojak/improve")
+    def improve_wojak_endpoint(req: WojakImproveRequest) -> dict[str, Any]:
+        """Audit and improve Wojak scenes for comedic timing, diversity, and staging."""
+        from autoshorts.longform.wojak_improver import improve_wojak_script
+
+        report = improve_wojak_script(req.scenes, topic=req.topic)
+        return {
+            "topic": report.topic,
+            "original_scene_count": report.original_scene_count,
+            "improved_scenes": report.improved_scenes,
+            "improvements_made": report.improvements_made,
+            "diversity_score": report.diversity_score,
+            "readability_score": report.readability_score,
+        }
+
+    @app.get("/api/wojak/character/preview")
+    def preview_wojak_character(
+        country: str = "USA",
+        setting: str = "hospital",
+        scenario: str = "waiting",
+        expression: str = "crying",
+        gender: str = "male",
+        race: str = "fair",
+        height: str = "average",
+        prop: str = "usa_bill",
+        clothing: str = "hospital_gown",
+    ) -> Response:
+        """Render and return transparent PNG of a procedural/authentic Wojak character."""
+        import io
+
+        from autoshorts.longform.wojak_generator import draw_wojak, spec_from_country_and_context
+
+        spec = spec_from_country_and_context(
+            country=country,
+            setting=setting,
+            scenario=scenario,
+            expression=expression,
+            gender=gender,
+            race=race,
+            height=height,
+            prop=prop,
+            clothing=clothing,
+        )
+        img = draw_wojak(spec)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+
+    @app.post("/api/wojak/generate")
+    def generate_wojak_video_endpoint(req: WojakGenerateRequest) -> dict[str, Any]:
+        """Generate high-CTR Wojak video in 16:9 Landscape or 9:16 Shorts format."""
+        from uuid import uuid4
+
+        from autoshorts.core.paths import get_output_dir, get_work_dir
+        from autoshorts.longform.wojak_pipeline import (
+            WojakPipelineConfig,
+            WojakScene,
+            run_wojak_pipeline,
+        )
+        from autoshorts.longform.wojak_shorts import render_wojak_shorts_video
+
+        topic = (req.topic or "hospital").strip()
+        aspect = req.aspect_ratio or "16:9"
+        run_id = uuid4().hex[:8]
+
+        if aspect == "9:16":
+            out_dir = get_output_dir()
+            res = render_wojak_shorts_video(
+                topic=topic,
+                segment_count=req.segment_count,
+                output_dir=out_dir,
+            )
+            return {
+                "title": f"Types of {topic.title()} (Shorts)",
+                "topic": topic,
+                "aspect_ratio": "9:16",
+                "video_path": str(res.video_path),
+                "thumbnail_path": str(res.thumbnail_path) if res.thumbnail_path else None,
+                "duration_sec": res.duration,
+                "segment_count": res.segment_count,
+                "render_time_sec": res.render_time,
+                "effective_fps": res.effective_fps,
+                "video_url": f"/api/wojak/stream/{res.video_path.name}",
+            }
+        else:
+            # 16:9 Longform
+            work_dir = get_work_dir() / f"wojak_{run_id}"
+            scenes: list[WojakScene] = []
+            if req.scenes:
+                for idx, sc in enumerate(req.scenes[: req.segment_count]):
+                    scenes.append(
+                        WojakScene(
+                            country=sc.get("heading") or sc.get("country") or f"Scene {idx + 1}",
+                            caption=sc.get("caption") or sc.get("punchline") or "",
+                            emotion=sc.get("emotion", "shocked"),
+                            prop=sc.get("prop", "bill"),
+                            character_side=sc.get(
+                                "character_side", "left" if idx % 2 == 0 else "right"
+                            ),
+                            setting=sc.get("setting", "hospital"),
+                            gender=sc.get("gender"),
+                            race=sc.get("race"),
+                            height=sc.get("height"),
+                            clothing=sc.get("clothing"),
+                        )
+                    )
+            config = WojakPipelineConfig(
+                topic=topic,
+                scenes=scenes,
+                output_dir=work_dir,
+                generate_thumbnail=req.generate_thumbnail,
+            )
+            result = run_wojak_pipeline(config)
+            return {
+                "title": result.title,
+                "topic": result.topic,
+                "aspect_ratio": "16:9",
+                "video_path": str(result.video_path),
+                "thumbnail_path": str(result.thumbnail_path) if result.thumbnail_path else None,
+                "duration_sec": result.duration_sec,
+                "scene_count": result.scene_count,
+                "render_time_sec": result.render_time_sec,
+                "effective_fps": result.streaming_fps,
+                "video_url": f"/api/wojak/stream/{result.video_path.name}?dir={work_dir.name}",
+            }
+
+    @app.get("/api/wojak/stream/{filename}")
+    async def stream_wojak_video(
+        filename: str, dir: str | None = None, request: Request = None
+    ) -> Response:
+        """Stream a rendered Wojak video file."""
+        from autoshorts.core.paths import get_output_dir, get_work_dir
+
+        if dir:
+            p = get_work_dir() / dir / filename
+        else:
+            p = get_output_dir() / filename
+
+        if not p.is_file():
+            # Check work directory
+            candidates = list(get_work_dir().glob(f"*/{filename}"))
+            if candidates:
+                p = candidates[0]
+            else:
+                raise HTTPException(status_code=404, detail=f"File {filename} not found")
+
+        return _stream_video_range(p, request)
 
     @app.get("/api/jobs/{job_id}/format")
     async def get_job_format(job_id: str) -> dict[str, Any]:
@@ -2048,10 +2156,17 @@ def create_app(
         ]
         for j in failed_jobs:
             parallel_runner.submit_job(j.id)
+        slots_count = 0
+        try:
+            slots_count = state_mgr.retry_all_failed_scheduled_slots()
+        except Exception as exc:
+            logger.warning(f"Could not reset failed scheduled slots: {exc}")
         return {
             "success": True,
-            "count": len(failed_jobs),
-            "message": f"Queued {len(failed_jobs)} failed jobs for retry.",
+            "count": len(failed_jobs) + slots_count,
+            "jobs_count": len(failed_jobs),
+            "slots_count": slots_count,
+            "message": f"Queued {len(failed_jobs)} failed jobs and reset {slots_count} failed scheduled uploads for retry.",
         }
 
     @app.post("/api/jobs/batch-clean")

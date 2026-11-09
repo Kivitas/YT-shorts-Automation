@@ -767,6 +767,24 @@ async function batchRetryFailed() {
     return;
   }
 
+  // Retrying failed uploads can publish to YouTube, so show the privacy mix before confirming.
+  const privacyCounts = {};
+  for (const j of failedJobs) {
+    const p = j.privacy_status || "unknown";
+    privacyCounts[p] = (privacyCounts[p] || 0) + 1;
+  }
+  const privacyMix = Object.entries(privacyCounts).map(([p, n]) => `${p}: ${n}`).join(", ");
+  const publicWarning = privacyCounts.public
+    ? `\n\nWARNING: ${privacyCounts.public} of these are set to PUBLIC and will be published publicly on YouTube.`
+    : "";
+  const confirmMsg =
+    `Retry ${failedJobs.length} failed job(s)?\n\n` +
+    `Privacy mix: ${privacyMix}.` +
+    publicWarning +
+    `\n\nFailed scheduled uploads will also be re-queued with their original privacy setting. ` +
+    `Re-queued uploads are sent by the scheduler on its normal timing.`;
+  if (!confirm(confirmMsg)) return;
+
   showToast(`Retrying ${failedJobs.length} failed job(s)...`);
   try {
     const res = await fetch("/api/jobs/batch-retry", { method: "POST" });
@@ -3840,7 +3858,7 @@ function switchMainView(viewId) {
   });
 
   // 2. Toggle view containers
-  const views = ["view-studio", "view-research", "view-moneyprinter", "view-analytics"];
+  const views = ["view-studio", "view-research", "view-moneyprinter", "view-analytics", "view-wojak"];
   views.forEach(v => {
     const el = document.getElementById(v);
     if (el) {
@@ -3863,6 +3881,8 @@ function switchMainView(viewId) {
     updateMpScriptStats();
   } else if (viewId === "view-analytics") {
     refreshAnalytics();
+  } else if (viewId === "view-wojak") {
+    initWojakStudio();
   }
 }
 
@@ -5434,3 +5454,375 @@ async function generateMemeVideo() {
 }
 
 document.addEventListener("DOMContentLoaded", initMemeStudio);
+
+
+// =============================================================================
+// VIEW 5: 🎭 Wojak Meme Studio (SapX & Wojak Explainer Engine)
+// =============================================================================
+
+let _wojakScenes = [];
+let _wojakOptions = null;
+let _selectedWojakSceneIdx = 0;
+
+async function initWojakStudio() {
+  if (!_wojakOptions) {
+    try {
+      const res = await fetch("/api/wojak/topics");
+      if (res.ok) {
+        _wojakOptions = await res.json();
+      }
+    } catch (e) {
+      console.warn("Failed fetching wojak options:", e);
+    }
+  }
+  if (_wojakScenes.length === 0) {
+    await onWojakPresetSelected();
+  }
+}
+
+function onWojakAspectChanged() {
+  const aspect = document.getElementById("wojak-aspect-ratio").value;
+  console.log("Wojak aspect ratio changed:", aspect);
+}
+
+async function onWojakPresetSelected() {
+  const preset = document.getElementById("wojak-topic-preset").value;
+  const customWrap = document.getElementById("wojak-custom-topic-wrap");
+  if (customWrap) {
+    customWrap.style.display = preset === "custom" ? "block" : "none";
+  }
+
+  const topic = preset === "custom" 
+    ? (document.getElementById("wojak-custom-topic-input").value || "gamers")
+    : preset;
+
+  const count = parseInt(document.getElementById("wojak-scene-count").value, 10) || 6;
+  const aspect = document.getElementById("wojak-aspect-ratio").value;
+
+  try {
+    const res = await fetch("/api/wojak/research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: topic, aspect_ratio: aspect, segment_count: count })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.briefs && data.briefs.length > 0) {
+        _wojakScenes = data.briefs[0].scenes || [];
+        renderWojakScenesTable();
+        refreshSelectedCharPreview();
+      }
+    }
+  } catch (e) {
+    console.warn("Wojak research failed:", e);
+  }
+}
+
+function renderWojakScenesTable() {
+  const tbody = document.getElementById("wojak-scenes-tbody");
+  if (!tbody) return;
+
+  tbody.innerHTML = "";
+  _wojakScenes.forEach((sc, idx) => {
+    const tr = document.createElement("tr");
+    tr.style.borderBottom = "1px solid var(--color-border)";
+    tr.style.cursor = "pointer";
+    tr.onclick = (e) => {
+      if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA" && e.target.tagName !== "SELECT" && e.target.tagName !== "BUTTON") {
+        selectWojakScene(idx);
+      }
+    };
+    if (idx === _selectedWojakSceneIdx) {
+      tr.style.background = "rgba(245, 158, 11, 0.08)";
+    }
+
+    const heading = sc.heading || sc.country || `Scene ${idx + 1}`;
+    const caption = sc.caption || sc.punchline || "";
+    const charLen = caption.length;
+    const lenColor = charLen > 120 ? "#ef4444" : charLen > 100 ? "#f59e0b" : "#10b981";
+
+    tr.innerHTML = `
+      <td style="padding: 6px 10px; font-weight: 700; color: #f59e0b;">${idx + 1}</td>
+      <td style="padding: 6px 8px;">
+        <input type="text" class="form-control form-control-sm" value="${heading}" onchange="updateWojakSceneField(${idx}, 'heading', this.value)" style="width: 140px; font-weight: 600;" />
+      </td>
+      <td style="padding: 6px 8px;">
+        <textarea class="form-control form-control-sm" rows="2" style="width: 220px; font-size: 12px;" oninput="onWojakCaptionInput(${idx}, this)">${caption}</textarea>
+        <div id="wojak-char-count-${idx}" style="font-size: 10px; color: ${lenColor}; text-align: right;">${charLen}/120 chars</div>
+      </td>
+      <td style="padding: 6px 8px;">
+        <div style="display: flex; gap: 4px;">
+          <select class="form-control form-control-sm" style="font-size: 11px; width: 75px;" onchange="updateWojakSceneField(${idx}, 'gender', this.value)">
+            <option value="male" ${sc.gender === "male" ? "selected" : ""}>Male</option>
+            <option value="female" ${sc.gender === "female" ? "selected" : ""}>Female</option>
+            <option value="nonna" ${sc.gender === "nonna" ? "selected" : ""}>Nonna</option>
+            <option value="tradwife" ${sc.gender === "tradwife" ? "selected" : ""}>Tradwife</option>
+          </select>
+          <select class="form-control form-control-sm" style="font-size: 11px; width: 85px;" onchange="updateWojakSceneField(${idx}, 'race', this.value)">
+            <option value="fair" ${sc.race === "fair" ? "selected" : ""}>Fair</option>
+            <option value="olive" ${sc.race === "olive" ? "selected" : ""}>Olive</option>
+            <option value="east_asian" ${sc.race === "east_asian" ? "selected" : ""}>E.Asian</option>
+            <option value="south_asian" ${sc.race === "south_asian" ? "selected" : ""}>S.Asian</option>
+            <option value="black" ${sc.race === "black" ? "selected" : ""}>Black</option>
+            <option value="latino" ${sc.race === "latino" ? "selected" : ""}>Latino</option>
+            <option value="middle_eastern" ${sc.race === "middle_eastern" ? "selected" : ""}>MidEast</option>
+          </select>
+        </div>
+      </td>
+      <td style="padding: 6px 8px;">
+        <select class="form-control form-control-sm" style="font-size: 11px; width: 70px;" onchange="updateWojakSceneField(${idx}, 'height', this.value)">
+          <option value="tall" ${sc.height === "tall" ? "selected" : ""}>Tall</option>
+          <option value="average" ${sc.height === "average" ? "selected" : ""}>Avg</option>
+          <option value="short" ${sc.height === "short" ? "selected" : ""}>Short</option>
+        </select>
+      </td>
+      <td style="padding: 6px 8px;">
+        <select class="form-control form-control-sm" style="font-size: 11px; width: 80px;" onchange="updateWojakSceneField(${idx}, 'emotion', this.value)">
+          <option value="crying" ${sc.emotion === "crying" ? "selected" : ""}>Crying</option>
+          <option value="shocked" ${sc.emotion === "shocked" ? "selected" : ""}>Shocked</option>
+          <option value="chad" ${sc.emotion === "chad" ? "selected" : ""}>Chad</option>
+          <option value="smug" ${sc.emotion === "smug" ? "selected" : ""}>Smug</option>
+          <option value="doomer" ${sc.emotion === "doomer" ? "selected" : ""}>Doomer</option>
+          <option value="happy" ${sc.emotion === "happy" ? "selected" : ""}>Happy</option>
+          <option value="npc" ${sc.emotion === "npc" ? "selected" : ""}>NPC</option>
+          <option value="bandaged" ${sc.emotion === "bandaged" ? "selected" : ""}>Bandaged</option>
+        </select>
+      </td>
+      <td style="padding: 6px 8px;">
+        <input type="text" class="form-control form-control-sm" value="${sc.prop || 'none'}" onchange="updateWojakSceneField(${idx}, 'prop', this.value)" style="width: 80px; font-size: 11px;" />
+      </td>
+      <td style="padding: 6px 8px;">
+        <select class="form-control form-control-sm" style="font-size: 11px; width: 65px;" onchange="updateWojakSceneField(${idx}, 'character_side', this.value)">
+          <option value="left" ${sc.character_side === "left" ? "selected" : ""}>Left</option>
+          <option value="right" ${sc.character_side === "right" ? "selected" : ""}>Right</option>
+        </select>
+      </td>
+      <td style="padding: 6px 8px;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="selectWojakScene(${idx})" title="Preview Character" style="padding: 2px 6px; font-size: 11px;">👁️</button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="deleteWojakSceneRow(${idx})" title="Delete" style="padding: 2px 6px; font-size: 11px;">✕</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function onWojakCaptionInput(idx, textarea) {
+  const val = textarea.value;
+  if (_wojakScenes[idx]) {
+    _wojakScenes[idx].caption = val;
+    _wojakScenes[idx].punchline = val;
+  }
+  const countEl = document.getElementById(`wojak-char-count-${idx}`);
+  if (countEl) {
+    const len = val.length;
+    countEl.textContent = `${len}/120 chars`;
+    countEl.style.color = len > 120 ? "#ef4444" : len > 100 ? "#f59e0b" : "#10b981";
+  }
+}
+
+function updateWojakSceneField(idx, field, val) {
+  if (_wojakScenes[idx]) {
+    _wojakScenes[idx][field] = val;
+    if (idx === _selectedWojakSceneIdx) {
+      refreshSelectedCharPreview();
+    }
+  }
+}
+
+function selectWojakScene(idx) {
+  _selectedWojakSceneIdx = idx;
+  renderWojakScenesTable();
+  refreshSelectedCharPreview();
+}
+
+function addWojakSceneRow() {
+  const side = _wojakScenes.length % 2 === 0 ? "left" : "right";
+  _wojakScenes.push({
+    heading: "NEW SCENE",
+    caption: "Enter snappy punchline here...",
+    punchline: "Enter snappy punchline here...",
+    gender: "male",
+    race: "fair",
+    height: "average",
+    emotion: "shocked",
+    prop: "none",
+    character_side: side,
+    setting: "hospital"
+  });
+  _selectedWojakSceneIdx = _wojakScenes.length - 1;
+  renderWojakScenesTable();
+  refreshSelectedCharPreview();
+}
+
+function deleteWojakSceneRow(idx) {
+  if (_wojakScenes.length <= 1) return;
+  _wojakScenes.splice(idx, 1);
+  if (_selectedWojakSceneIdx >= _wojakScenes.length) {
+    _selectedWojakSceneIdx = _wojakScenes.length - 1;
+  }
+  renderWojakScenesTable();
+  refreshSelectedCharPreview();
+}
+
+function refreshSelectedCharPreview() {
+  const sc = _wojakScenes[_selectedWojakSceneIdx];
+  if (!sc) return;
+  const img = document.getElementById("wojak-char-preview-img");
+  const label = document.getElementById("wojak-char-preview-label");
+  if (!img) return;
+
+  const params = new URLSearchParams({
+    country: sc.heading || sc.country || "USA",
+    setting: sc.setting || "hospital",
+    scenario: sc.caption || "",
+    expression: sc.emotion || "crying",
+    gender: sc.gender || "male",
+    race: sc.race || "fair",
+    height: sc.height || "average",
+    prop: sc.prop || "none",
+    clothing: sc.clothing || "hospital_gown"
+  });
+
+  img.src = `/api/wojak/character/preview?${params.toString()}`;
+  if (label) {
+    label.textContent = `${sc.heading || sc.country || 'Scene'} (${sc.gender || 'male'}, ${sc.race || 'fair'}, ${sc.emotion || 'neutral'})`;
+  }
+}
+
+async function researchWojakIdeas() {
+  const preset = document.getElementById("wojak-topic-preset").value;
+  const topic = preset === "custom" 
+    ? (document.getElementById("wojak-custom-topic-input").value || "gamers")
+    : preset;
+  const count = parseInt(document.getElementById("wojak-scene-count").value, 10) || 6;
+  const aspect = document.getElementById("wojak-aspect-ratio").value;
+
+  try {
+    const res = await fetch("/api/wojak/research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: topic, aspect_ratio: aspect, segment_count: count })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.briefs && data.briefs.length > 0) {
+        _wojakScenes = data.briefs[0].scenes || [];
+        renderWojakScenesTable();
+        refreshSelectedCharPreview();
+      }
+    }
+  } catch (e) {
+    alert("Research failed: " + e.message);
+  }
+}
+
+async function improveWojakDeck() {
+  const preset = document.getElementById("wojak-topic-preset").value;
+  const topic = preset === "custom" 
+    ? (document.getElementById("wojak-custom-topic-input").value || "gamers")
+    : preset;
+
+  try {
+    const res = await fetch("/api/wojak/improve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: topic, scenes: _wojakScenes })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      _wojakScenes = data.improved_scenes || [];
+      renderWojakScenesTable();
+      refreshSelectedCharPreview();
+
+      const banner = document.getElementById("wojak-improver-banner");
+      const list = document.getElementById("wojak-improvements-list");
+      const divBadge = document.getElementById("wojak-diversity-badge");
+      if (banner && list) {
+        banner.style.display = "block";
+        list.innerHTML = "";
+        (data.improvements_made || []).slice(0, 6).forEach(imp => {
+          const li = document.createElement("li");
+          li.textContent = imp;
+          list.appendChild(li);
+        });
+        if (divBadge) {
+          divBadge.textContent = `Diversity: ${Math.round((data.diversity_score || 1.0) * 100)}%`;
+        }
+      }
+    }
+  } catch (e) {
+    alert("Improvement failed: " + e.message);
+  }
+}
+
+async function generateWojakVideoNow() {
+  const preset = document.getElementById("wojak-topic-preset").value;
+  const topic = preset === "custom" 
+    ? (document.getElementById("wojak-custom-topic-input").value || "gamers")
+    : preset;
+  const count = parseInt(document.getElementById("wojak-scene-count").value, 10) || 6;
+  const aspect = document.getElementById("wojak-aspect-ratio").value;
+
+  const btn = event?.target;
+  const origText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Generating Video...";
+  }
+
+  try {
+    const res = await fetch("/api/wojak/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic,
+        aspect_ratio: aspect,
+        segment_count: count,
+        scenes: _wojakScenes,
+        generate_thumbnail: true
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Video generation failed");
+    }
+    const result = await res.json();
+
+    const outputBox = document.getElementById("wojak-generation-output");
+    const player = document.getElementById("wojak-output-video-player");
+    const metrics = document.getElementById("wojak-output-metrics");
+    const fpsBadge = document.getElementById("wojak-output-fps-badge");
+    const dlBtn = document.getElementById("wojak-output-download-btn");
+
+    if (outputBox && player) {
+      outputBox.style.display = "block";
+      player.src = result.video_url;
+      player.load();
+      player.play().catch(() => {});
+
+      if (fpsBadge) {
+        fpsBadge.textContent = `${result.effective_fps.toFixed(1)} FPS (${result.aspect_ratio})`;
+      }
+      if (metrics) {
+        metrics.innerHTML = `
+          <strong>Title:</strong> ${result.title}<br>
+          <strong>Format:</strong> ${result.aspect_ratio} (${result.duration_sec.toFixed(1)}s total)<br>
+          <strong>Render Time:</strong> ${result.render_time_sec.toFixed(2)}s<br>
+          <strong>Scenes:</strong> ${result.scene_count || result.segment_count} cultural cuts<br>
+          <strong>Status:</strong> Master Rendered Locally (No Upload)
+        `;
+      }
+      if (dlBtn) {
+        dlBtn.href = result.video_url;
+        dlBtn.setAttribute("download", `wojak_${result.topic}_${result.aspect_ratio.replace(':', 'x')}.mp4`);
+      }
+    }
+  } catch (e) {
+    alert("Generation error: " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+}

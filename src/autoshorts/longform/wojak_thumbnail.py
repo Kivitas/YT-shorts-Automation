@@ -14,18 +14,15 @@ Key features:
 from __future__ import annotations
 
 import logging
-import math
-import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter
 
 from autoshorts.longform.wojak_backgrounds import get_wojak_background
 from autoshorts.longform.wojak_compositor import (
     COLOR_BLACK,
-    COLOR_WHITE,
     _ink_metrics,
     create_soft_drop_shadow,
     get_font,
@@ -71,7 +68,6 @@ def _create_radial_vignette(size: tuple[int, int]) -> Image.Image:
     dist = np.sqrt(((x - cx) / (w * 0.55)) ** 2 + ((y - cy) / (h * 0.55)) ** 2)
     alpha = np.clip((dist - 0.5) * 180.0, 0, 160).astype(np.uint8)
 
-    vignette = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     vignette_arr = np.zeros((h, w, 4), dtype=np.uint8)
     vignette_arr[..., 0:3] = 0  # Black
     vignette_arr[..., 3] = alpha
@@ -99,7 +95,9 @@ def _draw_giant_hospital_bill(
 
     # Paper base with subtle drop shadow
     bdraw.rectangle([(bx0 + 8, by0 + 12), (bx1 + 8, by1 + 12)], fill=(0, 0, 0, 90))
-    bdraw.rectangle([(bx0, by0), (bx1, by1)], fill=(252, 252, 250), outline=(210, 215, 220), width=3)
+    bdraw.rectangle(
+        [(bx0, by0), (bx1, by1)], fill=(252, 252, 250), outline=(210, 215, 220), width=3
+    )
 
     # Red Header Banner
     header_h = 75
@@ -130,9 +128,16 @@ def _draw_giant_hospital_bill(
 
     # Big Total Box
     total_box_y0 = by1 - 150
-    bdraw.rectangle([(bx0 + 25, total_box_y0), (bx1 - 25, by1 - 35)], fill=(240, 243, 248), outline=(190, 200, 210), width=2)
+    bdraw.rectangle(
+        [(bx0 + 25, total_box_y0), (bx1 - 25, by1 - 35)],
+        fill=(240, 243, 248),
+        outline=(190, 200, 210),
+        width=2,
+    )
     tot_label_font = get_font(24, bold=True)
-    bdraw.text((bx0 + 45, total_box_y0 + 15), "TOTAL DUE:", font=tot_label_font, fill=(100, 110, 125))
+    bdraw.text(
+        (bx0 + 45, total_box_y0 + 15), "TOTAL DUE:", font=tot_label_font, fill=(100, 110, 125)
+    )
 
     tot_val_font = get_font(56, bold=True)
     tot_val_text = total_amount.strip()
@@ -148,7 +153,9 @@ def _draw_giant_hospital_bill(
     stamp_w, stamp_h = 320, 90
     stamp = Image.new("RGBA", (stamp_w, stamp_h), (0, 0, 0, 0))
     sdraw = ImageDraw.Draw(stamp)
-    sdraw.rounded_rectangle([(0, 0), (stamp_w - 1, stamp_h - 1)], radius=12, outline=(220, 20, 20, 220), width=6)
+    sdraw.rounded_rectangle(
+        [(0, 0), (stamp_w - 1, stamp_h - 1)], radius=12, outline=(220, 20, 20, 220), width=6
+    )
     sfont = get_font(42, bold=True)
     stext = "BANKRUPT!"
     sw = sfont.getlength(stext)
@@ -163,7 +170,9 @@ def _draw_giant_hospital_bill(
     return rotated
 
 
-def _create_character_halo(char_rgba: Image.Image, halo_color: tuple[int, int, int] = (255, 255, 255), width: int = 12) -> Image.Image:
+def _create_character_halo(
+    char_rgba: Image.Image, halo_color: tuple[int, int, int] = (255, 255, 255), width: int = 12
+) -> Image.Image:
     """Create a high-contrast white/yellow outline halo around character cutout."""
     alpha = char_rgba.split()[3]
     # Dilate alpha via MaxFilter
@@ -222,7 +231,9 @@ def generate_wojak_thumbnail(
     canvas = bg
 
     # 2. Giant Comical Prop (Hospital Bill) on the Left
-    bill_img = _draw_giant_hospital_bill(width=470, height=580, total_amount="$1,850,000", angle=-6.0)
+    bill_img = _draw_giant_hospital_bill(
+        width=470, height=580, total_amount="$1,850,000", angle=-6.0
+    )
     canvas.paste(bill_img, (60, 195), bill_img)
 
     # 3. Shocked Wojak / Meme Character on the Right
@@ -247,13 +258,19 @@ def generate_wojak_thumbnail(
     banner_y1 = banner_y0 + banner_h
 
     # Banner drop shadow
-    b_shadow, px, py = create_soft_drop_shadow(banner_w, banner_h, radius=20, blur=24, offset_y=12, shadow_color=(0, 0, 0, 160))
+    b_shadow, px, py = create_soft_drop_shadow(
+        banner_w, banner_h, radius=20, blur=24, offset_y=12, shadow_color=(0, 0, 0, 160)
+    )
     canvas.paste(b_shadow, (banner_x0 - px, banner_y0 - py), b_shadow)
 
     # Banner rounded container (Pure white with bold red accent bar)
     draw = ImageDraw.Draw(canvas)
-    draw.rounded_rectangle([(banner_x0, banner_y0), (banner_x1, banner_y1)], radius=20, fill=(255, 255, 255))
-    draw.rounded_rectangle([(banner_x0, banner_y0), (banner_x0 + 24, banner_y1)], radius=4, fill=(220, 30, 30))
+    draw.rounded_rectangle(
+        [(banner_x0, banner_y0), (banner_x1, banner_y1)], radius=20, fill=(255, 255, 255)
+    )
+    draw.rounded_rectangle(
+        [(banner_x0, banner_y0), (banner_x0 + 24, banner_y1)], radius=4, fill=(220, 30, 30)
+    )
 
     # Title text inside banner
     t_font = get_font(52, bold=True)

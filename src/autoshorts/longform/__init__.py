@@ -35,12 +35,6 @@ from autoshorts.longform.types import (
     Section,
     SectionAudio,
 )
-from autoshorts.longform.wojak_script import (
-    WojakLongformScript,
-    WojakSegment,
-    build_wojak_script,
-    procedural_wojak_script,
-)
 from autoshorts.longform.wojak_audio import (
     assemble_wojak_audio,
     generate_procedural_wojak_bgm,
@@ -56,6 +50,12 @@ from autoshorts.longform.wojak_compositor import (
     render_disclaimer_frame,
     render_wojak_scene_frame,
 )
+from autoshorts.longform.wojak_generator import (
+    WojakSpec,
+    draw_wojak,
+    spec_from_country_and_context,
+    wojak_for_context,
+)
 from autoshorts.longform.wojak_pipeline import (
     WojakPipelineConfig,
     WojakPipelineResult,
@@ -63,17 +63,19 @@ from autoshorts.longform.wojak_pipeline import (
     resolve_topic_scenes,
     run_wojak_pipeline,
 )
-from autoshorts.longform.wojak_thumbnail import generate_wojak_thumbnail
-from autoshorts.longform.wojak_generator import (
-    WojakSpec,
-    draw_wojak,
-    spec_from_country_and_context,
-    wojak_for_context,
+from autoshorts.longform.wojak_script import (
+    WojakLongformScript,
+    WojakSegment,
+    build_wojak_script,
+    procedural_wojak_script,
 )
 from autoshorts.longform.wojak_shorts import (
     WojakShortsConfig,
     WojakShortsSegment,
+    build_shorts_remotion_plan,
     build_wojak_shorts_script,
+    draw_country_header_badge,
+    draw_kinetic_subtitles,
     make_shorts_thumbnail,
     render_shorts_country_frame,
     render_shorts_disclaimer_frame,
@@ -81,6 +83,7 @@ from autoshorts.longform.wojak_shorts import (
     synth_cash_register,
     synth_flatline,
 )
+from autoshorts.longform.wojak_thumbnail import generate_wojak_thumbnail
 
 __all__ = [
     "GENRE_KEYS",
@@ -107,10 +110,13 @@ __all__ = [
     "WojakSpec",
     "assemble_wojak_audio",
     "build_script",
+    "build_shorts_remotion_plan",
     "build_wojak_script",
     "build_wojak_shorts_script",
     "create_soft_drop_shadow",
     "description_for",
+    "draw_country_header_badge",
+    "draw_kinetic_subtitles",
     "draw_wojak",
     "enqueue_longform_on_quota",
     "estimate_duration",

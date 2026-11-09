@@ -5,6 +5,7 @@
 #   ./start.sh                 start the dashboard (http://localhost:8765)
 #   ./start.sh --check         pre-flight diagnostics, then exit
 #   ./start.sh --test          run the test suite, then exit
+#   ./start.sh --install       install dependencies, then exit
 #   ./start.sh --collect       download background gameplay footage
 #   ./start.sh --port 8080     use another port
 #   ./start.sh --no-browser    do not open a browser tab
@@ -43,7 +44,7 @@ FORCE_ASSETS=0
 COLLECT_ARGS=()
 
 show_help() {
-    sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -51,6 +52,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --port|-p)     [ $# -ge 2 ] || fail "--port needs a number"; PORT="$2"; shift 2 ;;
         --host)        [ $# -ge 2 ] || fail "--host needs an address"; HOST="$2"; shift 2 ;;
+        --install)     MODE="install"; shift ;;
         --check|-c)    MODE="check"; shift ;;
         --test|-t)     MODE="test"; shift ;;
         --collect|--collect-gameplay) MODE="collect"; shift
@@ -129,25 +131,23 @@ if [ ! -x "$PYTHON_EXE" ]; then
 fi
 [ -x "$PYTHON_EXE" ] || fail "Python environment missing at $PYTHON_EXE."
 
-# ----------------------------------------------------------------------------- dependencies
-PY_DEPS_CHECK="import autoshorts, fastapi, uvicorn, playwright, edge_tts, google.genai, yt_dlp, imageio_ffmpeg, faster_whisper"
-# 'uv sync' is a no-op when .venv already matches uv.lock; it also repairs pins after an update.
+# ----------------------------------------------------------------------------- core dependencies
+PY_CORE_CHECK="import autoshorts, fastapi, uvicorn, playwright, edge_tts, google.genai, yt_dlp, imageio_ffmpeg, faster_whisper"
 "$UV_CMD" sync --quiet || notice "uv sync reported a problem; checking imports anyway."
-if ! "$PYTHON_EXE" -c "$PY_DEPS_CHECK" >/dev/null 2>&1; then
-    info "Installing Python dependencies - one time, this can take a few minutes..."
+if ! "$PYTHON_EXE" -c "$PY_CORE_CHECK" >/dev/null 2>&1; then
+    info "Installing Python core dependencies - one time, this can take a few minutes..."
     "$UV_CMD" pip install -e . >/dev/null 2>&1 || "$PYTHON_EXE" -m pip install -e . >/dev/null 2>&1 || true
-    "$PYTHON_EXE" -c "$PY_DEPS_CHECK" >/dev/null 2>&1 \
-        || fail "Python dependencies could not be installed. Check your connection, then run ./start.sh again."
+    "$PYTHON_EXE" -c "$PY_CORE_CHECK" >/dev/null 2>&1 \
+        || fail "Python core dependencies could not be installed. Check your connection, then run ./start.sh again."
 fi
-ok "Python dependencies ready"
+ok "Python core dependencies ready"
 
 # ----------------------------------------------------------------------------- OpenCV (facecam auto-detect for the cam_gameplay layout)
-# 'uv sync' installs it from pyproject.toml; this repairs a missing or too-new install
-# (OpenCV 5.x dropped the Haar face models, so the project pins opencv-python-headless below 5).
 CV2_CHECK="import cv2; cv2.CascadeClassifier"
 if ! "$PYTHON_EXE" -c "$CV2_CHECK" >/dev/null 2>&1; then
     info "Installing OpenCV for facecam auto-detect - one time..."
-    "$UV_CMD" pip install --python "$PYTHON_EXE" "opencv-python-headless>=4.9.0,<5" >/dev/null 2>&1         || "$PYTHON_EXE" -m pip install "opencv-python-headless>=4.9.0,<5" >/dev/null 2>&1 || true
+    "$UV_CMD" pip install --python "$PYTHON_EXE" "opencv-python-headless>=4.9.0,<5" >/dev/null 2>&1 \
+        || "$PYTHON_EXE" -m pip install "opencv-python-headless>=4.9.0,<5" >/dev/null 2>&1 || true
 fi
 if "$PYTHON_EXE" -c "$CV2_CHECK" >/dev/null 2>&1; then
     ok "OpenCV ready"
@@ -214,7 +214,7 @@ fi
 # ----------------------------------------------------------------------------- runtime folders
 mkdir -p assets/backgrounds assets/music assets/broll_cache data/logs data/edge_profile work inbox output output/export output/longform
 
-# ----------------------------------------------------------------------------- modes
+# ----------------------------------------------------------------------------- target modes dispatch
 case "$MODE" in
     test)
         info "Running the test suite..."
@@ -228,13 +228,20 @@ case "$MODE" in
         "$PYTHON_EXE" -c "import shutil; print('  ffprobe:    ' + (shutil.which('ffprobe') or 'missing (slower durations)'))"
         "$PYTHON_EXE" -c "from pathlib import Path; print('  .env:       ' + ('present' if Path('.env').exists() else 'missing'))"
         "$PYTHON_EXE" -c "import glob; print('  Background clips: ' + str(len(glob.glob('assets/backgrounds/**/*.mp4', recursive=True))))"
-        "$PYTHON_EXE" -c "import cv2; cv2.CascadeClassifier; print('  OpenCV:     ' + cv2.__version__ + ' - streamer-cam auto-detect ready')" 2>/dev/null             || echo "  OpenCV:     missing (streamer-cam needs a manual cam_rect)"
+        "$PYTHON_EXE" -c "import cv2; cv2.CascadeClassifier; print('  OpenCV:     ' + cv2.__version__ + ' - streamer-cam auto-detect ready')" 2>/dev/null \
+            || echo "  OpenCV:     missing (streamer-cam needs a manual cam_rect)"
         "$PYTHON_EXE" -c "from autoshorts.media.raea_renderer import find_raea_binary as f; p=f(); print('  raea:       ' + (str(p) if p else 'not installed - Remotion/FFmpeg are used'))"
+        echo ""
         ok "Pre-flight complete"
         exit 0
         ;;
     collect)
         exec "$PYTHON_EXE" scripts/collect_gameplay.py "${COLLECT_ARGS[@]+"${COLLECT_ARGS[@]}"}"
+        ;;
+    install)
+        info "Running complete installation..."
+        ok "AutoShorts Studio installation complete!"
+        exit 0
         ;;
 esac
 

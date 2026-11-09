@@ -25,9 +25,7 @@ from __future__ import annotations
 import logging
 import math
 import os
-from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -125,7 +123,9 @@ def wrap_text(font: Any, text: str, max_width: float) -> list[str]:
     return lines
 
 
-def fit_title(text: str, max_w: int = 1500, max_h: int = 80, initial_size: int = 56) -> tuple[Any, int]:
+def fit_title(
+    text: str, max_w: int = 1500, max_h: int = 80, initial_size: int = 56
+) -> tuple[Any, int]:
     """Fit country header title to available dimensions."""
     size = initial_size
     clean_text = text.strip().upper()
@@ -228,7 +228,6 @@ def render_disclaimer_frame(
     card_h = min(740, h - 220)
     card_x0 = (w - card_w) // 2
     card_y0 = (h - card_h) // 2
-    card_x1 = card_x0 + card_w
     card_y1 = card_y0 + card_h
 
     # Card shadow
@@ -255,7 +254,6 @@ def render_disclaimer_frame(
     badge_text = warning_badge.strip()
     badge_text_w = badge_font.getlength(badge_text)
     badge_pad_x = 36
-    badge_pad_y = 14
     badge_w = int(badge_text_w + badge_pad_x * 2)
     badge_h = 56
     badge_x0 = (w - badge_w) // 2
@@ -367,7 +365,6 @@ def render_wojak_scene_frame(
     canvas.paste(bg, (0, HEADER_HEIGHT))
 
     # 2. Position and draw Character (scaled to ~600-750px height, anchored to bottom)
-    char_w = 0
     char_x = 0
     char_y = 0
     if character_img is not None:
@@ -376,7 +373,6 @@ def render_wojak_scene_frame(
         target_w = max(1, round(char.width * (target_h / char.height)))
         char = char.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-        char_w = target_w
         char_y = h - target_h
         if character_side == "left":
             char_x = 100
@@ -402,7 +398,7 @@ def render_wojak_scene_frame(
         )
 
         # Measure text box bounds
-        max_line_w = max(font.getlength(l) for l in lines) if lines else 0
+        max_line_w = max(font.getlength(line) for line in lines) if lines else 0
         text_total_h = len(lines) * line_h
 
         card_w = max(520, min(card_max_w, int(max_line_w + pad_x * 2)))
@@ -461,7 +457,9 @@ def render_wojak_scene_frame(
     hdraw = ImageDraw.Draw(header)
 
     # Bottom 1px subtle divider rule
-    hdraw.rectangle((0, HEADER_HEIGHT - HEADER_RULE_PX, w - 1, HEADER_HEIGHT - 1), fill=COLOR_HEADER_BORDER)
+    hdraw.rectangle(
+        (0, HEADER_HEIGHT - HEADER_RULE_PX, w - 1, HEADER_HEIGHT - 1), fill=COLOR_HEADER_BORDER
+    )
 
     # Centered Country Name & Crisp National Flag: bold uppercase black sans-serif
     title_text = country.strip().upper()

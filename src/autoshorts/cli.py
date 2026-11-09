@@ -289,6 +289,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=7,
         help="Number of country segments for Wojak Shorts (6-10, default 7)",
     )
+    longform_parser.add_argument(
+        "--subtitles",
+        choices=["kinetic", "card", "both", "none"],
+        default="kinetic",
+        help="Subtitle style for Wojak Shorts: kinetic (rapid 2-word glow burst) or card (floating white joke box)",
+    )
+    longform_parser.add_argument(
+        "--words-per-burst",
+        type=int,
+        default=2,
+        help="Number of words per kinetic subtitle burst (default 2)",
+    )
+    longform_parser.add_argument(
+        "--font-size",
+        type=int,
+        default=84,
+        help="Font size in points for kinetic subtitles (default 84)",
+    )
+    longform_parser.add_argument(
+        "--render-method",
+        choices=["ffmpeg", "remotion"],
+        default="ffmpeg",
+        help="Frame rendering backend for Wojak Shorts: ffmpeg (direct pipe) or remotion (caption overlay)",
+    )
 
     # 8. cleanup-work command
     cleanup_work_parser = subparsers.add_parser(
@@ -747,12 +771,21 @@ def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: Stat
         from autoshorts.longform.wojak_shorts import render_wojak_shorts_video
 
         seg_count = getattr(args, "segments", 7)
+        subtitle_mode = getattr(args, "subtitles", "kinetic")
+        words_per_burst = getattr(args, "words_per_burst", 2)
+        font_size = getattr(args, "font_size", 84)
+        render_method = getattr(args, "render_method", "ffmpeg")
+
         try:
             result = render_wojak_shorts_video(
                 topic=target_topic,
                 segment_count=seg_count,
                 config=config,
                 state_manager=state_manager,
+                subtitle_mode=subtitle_mode,
+                words_per_burst=words_per_burst,
+                font_size=font_size,
+                render_method=render_method,
             )
         except (ValueError, RuntimeError) as e:
             print(str(e), file=sys.stderr)
@@ -762,7 +795,7 @@ def cmd_longform(args: argparse.Namespace, config: Settings, state_manager: Stat
         print(f"Video: {result.video_path}")
         print(f"Thumbnail: {result.thumbnail_path}")
         print(f"Duration: {result.duration:.1f}s")
-        print(f"Aspect Ratio: 9:16")
+        print("Aspect Ratio: 9:16")
 
         if getattr(args, "publish", False):
             try:
@@ -878,7 +911,7 @@ def cmd_wojak(args: argparse.Namespace, config: Settings, state_manager: StateMa
         print(f"Video: {result.video_path}")
         print(f"Thumbnail: {result.thumbnail_path}")
         print(f"Duration: {result.duration:.1f}s")
-        print(f"Aspect Ratio: 9:16")
+        print("Aspect Ratio: 9:16")
 
         if getattr(args, "publish", False):
             try:
@@ -976,7 +1009,9 @@ def cmd_wojak(args: argparse.Namespace, config: Settings, state_manager: StateMa
     if result.thumbnail_path:
         print(f"Thumbnail: {result.thumbnail_path}")
     print(f"Duration: {result.duration_sec:.1f}s ({result.scene_count} scenes)")
-    print(f"Streaming FPS: {result.streaming_fps:.1f} fps (Rendered in {result.render_time_sec:.2f}s)")
+    print(
+        f"Streaming FPS: {result.streaming_fps:.1f} fps (Rendered in {result.render_time_sec:.2f}s)"
+    )
 
     if getattr(args, "publish", False):
         try:

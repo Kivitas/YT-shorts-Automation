@@ -15,15 +15,11 @@ from __future__ import annotations
 import json
 import logging
 import random
-import re
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Any
 
 from autoshorts.longform.wojak_topics import (
     ASPECT_RATIO,
-    CANONICAL_TOPICS,
-    COUNTRY_CATALOG,
     DEFAULT_COUNTRIES_PER_VIDEO,
     DEFAULT_COUNTRY_DURATION,
     DISCLAIMER_DURATION_SECONDS,
@@ -33,6 +29,7 @@ from autoshorts.longform.wojak_topics import (
     MANDATORY_DISCLAIMER_HEADING,
     MAX_COUNTRIES_PER_VIDEO,
     MAX_COUNTRY_DURATION,
+    MAX_PUNCHLINE_CHARS,
     MAX_TOTAL_DURATION,
     MIN_COUNTRIES_PER_VIDEO,
     MIN_COUNTRY_DURATION,
@@ -101,7 +98,9 @@ class WojakSegment:
         # Guarantee duration bounds strictly
         if not (MIN_COUNTRY_DURATION <= self.duration <= MAX_COUNTRY_DURATION):
             # Clamp or round into legal range
-            self.duration = max(MIN_COUNTRY_DURATION, min(MAX_COUNTRY_DURATION, float(self.duration)))
+            self.duration = max(
+                MIN_COUNTRY_DURATION, min(MAX_COUNTRY_DURATION, float(self.duration))
+            )
 
         # Normalize character context dictionary
         ctx = dict(self.character_context or {})
@@ -133,6 +132,11 @@ class WojakSegment:
 
         if "age" not in ctx or not isinstance(ctx["age"], int):
             ctx["age"] = 32
+
+        # Enforce punchline brevity (<120 characters) for Wojak Explainer pacing
+        if len(self.joke_text) >= MAX_PUNCHLINE_CHARS:
+            truncated = self.joke_text[: MAX_PUNCHLINE_CHARS - 1].rsplit(" ", 1)[0]
+            self.joke_text = truncated if truncated else self.joke_text[: MAX_PUNCHLINE_CHARS - 1]
 
         self.character_context = ctx
 
@@ -227,7 +231,10 @@ class WojakLongformScript:
             errors.append(
                 f"Disclaimer heading mismatch. Expected '{MANDATORY_DISCLAIMER_HEADING}', got '{self.disclaimer_heading}'."
             )
-        if MANDATORY_DISCLAIMER_BODY not in self.disclaimer_text and self.disclaimer_text != MANDATORY_DISCLAIMER_BODY:
+        if (
+            MANDATORY_DISCLAIMER_BODY not in self.disclaimer_text
+            and self.disclaimer_text != MANDATORY_DISCLAIMER_BODY
+        ):
             errors.append("Mandatory disclaimer text body is missing or altered.")
         if abs(self.disclaimer_duration - DISCLAIMER_DURATION_SECONDS) > 0.01:
             errors.append(
@@ -238,8 +245,16 @@ class WojakLongformScript:
         if self.width != LANDSCAPE_WIDTH or self.height != LANDSCAPE_HEIGHT:
             errors.append(f"Format must be 1920x1080 landscape, got {self.width}x{self.height}.")
 
+        # 6. Punchline brevity (<120 characters)
+        for idx, seg in enumerate(self.segments):
+            if len(seg.joke_text) >= MAX_PUNCHLINE_CHARS:
+                errors.append(
+                    f"Segment {idx + 1} ({seg.country}) joke length ({len(seg.joke_text)} chars) "
+                    f"exceeds brevity limit of {MAX_PUNCHLINE_CHARS} characters."
+                )
+
         if strict and errors:
-            raise ValueError(f"WojakLongformScript validation failed:\n- " + "\n- ".join(errors))
+            raise ValueError("WojakLongformScript validation failed:\n- " + "\n- ".join(errors))
         return errors
 
     def to_dict(self) -> dict[str, Any]:
@@ -288,7 +303,7 @@ class WojakLongformScript:
         lines = [
             f"=== {self.title} ===",
             f"Topic: {self.topic} | Format: {self.format} ({self.width}x{self.height})",
-            f"Total Duration: {self.total_duration:.1f}s ({self.total_duration/60:.2f} min)",
+            f"Total Duration: {self.total_duration:.1f}s ({self.total_duration / 60:.2f} min)",
             f"Disclaimer: {self.disclaimer_heading} ({self.disclaimer_duration}s)",
             f"Country Segments: {len(self.segments)}",
             "-" * 40,
@@ -304,6 +319,7 @@ class WojakLongformScript:
 # ==============================================================================
 # Procedural Script Generator
 # ==============================================================================
+
 
 def procedural_wojak_script(
     topic: str,
@@ -337,14 +353,20 @@ def procedural_wojak_script(
             total_sec = DISCLAIMER_DURATION_SECONDS + count * seg_dur
         if total_sec < MIN_TOTAL_DURATION:
             # Increase count up to 35
-            count = min(MAX_COUNTRIES_PER_VIDEO, int((MIN_TOTAL_DURATION - DISCLAIMER_DURATION_SECONDS) // seg_dur) + 1)
+            count = min(
+                MAX_COUNTRIES_PER_VIDEO,
+                int((MIN_TOTAL_DURATION - DISCLAIMER_DURATION_SECONDS) // seg_dur) + 1,
+            )
             total_sec = DISCLAIMER_DURATION_SECONDS + count * seg_dur
     elif total_sec > MAX_TOTAL_DURATION:
         # If too long, decrease segment duration or count
         seg_dur = MIN_COUNTRY_DURATION
         total_sec = DISCLAIMER_DURATION_SECONDS + count * seg_dur
         if total_sec > MAX_TOTAL_DURATION:
-            count = max(MIN_COUNTRIES_PER_VIDEO, int((MAX_TOTAL_DURATION - DISCLAIMER_DURATION_SECONDS) // seg_dur))
+            count = max(
+                MIN_COUNTRIES_PER_VIDEO,
+                int((MAX_TOTAL_DURATION - DISCLAIMER_DURATION_SECONDS) // seg_dur),
+            )
 
     # Resolve candidate country list
     if selected_countries:
@@ -391,7 +413,9 @@ def procedural_wojak_script(
         )
         segments.append(seg)
 
-    title = TOPIC_TITLES.get(canonical_key, f"Every Country's {topic.replace('_', ' ').title()} Be Like")
+    title = TOPIC_TITLES.get(
+        canonical_key, f"Every Country's {topic.replace('_', ' ').title()} Be Like"
+    )
     hashtags = TOPIC_HASHTAGS.get(
         canonical_key,
         ["#wojak", "#memes", "#everycountrybelike", "#culturalmemes", "#funny", "#parody"],
@@ -415,17 +439,17 @@ def procedural_wojak_script(
 # LLM Script Generator with Resilient Procedural Fallback
 # ==============================================================================
 
+
 def _build_llm_prompt(topic: str, countries: list[str], count: int, segment_duration: float) -> str:
-    cm_samples = [get_country_meta(c).heading for c in countries[:8]]
     return f"""You are the head comedy writer for viral Wojak cultural parody videos in the style of SapX.
-Create a high-retention, hilarious parody script for the topic: "Every Country's {topic.replace('_', ' ').title()} Be Like".
+Create a high-retention, hilarious parody script for the topic: "Every Country's {topic.replace("_", " ").title()} Be Like".
 
 CRITICAL TIMING & PACING CONSTRAINTS:
 1. Video format: 16:9 Landscape (1920x1080).
-2. Number of countries: exactly {count} countries (use these candidates: {', '.join(countries[:count])}).
+2. Number of countries: exactly {count} countries (use these candidates: {", ".join(countries[:count])}).
 3. Duration per country: exactly {segment_duration:.1f} seconds.
 4. Total duration must be between 150.0 and 180.0 seconds (2.5 to 3.0 minutes), including the 3.5s Parody Disclaimer.
-5. Jokes must be punchy, culturally specific, satirical, and under 25 words (1-2 sentences max).
+5. Punchline Brevity: Every joke MUST be strictly under 120 characters (<120 chars, max 20-25 words), culturally specific, satirical, and fast to read in 4.0-4.5s.
 
 VIRAL SAPX STYLE EXAMPLES (Hospital Topic):
 - USA: "Hospital looks like a 5-star hotel. Price is also 5-star. $38 for one aspirin."
@@ -439,7 +463,7 @@ VIRAL SAPX STYLE EXAMPLES (Hospital Topic):
 
 Return ONLY valid JSON matching this schema:
 {{
-  "title": "Every Country's {topic.replace('_', ' ').title()} Be Like (Wojak Cultural Parody)",
+  "title": "Every Country's {topic.replace("_", " ").title()} Be Like (Wojak Cultural Parody)",
   "disclaimer_heading": "{MANDATORY_DISCLAIMER_HEADING}",
   "disclaimer_text": "{MANDATORY_DISCLAIMER_BODY}",
   "disclaimer_duration": {DISCLAIMER_DURATION_SECONDS},
@@ -481,7 +505,9 @@ def _parse_llm_json(raw: str) -> dict[str, Any]:
     return json.loads(s)
 
 
-def _validate_llm_wojak(data: Any, topic: str, expected_count: int, seg_dur: float) -> WojakLongformScript:
+def _validate_llm_wojak(
+    data: Any, topic: str, expected_count: int, seg_dur: float
+) -> WojakLongformScript:
     if not isinstance(data, dict):
         raise ValueError("LLM output is not a JSON object")
 

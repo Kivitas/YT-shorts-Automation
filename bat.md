@@ -51,6 +51,7 @@ rem
 rem   start.bat                  start the dashboard (http://localhost:8765)
 rem   start.bat --check          pre-flight diagnostics, then exit
 rem   start.bat --test           run the test suite, then exit
+rem   start.bat --install        install dependencies, then exit
 rem   start.bat --collect        download background gameplay footage
 rem   start.bat --port 8080      use another port
 rem   start.bat --no-browser     do not open a browser tab
@@ -87,6 +88,7 @@ if "%~1"=="" goto args_done
 if /i "%~1"=="--help" goto show_help
 if /i "%~1"=="-h" goto show_help
 if /i "%~1"=="/?" goto show_help
+if /i "%~1"=="--install" set "MODE=install" & shift & goto parse_args
 if /i "%~1"=="--check" set "MODE=check" & shift & goto parse_args
 if /i "%~1"=="-c" set "MODE=check" & shift & goto parse_args
 if /i "%~1"=="--test" set "MODE=test" & shift & goto parse_args
@@ -126,9 +128,16 @@ if !ERRORLEVEL! equ 0 (
     if exist "%USERPROFILE%\.local\bin\uv.exe" (
         set "UV_CMD=%USERPROFILE%\.local\bin\uv.exe"
     ) else (
-        echo %C_RED%[ERROR]%C_RESET% uv was not found. Install it from https://astral.sh/uv and run start.bat again.
-        pause
-        exit /b 1
+        echo %C_CYAN%[INFO]%C_RESET% uv was not found. Attempting auto-installation...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" >nul 2>&1
+        if exist "%USERPROFILE%\.local\bin\uv.exe" (
+            set "UV_CMD=%USERPROFILE%\.local\bin\uv.exe"
+            echo %C_GREEN%[ OK ]%C_RESET% uv installed successfully
+        ) else (
+            echo %C_RED%[ERROR]%C_RESET% uv was not found. Install it from https://astral.sh/uv and run start.bat again.
+            pause
+            exit /b 1
+        )
     )
 )
 
@@ -149,14 +158,13 @@ if not exist "%PYTHON_EXE%" (
 )
 :venv_ready
 
-rem ----------------------------------------------------------------------------- dependencies
+rem ----------------------------------------------------------------------------- core dependencies
 set "PY_DEPS_CHECK=import autoshorts, fastapi, uvicorn, playwright, edge_tts, google.genai, yt_dlp, imageio_ffmpeg, faster_whisper"
-rem 'uv sync' is a no-op when .venv already matches uv.lock; it also repairs pins after an update.
-"%UV_CMD%" sync --quiet
+"%UV_CMD%" sync --quiet >nul 2>&1
 "%PYTHON_EXE%" -c "%PY_DEPS_CHECK%" >nul 2>&1
 if !ERRORLEVEL! equ 0 goto deps_ready
-echo %C_CYAN%[INFO]%C_RESET% Installing Python dependencies - one time, this can take a few minutes...
-"%PYTHON_EXE%" -m pip install -e . >nul 2>&1
+echo %C_CYAN%[INFO]%C_RESET% Installing Python core dependencies - one time, this can take a few minutes...
+"%UV_CMD%" pip install -e . >nul 2>&1
 "%PYTHON_EXE%" -c "%PY_DEPS_CHECK%" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %C_RED%[ERROR]%C_RESET% Python dependencies could not be installed. Check your connection, then run start.bat again.
@@ -164,11 +172,9 @@ if !ERRORLEVEL! neq 0 (
     exit /b 1
 )
 :deps_ready
-echo %C_GREEN%[ OK ]%C_RESET% Python dependencies ready
+echo %C_GREEN%[ OK ]%C_RESET% Python core dependencies ready
 
 rem ----------------------------------------------------------------------------- OpenCV (facecam auto-detect for the cam_gameplay layout)
-rem 'uv sync' installs it from pyproject.toml; this repairs a missing or too-new install
-rem (OpenCV 5.x dropped the Haar face models, so the project pins opencv-python-headless below 5).
 set "CV2_CHECK=import cv2; cv2.CascadeClassifier"
 "%PYTHON_EXE%" -c "%CV2_CHECK%" >nul 2>&1
 if !ERRORLEVEL! equ 0 goto opencv_ready
@@ -260,11 +266,22 @@ if not exist "output\longform" mkdir "output\longform"
 if not exist "data\edge_profile" mkdir "data\edge_profile"
 if not exist "assets\broll_cache" mkdir "assets\broll_cache"
 
-rem ----------------------------------------------------------------------------- modes
+rem ----------------------------------------------------------------------------- target mode dispatch
 if "%MODE%"=="test" goto run_test
 if "%MODE%"=="check" goto run_check
 if "%MODE%"=="collect" goto run_collect
+if "%MODE%"=="install" goto run_install
+
+rem Default MODE is "run" -> launch the dashboard
 goto run_dashboard
+
+:run_install
+echo %C_CYAN%[INFO]%C_RESET% Running complete installation...
+echo.
+echo %C_GREEN%[ OK ]%C_RESET% AutoShorts Studio installation complete!
+echo All core dependencies are installed.
+pause
+exit /b 0
 
 :run_test
 echo %C_CYAN%[INFO]%C_RESET% Running the test suite...
@@ -289,6 +306,8 @@ if !ERRORLEVEL! equ 0 (
     echo   OpenCV:     missing ^(streamer-cam needs a manual cam_rect^)
 )
 "%PYTHON_EXE%" -c "from autoshorts.media.raea_renderer import find_raea_binary as f; p=f(); print('  raea:       ' + (str(p) if p else 'not installed - Remotion/FFmpeg are used'))"
+echo.
+echo.
 echo %C_GREEN%[ OK ]%C_RESET% Pre-flight complete
 pause
 exit /b 0
@@ -328,6 +347,7 @@ exit /b !RC!
 :show_help
 echo AutoShorts Studio launcher - see the comment block at the top of start.bat for all options.
 echo   start.bat                  start the dashboard (http://localhost:8765)
+echo   start.bat --install        install dependencies, then exit
 echo   start.bat --check          pre-flight diagnostics
 echo   start.bat --test           run the test suite
 echo   start.bat --collect        download background gameplay footage
@@ -348,7 +368,7 @@ The modernized `start.bat` launcher provides complete command-line parameter par
 |---|---|---|
 | *(none)* | *(default)* | Starts the AutoShorts web dashboard server on default port `8000` (`http://localhost:8000`) and launches default browser. |
 | `--port <port>` | `-p <port>` | Binds the dashboard server to a custom TCP port (e.g. `start.bat --port 8080`). |
-| `--check` | `-c` | Runs comprehensive pre-flight diagnostics (Python, uv, FFmpeg, directories, `.env`, background footage, AI models, port checks) and exits without starting server. |
+| `--check` | `-c` | Runs comprehensive pre-flight diagnostics (Python, uv, FFmpeg, directories, `.env`, background footage, port checks) and exits without starting server. |
 | `--test` | `-t` | Runs the automated test suite (`pytest -q`) against all unit and integration tests and exits with pytest's return code. |
 | `--collect-gameplay` | `--collect` | Launches the background gameplay video collector. If extra flags are provided (`--list`, `--categories ...`), forwards them directly; otherwise opens interactive menu. |
 | `--no-browser` | *(none)* | Launches the web dashboard without automatically opening a browser tab (ideal for headless servers or remote SSH sessions). |

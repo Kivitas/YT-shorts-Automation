@@ -12,6 +12,7 @@ Each test pins one bug that was reproduced against the running server:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -387,3 +388,52 @@ def test_log_stream_records_each_message_once() -> None:
     logging.getLogger("autoshorts.regress.dup").warning("dup-check-%s", "marker")
     lines = [m for m in handler.get_history() if "dup-check-marker" in m]
     assert len(lines) == 1
+
+
+def test_batch_retry_requeues_without_publishing(
+    api: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Batch retry re-queues failed work and must not publish or upload directly."""
+    submitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        ParallelJobExecutor,
+        "submit_job",
+        lambda self, job_or_id, *a, **k: submitted.append((str(job_or_id), k)),
+    )
+    state_mgr: StateManager = api["state_mgr"]
+    _save_job(state_mgr, "job_failed_batch", JobStatus.FAILED)
+    _save_job(state_mgr, "job_slot_public", JobStatus.READY_FOR_REVIEW)
+    state_mgr.enqueue_for_upload(
+        job_id="job_slot_public",
+        video_path="clip.mp4",
+        title="Failed clip",
+        description="",
+        scheduled_time=datetime(2020, 1, 1, tzinfo=UTC),
+        privacy_status="public",
+    )
+    state_mgr.update_scheduled_slot_status("job_slot_public", "FAILED")
+    client: TestClient = api["client"]
+
+    resp = client.post("/api/jobs/batch-retry")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["jobs_count"] == 1
+    assert data["slots_count"] == 1
+    assert data["count"] == data["jobs_count"] + data["slots_count"]
+    assert isinstance(data["message"], str)
+
+    # Only the failed job is re-submitted, with no immediate-upload flags.
+    assert [job_id for job_id, _ in submitted] == ["job_failed_batch"]
+    assert all(not kwargs for _, kwargs in submitted)
+
+    # No upload/publish call reached the pipeline.
+    publish_calls = [
+        c for c in api["pipeline"].mock_calls if "upload" in str(c[0]) or "publish" in str(c[0])
+    ]
+    assert publish_calls == []
+
+    # Failed slot is reset to SCHEDULED and keeps its privacy setting.
+    slots = {s["job_id"]: s for s in state_mgr.get_pending_scheduled_slots()}
+    assert slots["job_slot_public"]["status"] == "SCHEDULED"
+    assert slots["job_slot_public"]["privacy_status"] == "public"

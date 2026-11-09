@@ -641,6 +641,26 @@ class StateManager:
             finally:
                 conn.close()
 
+    def retry_all_failed_scheduled_slots(self) -> int:
+        """Reset all FAILED scheduled slots back to SCHEDULED so scheduler uploads them."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.execute(
+                    """
+                    UPDATE scheduler_queue
+                    SET status = 'SCHEDULED'
+                    WHERE status = 'FAILED' AND youtube_video_id IS NULL;
+                    """
+                )
+                count = cur.rowcount
+                conn.commit()
+                return count
+            except Exception as e:
+                raise StateError(f"Failed to reset failed scheduler slots: {e}") from e
+            finally:
+                conn.close()
+
     def get_recent_slot_titles(
         self, limit: int = 30, exclude_job_id: str | None = None
     ) -> list[str]:

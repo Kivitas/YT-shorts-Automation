@@ -1,6 +1,7 @@
 """Unit tests for Wojak high-CTR thumbnail generation."""
 
 from pathlib import Path
+
 from PIL import Image
 
 from autoshorts.longform.wojak_thumbnail import (

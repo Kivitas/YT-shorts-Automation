@@ -13,16 +13,26 @@ rich context props.
 from __future__ import annotations
 
 import hashlib
-import math
+import logging
 import os
 import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+from autoshorts.longform.wojak_library import (
+    archetype_from_expression,
+    load_library_character,
+    resolve_character_image,
+)
+from autoshorts.longform.wojak_temp_assets import category_from_context, temporary_wojak_asset
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants and Canonical Options
@@ -145,7 +155,8 @@ def _get_font(size: int, bold: bool = True) -> ImageFont.ImageFont | ImageFont.F
     for path in _FONT_CANDIDATES:
         try:
             return ImageFont.truetype(path, size)
-        except Exception:
+        except Exception as font_exc:
+            logger.debug("Font candidate %s unavailable: %s", path, font_exc)
             continue
     try:
         return ImageFont.load_default(size=size)  # type: ignore[call-arg]
@@ -474,86 +485,123 @@ def spec_from_country_and_context(
         )
         spec.race = "fair"
         spec.build = "broad"
+        spec.height = "tall"
+        spec.gender = "male"
     elif any(k in c_lower for k in ("uk", "united kingdom", "britain", "england", "scotland")):
         spec.expression = "npc"
         spec.prop = "uk_trolley_tea"
         spec.clothing = "hospital_gown" if "hospital" in all_text else "casual_hoodie"
         spec.race = "fair"
+        spec.height = "average"
+        spec.gender = "female" if "nurse" in all_text else "male"
     elif "sweden" in c_lower:
         spec.expression = "doomer"
         spec.prop = "sweden_phone_queue"
         spec.clothing = "casual_hoodie"
         spec.race = "fair"
+        spec.height = "tall"
+        spec.gender = "male"
     elif "india" in c_lower:
         spec.expression = "chad"
         spec.prop = "india_stethoscope"
         spec.clothing = "doctor_coat"
         spec.race = "south_asian"
         spec.build = "buff"
+        spec.height = "tall"
+        spec.gender = "male"
     elif any(k in c_lower for k in ("korea", "south korea")):
         spec.expression = "bandaged"
         spec.prop = "korea_bandages"
         spec.hair = "cosmetic_bandages"
         spec.clothing = "hospital_gown"
         spec.race = "east_asian"
+        spec.height = "average"
+        spec.gender = "female"
     elif "portugal" in c_lower:
         spec.expression = "smug"
         spec.prop = "portugal_tart_beret"
         spec.hair = "beret"
         spec.clothing = "casual_hoodie"
         spec.race = "olive"
+        spec.height = "short"
+        spec.gender = "male"
     elif "italy" in c_lower:
         spec.expression = "happy"
         spec.prop = "italy_pasta_pot"
-        spec.gender = (
-            "nonna"
-            if any(w in all_text for w in ("nonna", "grandma", "pasta", "cooking", "mama"))
-            else "male"
-        )
+        spec.gender = "nonna"
         spec.clothing = "apron"
-        spec.hair = "grey_bun" if spec.gender == "nonna" else "bald"
+        spec.hair = "grey_bun"
         spec.race = "olive"
+        spec.height = "short"
+        spec.age = "elderly"
     elif any(k in c_lower for k in ("netherlands", "holland", "dutch")):
         spec.expression = "smug"
         spec.prop = "netherlands_paracetamol"
         spec.clothing = "doctor_coat" if "doctor" in all_text else "casual_hoodie"
         spec.race = "fair"
+        spec.height = "tall"
+        spec.gender = "male"
     elif "germany" in c_lower:
         spec.expression = "npc"
         spec.prop = "germany_fax_clipboard"
         spec.clothing = "business_suit"
         spec.race = "fair"
+        spec.height = "tall"
+        spec.gender = "male"
     elif "canada" in c_lower:
         spec.expression = "doomer"
         spec.prop = "canada_calendar"
         spec.clothing = "casual_hoodie"
         spec.race = "fair"
+        spec.height = "average"
+        spec.gender = "female"
     elif "ireland" in c_lower:
         spec.expression = "happy"
         spec.prop = "ireland_bed_thumbsup"
         spec.hair = "ginger_curls_beard"
         spec.clothing = "hospital_gown"
         spec.race = "fair"
+        spec.height = "average"
+        spec.gender = "male"
     elif "france" in c_lower:
         spec.expression = "smug"
         spec.prop = "france_coffee_cigarette"
         spec.hair = "beret"
         spec.clothing = "trench_coat"
         spec.race = "fair"
+        spec.height = "average"
+        spec.gender = "male"
     elif "turkey" in c_lower:
         spec.expression = "bandaged"
         spec.prop = "turkey_hair_transplant"
         spec.hair = "headband"
         spec.clothing = "casual_hoodie"
         spec.race = "middle_eastern"
+        spec.height = "average"
+        spec.gender = "male"
     elif any(k in c_lower for k in ("japan", "china")):
         spec.race = "east_asian"
+        spec.gender = "female"
+        spec.height = "short"
+        spec.expression = "npc"
         spec.clothing = "business_suit"
     elif any(k in c_lower for k in ("nigeria", "ghana", "kenya", "south africa")):
         spec.race = "black"
+        spec.gender = "male"
+        spec.height = "tall"
+        spec.build = "buff"
+        spec.expression = "smug"
         spec.clothing = "doctor_coat" if "doctor" in all_text else "casual_hoodie"
     elif any(k in c_lower for k in ("mexico", "brazil", "colombia", "argentina", "spain")):
         spec.race = "latino"
+        spec.height = "average"
+        spec.gender = "female" if any(w in c_lower for w in ("brazil", "colombia")) else "male"
+        spec.clothing = "casual_hoodie"
+    elif "australia" in c_lower:
+        spec.race = "fair"
+        spec.gender = "male"
+        spec.height = "tall"
+        spec.expression = "happy"
         spec.clothing = "casual_hoodie"
 
     # 2. Scenario & Keyword overrides
@@ -682,7 +730,9 @@ def _draw_polygon_smooth(
 # ---------------------------------------------------------------------------
 
 
-def _draw_background_props(draw: ImageDraw.ImageDraw, spec: WojakSpec, y_shift: float = 0.0) -> None:
+def _draw_background_props(
+    draw: ImageDraw.ImageDraw, spec: WojakSpec, y_shift: float = 0.0
+) -> None:
     """Draw background elements behind the character (e.g. hospital bed, placard, trolley)."""
     if spec.prop == "ireland_bed_thumbsup":
         # Hospital bed frame and comfortable pillow behind head
@@ -693,7 +743,9 @@ def _draw_background_props(draw: ImageDraw.ImageDraw, spec: WojakSpec, y_shift: 
             (540, 480 + y_shift),
             (190, 470 + y_shift),
         ]
-        _draw_polygon_smooth(draw, pillow_pts, fill=(245, 245, 250, 255), outline=INK_BLACK, width=4)
+        _draw_polygon_smooth(
+            draw, pillow_pts, fill=(245, 245, 250, 255), outline=INK_BLACK, width=4
+        )
         _draw_polyline(
             draw,
             [(230, 310 + y_shift), (320, 340 + y_shift), (370, 330 + y_shift)],
@@ -705,9 +757,17 @@ def _draw_background_props(draw: ImageDraw.ImageDraw, spec: WojakSpec, y_shift: 
         draw.line([(140, 160 + y_shift), (660, 160 + y_shift)], fill=(160, 170, 185, 255), width=12)
         draw.line([(140, 160 + y_shift), (660, 160 + y_shift)], fill=INK_BLACK, width=2)
         for post_x in (160, 300, 500, 640):
-            draw.line([(post_x, 160 + y_shift), (post_x, 500 + y_shift)], fill=(180, 190, 205, 255), width=8)
-            draw.line([(post_x - 4, 160 + y_shift), (post_x - 4, 500 + y_shift)], fill=INK_BLACK, width=2)
-            draw.line([(post_x + 4, 160 + y_shift), (post_x + 4, 500 + y_shift)], fill=INK_BLACK, width=2)
+            draw.line(
+                [(post_x, 160 + y_shift), (post_x, 500 + y_shift)],
+                fill=(180, 190, 205, 255),
+                width=8,
+            )
+            draw.line(
+                [(post_x - 4, 160 + y_shift), (post_x - 4, 500 + y_shift)], fill=INK_BLACK, width=2
+            )
+            draw.line(
+                [(post_x + 4, 160 + y_shift), (post_x + 4, 500 + y_shift)], fill=INK_BLACK, width=2
+            )
 
     elif spec.prop == "uk_trolley_tea":
         # Stainless steel trolley rail running behind
@@ -823,19 +883,31 @@ def _draw_torso_and_clothing(
                 draw.line([(px - 6, py), (px + 6, py)], fill=(125, 211, 252, 200), width=2)
                 draw.line([(px, py - 6), (px, py + 6)], fill=(125, 211, 252, 200), width=2)
         # Round hospital collar line
-        collar = [(neck_left - 10, 610 + y_shift), (400, 680 + y_shift), (neck_right + 10, 610 + y_shift)]
+        collar = [
+            (neck_left - 10, 610 + y_shift),
+            (400, 680 + y_shift),
+            (neck_right + 10, 610 + y_shift),
+        ]
         _draw_polyline(draw, collar, color=INK_BLACK, width=4)
         # Gown side tie strings
         _draw_polyline(
             draw,
-            [(waist_l + 30, 780 + y_shift), (waist_l + 10, 820 + y_shift), (waist_l + 25, 860 + y_shift)],
+            [
+                (waist_l + 30, 780 + y_shift),
+                (waist_l + 10, 820 + y_shift),
+                (waist_l + 25, 860 + y_shift),
+            ],
             color=INK_BLACK,
             width=3,
         )
 
     elif clothing == "doctor_coat":
         # Collared shirt and tie underneath
-        shirt_pts = [(neck_left + 10, 600 + y_shift), (400, 670 + y_shift), (neck_right - 10, 600 + y_shift)]
+        shirt_pts = [
+            (neck_left + 10, 600 + y_shift),
+            (400, 670 + y_shift),
+            (neck_right - 10, 600 + y_shift),
+        ]
         _draw_polygon_smooth(draw, shirt_pts, fill=(225, 235, 245, 255), outline=INK_BLACK, width=3)
         # Necktie (crimson or deep blue)
         tie_pts = [
@@ -847,8 +919,18 @@ def _draw_torso_and_clothing(
         ]
         _draw_polygon_smooth(draw, tie_pts, fill=(185, 28, 28, 255), outline=INK_BLACK, width=3)
         # Lab coat lapels (left and right)
-        lapel_l = [(neck_left - 5, 605 + y_shift), (350, 750 + y_shift), (395, 870 + y_shift), (390, 1200)]
-        lapel_r = [(neck_right + 5, 605 + y_shift), (450, 750 + y_shift), (405, 870 + y_shift), (410, 1200)]
+        lapel_l = [
+            (neck_left - 5, 605 + y_shift),
+            (350, 750 + y_shift),
+            (395, 870 + y_shift),
+            (390, 1200),
+        ]
+        lapel_r = [
+            (neck_right + 5, 605 + y_shift),
+            (450, 750 + y_shift),
+            (405, 870 + y_shift),
+            (410, 1200),
+        ]
         _draw_polyline(draw, lapel_l, color=INK_BLACK, width=4)
         _draw_polyline(draw, lapel_r, color=INK_BLACK, width=4)
         # Left breast pocket with pens
@@ -858,14 +940,24 @@ def _draw_torso_and_clothing(
             (330, 820 + y_shift),
             (280, 820 + y_shift),
         ]
-        _draw_polygon_smooth(draw, pocket_pts, fill=(245, 245, 250, 255), outline=INK_BLACK, width=3)
+        _draw_polygon_smooth(
+            draw, pocket_pts, fill=(245, 245, 250, 255), outline=INK_BLACK, width=3
+        )
         draw.line([(292, 742 + y_shift), (292, 765 + y_shift)], fill=(37, 99, 235, 255), width=4)
         draw.line([(310, 740 + y_shift), (310, 765 + y_shift)], fill=(220, 38, 38, 255), width=4)
 
     elif clothing == "nurse_scrubs":
-        v_neck = [(neck_left - 5, 600 + y_shift), (400, 720 + y_shift), (neck_right + 5, 600 + y_shift)]
+        v_neck = [
+            (neck_left - 5, 600 + y_shift),
+            (400, 720 + y_shift),
+            (neck_right + 5, 600 + y_shift),
+        ]
         _draw_polyline(draw, v_neck, color=INK_BLACK, width=4)
-        inner_v = [(neck_left + 5, 600 + y_shift), (400, 705 + y_shift), (neck_right - 5, 600 + y_shift)]
+        inner_v = [
+            (neck_left + 5, 600 + y_shift),
+            (400, 705 + y_shift),
+            (neck_right - 5, 600 + y_shift),
+        ]
         _draw_polygon_smooth(draw, inner_v, fill=skin_tone, outline=None)
         pocket_pts = [
             (270, 790 + y_shift),
@@ -876,7 +968,11 @@ def _draw_torso_and_clothing(
         _draw_polygon_smooth(draw, pocket_pts, fill=(13, 148, 136, 255), outline=INK_BLACK, width=3)
 
     elif clothing == "business_suit":
-        shirt_pts = [(neck_left + 10, 600 + y_shift), (400, 660 + y_shift), (neck_right - 10, 600 + y_shift)]
+        shirt_pts = [
+            (neck_left + 10, 600 + y_shift),
+            (400, 660 + y_shift),
+            (neck_right - 10, 600 + y_shift),
+        ]
         _draw_polygon_smooth(draw, shirt_pts, fill=WHITE, outline=INK_BLACK, width=3)
         tie_pts = [
             (388, 660 + y_shift),
@@ -886,8 +982,18 @@ def _draw_torso_and_clothing(
             (382, 860 + y_shift),
         ]
         _draw_polygon_smooth(draw, tie_pts, fill=(220, 38, 38, 255), outline=INK_BLACK, width=3)
-        lapel_l = [(neck_left - 5, 605 + y_shift), (340, 740 + y_shift), (390, 880 + y_shift), (390, 1200)]
-        lapel_r = [(neck_right + 5, 605 + y_shift), (460, 740 + y_shift), (410, 880 + y_shift), (410, 1200)]
+        lapel_l = [
+            (neck_left - 5, 605 + y_shift),
+            (340, 740 + y_shift),
+            (390, 880 + y_shift),
+            (390, 1200),
+        ]
+        lapel_r = [
+            (neck_right + 5, 605 + y_shift),
+            (460, 740 + y_shift),
+            (410, 880 + y_shift),
+            (410, 1200),
+        ]
         _draw_polyline(draw, lapel_l, color=INK_BLACK, width=4)
         _draw_polyline(draw, lapel_r, color=INK_BLACK, width=4)
         draw.ellipse([(394, 930 + y_shift), (406, 942 + y_shift)], fill=INK_BLACK)
@@ -904,7 +1010,9 @@ def _draw_torso_and_clothing(
             (460, 940 + y_shift),
             (340, 940 + y_shift),
         ]
-        _draw_polygon_smooth(draw, pocket_pts, fill=(245, 245, 245, 255), outline=INK_BLACK, width=3)
+        _draw_polygon_smooth(
+            draw, pocket_pts, fill=(245, 245, 245, 255), outline=INK_BLACK, width=3
+        )
         for py in (850 + y_shift, 880 + y_shift, 910 + y_shift):
             draw.line([(345, py), (455, py)], fill=(239, 68, 68, 120), width=2)
 
@@ -949,8 +1057,18 @@ def _draw_torso_and_clothing(
         _draw_polyline(draw, pocket, color=INK_BLACK, width=3)
 
     elif clothing == "trench_coat":
-        collar_l = [(neck_left - 20, 590 + y_shift), (310, 690 + y_shift), (385, 780 + y_shift), (385, 1200)]
-        collar_r = [(neck_right + 20, 590 + y_shift), (490, 690 + y_shift), (415, 780 + y_shift), (415, 1200)]
+        collar_l = [
+            (neck_left - 20, 590 + y_shift),
+            (310, 690 + y_shift),
+            (385, 780 + y_shift),
+            (385, 1200),
+        ]
+        collar_r = [
+            (neck_right + 20, 590 + y_shift),
+            (490, 690 + y_shift),
+            (415, 780 + y_shift),
+            (415, 1200),
+        ]
         _draw_polyline(draw, collar_l, color=INK_BLACK, width=5)
         _draw_polyline(draw, collar_r, color=INK_BLACK, width=5)
 
@@ -1142,7 +1260,9 @@ def _draw_head_silhouette(
     _draw_polyline(draw, [(254, 405 + y_shift), (260, 408 + y_shift)], color=INK_BLACK, width=2)
 
     if is_nonna:
-        draw.ellipse([(248, 435 + y_shift), (262, 455 + y_shift)], outline=(234, 179, 8, 255), width=3)
+        draw.ellipse(
+            [(248, 435 + y_shift), (262, 455 + y_shift)], outline=(234, 179, 8, 255), width=3
+        )
 
     if is_chad:
         draw.line([(280, 410 + y_shift), (370, 455 + y_shift)], fill=INK_THIN, width=3)
@@ -1161,7 +1281,6 @@ def _draw_facial_features(
     age = spec.age
     expr = spec.expression
     gender = spec.gender
-    is_chad = expr == "chad" or spec.build == "buff"
     is_npc = expr == "npc"
     is_elderly = age == "elderly" or gender == "nonna"
     is_mid = age == "middle_aged"
@@ -1214,9 +1333,13 @@ def _draw_facial_features(
 
     # 4. Eyes & Pupils
     if is_npc:
-        draw.ellipse([(328, 332 + y_shift), (362, 356 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
+        draw.ellipse(
+            [(328, 332 + y_shift), (362, 356 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
         draw.ellipse([(342, 341 + y_shift), (348, 347 + y_shift)], fill=INK_BLACK)
-        draw.ellipse([(420, 332 + y_shift), (454, 356 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
+        draw.ellipse(
+            [(420, 332 + y_shift), (454, 356 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
         draw.ellipse([(434, 341 + y_shift), (440, 347 + y_shift)], fill=INK_BLACK)
 
     elif expr == "crying":
@@ -1224,15 +1347,23 @@ def _draw_facial_features(
         eye_r = [(412, 346 + y_shift), (438, 334 + y_shift), (464, 346 + y_shift)]
         _draw_polyline(draw, eye_l, color=INK_BLACK, width=4)
         _draw_polyline(draw, eye_r, color=INK_BLACK, width=4)
-        draw.arc([(322, 338 + y_shift), (368, 360 + y_shift)], 0, 180, fill=(239, 68, 68, 200), width=3)
-        draw.arc([(412, 338 + y_shift), (464, 360 + y_shift)], 0, 180, fill=(239, 68, 68, 200), width=3)
+        draw.arc(
+            [(322, 338 + y_shift), (368, 360 + y_shift)], 0, 180, fill=(239, 68, 68, 200), width=3
+        )
+        draw.arc(
+            [(412, 338 + y_shift), (464, 360 + y_shift)], 0, 180, fill=(239, 68, 68, 200), width=3
+        )
         draw.ellipse([(341, 340 + y_shift), (351, 350 + y_shift)], fill=INK_BLACK)
         draw.ellipse([(433, 340 + y_shift), (443, 350 + y_shift)], fill=INK_BLACK)
 
     elif expr == "shocked":
-        draw.ellipse([(322, 326 + y_shift), (368, 366 + y_shift)], fill=WHITE, outline=INK_BLACK, width=4)
+        draw.ellipse(
+            [(322, 326 + y_shift), (368, 366 + y_shift)], fill=WHITE, outline=INK_BLACK, width=4
+        )
         draw.ellipse([(343, 344 + y_shift), (347, 348 + y_shift)], fill=INK_BLACK)
-        draw.ellipse([(412, 326 + y_shift), (458, 366 + y_shift)], fill=WHITE, outline=INK_BLACK, width=4)
+        draw.ellipse(
+            [(412, 326 + y_shift), (458, 366 + y_shift)], fill=WHITE, outline=INK_BLACK, width=4
+        )
         draw.ellipse([(433, 344 + y_shift), (437, 348 + y_shift)], fill=INK_BLACK)
         _draw_polyline(draw, [(305, 300 + y_shift), (295, 305 + y_shift)], color=TEAR_BLUE, width=3)
         _draw_polyline(draw, [(475, 285 + y_shift), (485, 290 + y_shift)], color=TEAR_BLUE, width=3)
@@ -1248,8 +1379,12 @@ def _draw_facial_features(
         draw.ellipse([(434, 340 + y_shift), (442, 348 + y_shift)], fill=INK_BLACK)
 
     elif expr == "doomer":
-        draw.ellipse([(324, 334 + y_shift), (366, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
-        draw.ellipse([(416, 334 + y_shift), (458, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
+        draw.ellipse(
+            [(324, 334 + y_shift), (366, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
+        draw.ellipse(
+            [(416, 334 + y_shift), (458, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
         draw.line([(322, 344 + y_shift), (368, 344 + y_shift)], fill=INK_BLACK, width=4)
         draw.line([(414, 344 + y_shift), (460, 344 + y_shift)], fill=INK_BLACK, width=4)
         draw.ellipse([(342, 343 + y_shift), (350, 351 + y_shift)], fill=INK_BLACK)
@@ -1268,8 +1403,12 @@ def _draw_facial_features(
         draw.ellipse([(435, 375 + y_shift), (475, 405 + y_shift)], fill=BLUSH_PINK)
 
     else:
-        draw.ellipse([(324, 334 + y_shift), (366, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
-        draw.ellipse([(416, 334 + y_shift), (458, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
+        draw.ellipse(
+            [(324, 334 + y_shift), (366, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
+        draw.ellipse(
+            [(416, 334 + y_shift), (458, 358 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
         draw.ellipse([(342, 342 + y_shift), (350, 350 + y_shift)], fill=INK_BLACK)
         draw.ellipse([(434, 342 + y_shift), (442, 350 + y_shift)], fill=INK_BLACK)
         draw.arc([(324, 346 + y_shift), (366, 366 + y_shift)], 0, 180, fill=INK_THIN, width=2)
@@ -1284,10 +1423,16 @@ def _draw_facial_features(
 
     # 6. Eye bags / crow's feet for elderly
     if is_elderly:
-        for offset_x, base_x in ((0, 320), (90, 465)):
-            draw.line([(base_x, 346 + y_shift), (base_x - 10, 340 + y_shift)], fill=INK_THIN, width=2)
-            draw.line([(base_x, 350 + y_shift), (base_x - 12, 350 + y_shift)], fill=INK_THIN, width=2)
-            draw.line([(base_x, 354 + y_shift), (base_x - 10, 360 + y_shift)], fill=INK_THIN, width=2)
+        for _offset_x, base_x in ((0, 320), (90, 465)):
+            draw.line(
+                [(base_x, 346 + y_shift), (base_x - 10, 340 + y_shift)], fill=INK_THIN, width=2
+            )
+            draw.line(
+                [(base_x, 350 + y_shift), (base_x - 12, 350 + y_shift)], fill=INK_THIN, width=2
+            )
+            draw.line(
+                [(base_x, 354 + y_shift), (base_x - 10, 360 + y_shift)], fill=INK_THIN, width=2
+            )
 
     # 7. Nose nostril fold (inner nose definition)
     if not is_npc:
@@ -1314,7 +1459,9 @@ def _draw_facial_features(
             (400, 510 + y_shift),
         ]
         _draw_polygon_smooth(draw, mouth_pts, fill=(120, 20, 20, 255), outline=INK_BLACK, width=4)
-        draw.rectangle([(404, 453 + y_shift), (446, 465 + y_shift)], fill=WHITE, outline=INK_BLACK, width=2)
+        draw.rectangle(
+            [(404, 453 + y_shift), (446, 465 + y_shift)], fill=WHITE, outline=INK_BLACK, width=2
+        )
         draw.ellipse([(406, 488 + y_shift), (444, 512 + y_shift)], fill=(244, 114, 182, 255))
 
     elif expr == "crying":
@@ -1351,7 +1498,9 @@ def _draw_facial_features(
     elif expr == "doomer":
         mouth = [(385, 464 + y_shift), (420, 472 + y_shift), (455, 476 + y_shift)]
         _draw_polyline(draw, mouth, color=INK_BLACK, width=4)
-        draw.rectangle([(445, 468 + y_shift), (490, 476 + y_shift)], fill=WHITE, outline=INK_BLACK, width=2)
+        draw.rectangle(
+            [(445, 468 + y_shift), (490, 476 + y_shift)], fill=WHITE, outline=INK_BLACK, width=2
+        )
         draw.rectangle([(485, 468 + y_shift), (490, 476 + y_shift)], fill=(234, 88, 12, 255))
         smoke = [
             (495, 470 + y_shift),
@@ -1378,8 +1527,12 @@ def _draw_facial_features(
 
     # 12. Nonna wire-frame spectacles
     if gender == "nonna":
-        draw.ellipse([(322, 330 + y_shift), (368, 368 + y_shift)], outline=(200, 160, 60, 255), width=3)
-        draw.ellipse([(412, 330 + y_shift), (458, 368 + y_shift)], outline=(200, 160, 60, 255), width=3)
+        draw.ellipse(
+            [(322, 330 + y_shift), (368, 368 + y_shift)], outline=(200, 160, 60, 255), width=3
+        )
+        draw.ellipse(
+            [(412, 330 + y_shift), (458, 368 + y_shift)], outline=(200, 160, 60, 255), width=3
+        )
         draw.line([(368, 346 + y_shift), (412, 346 + y_shift)], fill=(200, 160, 60, 255), width=3)
         draw.line([(322, 346 + y_shift), (265, 385 + y_shift)], fill=(200, 160, 60, 255), width=2)
 
@@ -1681,14 +1834,24 @@ def _draw_props_and_hands(
         _draw_polygon_smooth(draw, bill_pts, fill=(255, 254, 245, 255), outline=INK_BLACK, width=4)
         _draw_polygon_smooth(
             draw,
-            [(190, 720 + y_shift), (240, 700 + y_shift), (250, 740 + y_shift), (200, 760 + y_shift)],
+            [
+                (190, 720 + y_shift),
+                (240, 700 + y_shift),
+                (250, 740 + y_shift),
+                (200, 760 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
         )
         _draw_polygon_smooth(
             draw,
-            [(550, 690 + y_shift), (600, 710 + y_shift), (590, 750 + y_shift), (540, 730 + y_shift)],
+            [
+                (550, 690 + y_shift),
+                (600, 710 + y_shift),
+                (590, 750 + y_shift),
+                (540, 730 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -1718,7 +1881,12 @@ def _draw_props_and_hands(
         draw.text((230, 1025 + y_shift), "TOTAL:", fill=BLOOD_RED, font=f_tot)
         draw.text((350, 1025 + y_shift), "$184,650.00", fill=BLOOD_RED, font=f_tot)
 
-        stamp_box = [(240, 1075 + y_shift), (530, 1075 + y_shift), (530, 1145 + y_shift), (240, 1145 + y_shift)]
+        stamp_box = [
+            (240, 1075 + y_shift),
+            (530, 1075 + y_shift),
+            (530, 1145 + y_shift),
+            (240, 1145 + y_shift),
+        ]
         _draw_polygon_smooth(draw, stamp_box, fill=(254, 226, 226, 200), outline=BLOOD_RED, width=4)
         draw.text((260, 1095 + y_shift), "PAST DUE - PAY NOW", fill=BLOOD_RED, font=f_stamp)
 
@@ -1745,7 +1913,9 @@ def _draw_props_and_hands(
         _draw_polygon_smooth(draw, mug_pts, fill=WHITE, outline=INK_BLACK, width=4)
         draw.arc([(525, 725 + y_shift), (565, 785 + y_shift)], -90, 90, fill=INK_BLACK, width=4)
         draw.line([(500, 710 + y_shift), (515, 750 + y_shift)], fill=(120, 53, 15, 255), width=2)
-        draw.rectangle([(510, 750 + y_shift), (525, 768 + y_shift)], fill=BLOOD_RED, outline=INK_BLACK, width=2)
+        draw.rectangle(
+            [(510, 750 + y_shift), (525, 768 + y_shift)], fill=BLOOD_RED, outline=INK_BLACK, width=2
+        )
         draw.text((475, 745 + y_shift), "TEA", fill=INK_BLACK, font=_get_font(18, bold=True))
         for sx in (470, 500, 525):
             steam = [
@@ -1757,7 +1927,12 @@ def _draw_props_and_hands(
             _draw_polyline(draw, steam, color=(220, 225, 235, 180), width=3)
         _draw_polygon_smooth(
             draw,
-            [(430, 730 + y_shift), (460, 730 + y_shift), (460, 780 + y_shift), (430, 780 + y_shift)],
+            [
+                (430, 730 + y_shift),
+                (460, 730 + y_shift),
+                (460, 780 + y_shift),
+                (430, 780 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -1790,9 +1965,15 @@ def _draw_props_and_hands(
             (490, 440 + y_shift),
         ]
         _draw_polygon_smooth(draw, hand_pts, fill=skin_tone, outline=INK_BLACK, width=3)
-        draw.text((575, 320 + y_shift), "♪", fill=(147, 51, 234, 255), font=_get_font(24, bold=True))
-        draw.text((595, 360 + y_shift), "♫", fill=(59, 130, 246, 255), font=_get_font(24, bold=True))
-        draw.text((580, 410 + y_shift), "♩", fill=(147, 51, 234, 255), font=_get_font(20, bold=True))
+        draw.text(
+            (575, 320 + y_shift), "♪", fill=(147, 51, 234, 255), font=_get_font(24, bold=True)
+        )
+        draw.text(
+            (595, 360 + y_shift), "♫", fill=(59, 130, 246, 255), font=_get_font(24, bold=True)
+        )
+        draw.text(
+            (580, 410 + y_shift), "♩", fill=(147, 51, 234, 255), font=_get_font(20, bold=True)
+        )
 
     # 4. India: Stethoscope around neck, crossed arms, $3 prescription pad
     elif prop == "india_stethoscope":
@@ -1800,7 +1981,12 @@ def _draw_props_and_hands(
         tube_r = [(460, 580 + y_shift), (470, 680 + y_shift), (415, 770 + y_shift)]
         _draw_polyline(draw, tube_l, color=INK_BLACK, width=6)
         _draw_polyline(draw, tube_r, color=INK_BLACK, width=6)
-        draw.ellipse([(380, 760 + y_shift), (415, 795 + y_shift)], fill=(203, 213, 225, 255), outline=INK_BLACK, width=3)
+        draw.ellipse(
+            [(380, 760 + y_shift), (415, 795 + y_shift)],
+            fill=(203, 213, 225, 255),
+            outline=INK_BLACK,
+            width=3,
+        )
         draw.ellipse([(388, 768 + y_shift), (407, 787 + y_shift)], fill=(148, 163, 184, 255))
         _draw_polyline(draw, [(180, 780 + y_shift), (450, 850 + y_shift)], color=INK_BLACK, width=4)
         _draw_polyline(draw, [(620, 780 + y_shift), (350, 850 + y_shift)], color=INK_BLACK, width=4)
@@ -1835,12 +2021,29 @@ def _draw_props_and_hands(
             (580, 790 + y_shift),
             (490, 790 + y_shift),
         ]
-        _draw_polygon_smooth(draw, mirror_glass, fill=(244, 114, 182, 255), outline=INK_BLACK, width=4)
-        draw.ellipse([(505, 695 + y_shift), (565, 775 + y_shift)], fill=(224, 242, 254, 255), outline=INK_BLACK, width=2)
-        draw.rectangle([(525, 790 + y_shift), (545, 870 + y_shift)], fill=(244, 114, 182, 255), outline=INK_BLACK, width=3)
+        _draw_polygon_smooth(
+            draw, mirror_glass, fill=(244, 114, 182, 255), outline=INK_BLACK, width=4
+        )
+        draw.ellipse(
+            [(505, 695 + y_shift), (565, 775 + y_shift)],
+            fill=(224, 242, 254, 255),
+            outline=INK_BLACK,
+            width=2,
+        )
+        draw.rectangle(
+            [(525, 790 + y_shift), (545, 870 + y_shift)],
+            fill=(244, 114, 182, 255),
+            outline=INK_BLACK,
+            width=3,
+        )
         _draw_polygon_smooth(
             draw,
-            [(510, 810 + y_shift), (560, 810 + y_shift), (560, 850 + y_shift), (510, 850 + y_shift)],
+            [
+                (510, 810 + y_shift),
+                (560, 810 + y_shift),
+                (560, 850 + y_shift),
+                (510, 850 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -1879,7 +2082,12 @@ def _draw_props_and_hands(
         )
         _draw_polygon_smooth(
             draw,
-            [(410, 765 + y_shift), (450, 765 + y_shift), (450, 800 + y_shift), (410, 800 + y_shift)],
+            [
+                (410, 765 + y_shift),
+                (450, 765 + y_shift),
+                (450, 800 + y_shift),
+                (410, 800 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -1910,7 +2118,12 @@ def _draw_props_and_hands(
                 color=(254, 240, 138, 255),
                 width=3,
             )
-        draw.ellipse([(385, 742 + y_shift), (415, 758 + y_shift)], fill=(22, 163, 74, 255), outline=INK_BLACK, width=2)
+        draw.ellipse(
+            [(385, 742 + y_shift), (415, 758 + y_shift)],
+            fill=(22, 163, 74, 255),
+            outline=INK_BLACK,
+            width=2,
+        )
         for sx in (300, 400, 500):
             steam = [
                 (sx, 735 + y_shift),
@@ -1921,14 +2134,24 @@ def _draw_props_and_hands(
             _draw_polyline(draw, steam, color=(240, 240, 250, 180), width=4)
         _draw_polygon_smooth(
             draw,
-            [(195, 780 + y_shift), (235, 780 + y_shift), (235, 825 + y_shift), (195, 825 + y_shift)],
+            [
+                (195, 780 + y_shift),
+                (235, 780 + y_shift),
+                (235, 825 + y_shift),
+                (195, 825 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
         )
         _draw_polygon_smooth(
             draw,
-            [(565, 780 + y_shift), (605, 780 + y_shift), (605, 825 + y_shift), (565, 825 + y_shift)],
+            [
+                (565, 780 + y_shift),
+                (605, 780 + y_shift),
+                (605, 825 + y_shift),
+                (565, 825 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -1960,14 +2183,24 @@ def _draw_props_and_hands(
         draw.line([(495, 820 + y_shift), (495, 850 + y_shift)], fill=BLOOD_RED, width=6)
         _draw_polygon_smooth(
             draw,
-            [(225, 800 + y_shift), (265, 800 + y_shift), (265, 860 + y_shift), (225, 860 + y_shift)],
+            [
+                (225, 800 + y_shift),
+                (265, 800 + y_shift),
+                (265, 860 + y_shift),
+                (225, 860 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
         )
         _draw_polygon_smooth(
             draw,
-            [(535, 800 + y_shift), (575, 800 + y_shift), (575, 860 + y_shift), (535, 860 + y_shift)],
+            [
+                (535, 800 + y_shift),
+                (575, 800 + y_shift),
+                (575, 860 + y_shift),
+                (535, 860 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -2037,7 +2270,12 @@ def _draw_props_and_hands(
         draw.text((295, 835 + y_shift), "JULY 14, 2029", fill=BLOOD_RED, font=f_mri)
         draw.ellipse([(280, 825 + y_shift), (490, 875 + y_shift)], outline=BLOOD_RED, width=5)
         draw.text((290, 895 + y_shift), "MRI APPOINTMENT", fill=INK_BLACK, font=f_mri)
-        draw.text((295, 925 + y_shift), "(EST. WAIT: 5 YRS)", fill=(100, 100, 100, 255), font=_get_font(14, bold=True))
+        draw.text(
+            (295, 925 + y_shift),
+            "(EST. WAIT: 5 YRS)",
+            fill=(100, 100, 100, 255),
+            font=_get_font(14, bold=True),
+        )
 
     # 11. Ireland: Hospital Bed & Big Thumbs Up
     elif prop == "ireland_bed_thumbsup":
@@ -2053,9 +2291,15 @@ def _draw_props_and_hands(
         _draw_polygon_smooth(draw, thumb_pts, fill=skin_tone, outline=INK_BLACK, width=4)
         draw.line([(515, 740 + y_shift), (555, 740 + y_shift)], fill=INK_BLACK, width=3)
         draw.line([(515, 765 + y_shift), (555, 765 + y_shift)], fill=INK_BLACK, width=3)
-        draw.rectangle([(160, 780 + y_shift), (240, 860 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3)
-        draw.text((180, 795 + y_shift), "FREE", fill=(22, 163, 74, 255), font=_get_font(18, bold=True))
-        draw.text((170, 825 + y_shift), "CARE", fill=(22, 163, 74, 255), font=_get_font(18, bold=True))
+        draw.rectangle(
+            [(160, 780 + y_shift), (240, 860 + y_shift)], fill=WHITE, outline=INK_BLACK, width=3
+        )
+        draw.text(
+            (180, 795 + y_shift), "FREE", fill=(22, 163, 74, 255), font=_get_font(18, bold=True)
+        )
+        draw.text(
+            (170, 825 + y_shift), "CARE", fill=(22, 163, 74, 255), font=_get_font(18, bold=True)
+        )
 
     # 12. France: Espresso cup & cigarette, strike placard
     elif prop == "france_coffee_cigarette":
@@ -2083,7 +2327,12 @@ def _draw_props_and_hands(
         )
         _draw_polygon_smooth(
             draw,
-            [(420, 760 + y_shift), (460, 760 + y_shift), (460, 800 + y_shift), (420, 800 + y_shift)],
+            [
+                (420, 760 + y_shift),
+                (460, 760 + y_shift),
+                (460, 800 + y_shift),
+                (420, 800 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -2098,11 +2347,26 @@ def _draw_props_and_hands(
             (470, 760 + y_shift),
         ]
         _draw_polygon_smooth(draw, mirror, fill=(30, 41, 59, 255), outline=INK_BLACK, width=4)
-        draw.ellipse([(485, 650 + y_shift), (555, 740 + y_shift)], fill=(224, 242, 254, 255), outline=INK_BLACK, width=2)
-        draw.rectangle([(505, 760 + y_shift), (525, 840 + y_shift)], fill=(30, 41, 59, 255), outline=INK_BLACK, width=3)
+        draw.ellipse(
+            [(485, 650 + y_shift), (555, 740 + y_shift)],
+            fill=(224, 242, 254, 255),
+            outline=INK_BLACK,
+            width=2,
+        )
+        draw.rectangle(
+            [(505, 760 + y_shift), (525, 840 + y_shift)],
+            fill=(30, 41, 59, 255),
+            outline=INK_BLACK,
+            width=3,
+        )
         _draw_polygon_smooth(
             draw,
-            [(490, 780 + y_shift), (540, 780 + y_shift), (540, 825 + y_shift), (490, 825 + y_shift)],
+            [
+                (490, 780 + y_shift),
+                (540, 780 + y_shift),
+                (540, 825 + y_shift),
+                (490, 825 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -2120,7 +2384,12 @@ def _draw_props_and_hands(
         draw.arc([(525, 745 + y_shift), (565, 805 + y_shift)], -90, 90, fill=INK_BLACK, width=4)
         _draw_polygon_smooth(
             draw,
-            [(430, 750 + y_shift), (460, 750 + y_shift), (460, 800 + y_shift), (430, 800 + y_shift)],
+            [
+                (430, 750 + y_shift),
+                (460, 750 + y_shift),
+                (460, 800 + y_shift),
+                (430, 800 + y_shift),
+            ],
             fill=skin_tone,
             outline=INK_BLACK,
             width=3,
@@ -2132,7 +2401,9 @@ def _draw_props_and_hands(
 # ---------------------------------------------------------------------------
 
 
-AUTHENTIC_WOJAK_PATH = Path(__file__).resolve().parents[3] / "assets" / "characters" / "wojak_doomer_cutout.png"
+AUTHENTIC_WOJAK_PATH = (
+    Path(__file__).resolve().parents[3] / "assets" / "characters" / "wojak_doomer_cutout.png"
+)
 
 
 def _draw_authentic_wojak_base(
@@ -2152,25 +2423,179 @@ def _draw_authentic_wojak_base(
     try:
         with Image.open(AUTHENTIC_WOJAK_PATH) as base_im:
             draw = ImageDraw.Draw(canvas)
-            h_target = int(660 + (20 if spec.height == "tall" else -20 if spec.height == "short" else 0))
+            if spec.height == "tall":
+                h_target = 720
+                y_pos = int(140 + y_shift)
+            elif spec.height == "short":
+                h_target = 600
+                y_pos = int(220 + y_shift)
+            else:
+                h_target = 660
+                y_pos = int(180 + y_shift)
+
             w_target = int(round(h_target * (base_im.width / max(1, base_im.height))))
             scaled = base_im.resize((w_target, h_target), Image.Resampling.LANCZOS)
 
             x_pos = (CANVAS_WIDTH - w_target) // 2
-            y_pos = int(180 + y_shift)
 
-            # Extend hoodie torso downward to bottom of canvas
-            hoodie_color = (65, 68, 72, 255)
-            draw.rectangle([x_pos + 40, y_pos + h_target - 40, x_pos + w_target - 40, CANVAS_HEIGHT], fill=hoodie_color)
+            # 1. Skin Tinting (Preserve authentic pencil linework & wrinkles while adapting race)
+            arr = np.array(scaled)
+            r = arr[:, :, 0].astype(np.float32)
+            g = arr[:, :, 1].astype(np.float32)
+            b = arr[:, :, 2].astype(np.float32)
+            a = arr[:, :, 3]
+            brightness = (r + g + b) / 3.0
 
-            # Optional NPC Grey tinting
             if spec.expression == "npc" or spec.skin_tone == NPC_GREY_TONE:
-                g = scaled.convert("L")
-                scaled = Image.merge("RGBA", (g, g, g, scaled.getchannel("A")))
+                g_img = scaled.convert("L")
+                scaled = Image.merge("RGBA", (g_img, g_img, g_img, scaled.getchannel("A")))
+            elif spec.race != "fair" or spec.skin_tone is not None:
+                target_tone = spec.skin_tone if spec.skin_tone is not None else skin_tone
+                skin_mask = (a > 120) & (brightness > 115)
+                # Exclude lower clothing region (bottom 24%)
+                skin_mask[int(h_target * 0.76) :, :] = False
+
+                tr = target_tone[0] / 215.0
+                tg = target_tone[1] / 215.0
+                tb = target_tone[2] / 215.0
+
+                arr[skin_mask, 0] = np.clip(brightness[skin_mask] * tr, 0, 255).astype(np.uint8)
+                arr[skin_mask, 1] = np.clip(brightness[skin_mask] * tg, 0, 255).astype(np.uint8)
+                arr[skin_mask, 2] = np.clip(brightness[skin_mask] * tb, 0, 255).astype(np.uint8)
+                scaled = Image.fromarray(arr)
+
+            # 2. Torso Clothing Extension
+            clothing_colors = {
+                "hospital_gown": (138, 198, 185, 255),
+                "doctor_coat": (246, 248, 252, 255),
+                "business_suit": (34, 42, 60, 255),
+                "nurse_scrubs": (55, 115, 185, 255),
+                "apron": (235, 230, 215, 255),
+                "trench_coat": (165, 140, 105, 255),
+                "casual_hoodie": (65, 68, 72, 255),
+            }
+            torso_fill = clothing_colors.get(spec.clothing, (65, 68, 72, 255))
+            torso_top = y_pos + h_target - 50
+            draw.rectangle(
+                [x_pos + 35, torso_top, x_pos + w_target - 35, CANVAS_HEIGHT],
+                fill=torso_fill,
+            )
+
+            # Specific Clothing Details on Torso
+            if spec.clothing == "hospital_gown":
+                # Hospital gown collar ties
+                draw.line(
+                    [
+                        (x_pos + w_target * 0.44, torso_top + 15),
+                        (x_pos + w_target * 0.52, torso_top + 70),
+                    ],
+                    fill=(245, 248, 248, 255),
+                    width=3,
+                )
+                draw.line(
+                    [
+                        (x_pos + w_target * 0.56, torso_top + 15),
+                        (x_pos + w_target * 0.50, torso_top + 70),
+                    ],
+                    fill=(245, 248, 248, 255),
+                    width=3,
+                )
+            elif spec.clothing == "doctor_coat":
+                # Stethoscope tubes hanging down chest
+                steth_color = (25, 45, 85, 255)
+                draw.arc(
+                    [
+                        x_pos + w_target * 0.35,
+                        torso_top + 10,
+                        x_pos + w_target * 0.65,
+                        torso_top + 140,
+                    ],
+                    start=0,
+                    end=180,
+                    fill=steth_color,
+                    width=5,
+                )
+                # Stethoscope bell
+                draw.ellipse(
+                    [
+                        x_pos + w_target * 0.50 - 10,
+                        torso_top + 135,
+                        x_pos + w_target * 0.50 + 10,
+                        torso_top + 155,
+                    ],
+                    fill=(210, 215, 225, 255),
+                    outline=INK_BLACK,
+                    width=2,
+                )
+            elif spec.clothing == "business_suit":
+                # White dress shirt V and necktie
+                draw.polygon(
+                    [
+                        (x_pos + w_target * 0.44, torso_top),
+                        (x_pos + w_target * 0.56, torso_top),
+                        (x_pos + w_target * 0.50, torso_top + 80),
+                    ],
+                    fill=(250, 250, 252, 255),
+                )
+                draw.polygon(
+                    [
+                        (x_pos + w_target * 0.48, torso_top + 25),
+                        (x_pos + w_target * 0.52, torso_top + 25),
+                        (x_pos + w_target * 0.54, torso_top + 130),
+                        (x_pos + w_target * 0.50, torso_top + 145),
+                        (x_pos + w_target * 0.46, torso_top + 130),
+                    ],
+                    fill=(185, 45, 45, 255),
+                    outline=INK_BLACK,
+                    width=1,
+                )
 
             canvas.paste(scaled, (x_pos, y_pos), scaled)
 
-            # Draw cyan tears if crying
+            # 3. Headwear Overlay
+            if spec.hair == "beret":
+                beret_pts = [
+                    (int(x_pos + w_target * 0.22), int(y_pos + h_target * 0.14)),
+                    (int(x_pos + w_target * 0.48), int(y_pos + h_target * 0.01)),
+                    (int(x_pos + w_target * 0.82), int(y_pos + h_target * 0.10)),
+                    (int(x_pos + w_target * 0.76), int(y_pos + h_target * 0.22)),
+                    (int(x_pos + w_target * 0.26), int(y_pos + h_target * 0.24)),
+                ]
+                draw.polygon(beret_pts, fill=(30, 32, 40, 255), outline=INK_BLACK, width=3)
+            elif spec.hair == "headband":
+                hb_y = int(y_pos + h_target * 0.16)
+                draw.rectangle(
+                    [x_pos + int(w_target * 0.24), hb_y, x_pos + int(w_target * 0.78), hb_y + 24],
+                    fill=(245, 245, 250, 255),
+                    outline=INK_BLACK,
+                    width=2,
+                )
+            elif spec.hair == "nurse_cap":
+                cap_pts = [
+                    (int(x_pos + w_target * 0.35), int(y_pos + h_target * 0.08)),
+                    (int(x_pos + w_target * 0.65), int(y_pos + h_target * 0.08)),
+                    (int(x_pos + w_target * 0.60), int(y_pos + h_target * 0.16)),
+                    (int(x_pos + w_target * 0.40), int(y_pos + h_target * 0.16)),
+                ]
+                draw.polygon(cap_pts, fill=(255, 255, 255, 255), outline=INK_BLACK, width=2)
+                draw.line(
+                    [
+                        (int(x_pos + w_target * 0.47), int(y_pos + h_target * 0.10)),
+                        (int(x_pos + w_target * 0.53), int(y_pos + h_target * 0.10)),
+                    ],
+                    fill=(220, 38, 38, 255),
+                    width=2,
+                )
+                draw.line(
+                    [
+                        (int(x_pos + w_target * 0.50), int(y_pos + h_target * 0.08)),
+                        (int(x_pos + w_target * 0.50), int(y_pos + h_target * 0.13)),
+                    ],
+                    fill=(220, 38, 38, 255),
+                    width=2,
+                )
+
+            # 4. Draw cyan tears if crying
             if spec.expression in ("crying", "sad"):
                 eye_lx = int(x_pos + w_target * 0.44)
                 eye_ly = int(y_pos + h_target * 0.44)
@@ -2202,8 +2627,12 @@ def _draw_authentic_wojak_base(
                 ]
                 draw.polygon(tear_pts_r, fill=tear_color, outline=tear_edge)
 
-            # Draw hospital bandages if bandaged
-            if spec.expression in ("bandaged", "injured") or "bandage" in spec.scenario or "bandage" in spec.prop:
+            # 5. Draw hospital bandages if bandaged
+            if (
+                spec.expression in ("bandaged", "injured")
+                or "bandage" in spec.scenario
+                or "bandage" in spec.prop
+            ):
                 forehead_y = int(y_pos + h_target * 0.22)
                 bandage_pts = [
                     (int(x_pos + w_target * 0.25), forehead_y - 20),
@@ -2211,17 +2640,27 @@ def _draw_authentic_wojak_base(
                     (int(x_pos + w_target * 0.82), forehead_y + 55),
                     (int(x_pos + w_target * 0.22), forehead_y + 50),
                 ]
-                draw.polygon(bandage_pts, fill=(245, 245, 248, 245), outline=(60, 60, 60, 255), width=3)
+                draw.polygon(
+                    bandage_pts, fill=(245, 245, 248, 245), outline=(60, 60, 60, 255), width=3
+                )
                 draw.line(
-                    [(int(x_pos + w_target * 0.24), forehead_y + 18), (int(x_pos + w_target * 0.80), forehead_y + 22)],
+                    [
+                        (int(x_pos + w_target * 0.24), forehead_y + 18),
+                        (int(x_pos + w_target * 0.80), forehead_y + 22),
+                    ],
                     fill=(180, 180, 185, 255),
                     width=2,
                 )
                 cheek_x = int(x_pos + w_target * 0.40)
                 cheek_y = int(y_pos + h_target * 0.60)
-                draw.rectangle([cheek_x, cheek_y, cheek_x + 60, cheek_y + 22], fill=(225, 175, 130, 255), outline=(120, 80, 50, 255), width=2)
+                draw.rectangle(
+                    [cheek_x, cheek_y, cheek_x + 60, cheek_y + 22],
+                    fill=(225, 175, 130, 255),
+                    outline=(120, 80, 50, 255),
+                    width=2,
+                )
 
-            # Foreground props and hands
+            # 6. Foreground props and hands
             _draw_props_and_hands(draw, spec, skin_tone, y_shift=y_shift)
             return True
     except Exception as exc:
@@ -2313,6 +2752,44 @@ def spec_hash(spec: WojakSpec) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+REMOTE_ASSETS_ENV = "AUTOSHORTS_WOJAK_REMOTE_ASSETS"
+REMOTE_TMP_DIR: Path = Path(__file__).resolve().parents[3] / "work" / "wojak_remote_tmp"
+
+
+def purge_remote_tmp() -> None:
+    """Delete every temporary Drive-derived character image from this run."""
+    import shutil
+
+    shutil.rmtree(REMOTE_TMP_DIR, ignore_errors=True)
+
+
+def _remote_character_png(spec: WojakSpec) -> Path | None:
+    """Fetch one Wojak for this scene from the public Drive folders, then purge the download.
+
+    Only the derived character PNG is kept, under ``REMOTE_TMP_DIR``, until the render finishes.
+    Returns None when remote fetching is disabled, no category matches, or the fetch fails.
+    """
+    if os.getenv(REMOTE_ASSETS_ENV, "1").lower() not in ("1", "true", "yes"):
+        return None
+    category = category_from_context(spec.expression, None, spec.gender, spec.build)
+    if category is None:
+        return None
+    REMOTE_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    with temporary_wojak_asset(category, temp_root=REMOTE_TMP_DIR) as asset:
+        if asset is None:
+            return None
+        try:
+            img = load_library_character(asset)
+        except Exception as exc:
+            logger.info("Remote Wojak could not be decoded: %s", exc)
+            return None
+        out = (
+            REMOTE_TMP_DIR / f"remote_{spec_hash(spec)}_{os.getpid()}_{random.randrange(10**9)}.png"
+        )
+        img.save(out, format="PNG")
+        return out
+
+
 def wojak_for_context(
     country: str,
     setting: str,
@@ -2322,7 +2799,8 @@ def wojak_for_context(
     race: str | None = None,
     **kwargs: Any,
 ) -> Path:
-    """Generate or retrieve cached Wojak PNG file for the given context."""
+    """Return a cached PNG for the context: a matching library image if one exists, else the
+    procedural drawing."""
     spec = spec_from_country_and_context(
         country=country,
         setting=setting,
@@ -2332,9 +2810,20 @@ def wojak_for_context(
         race=race,
         **kwargs,
     )
+    remote = _remote_character_png(spec)
+    if remote is not None:
+        return remote
     CHARACTERS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     out_path = CHARACTERS_CACHE_DIR / f"wojak_{spec_hash(spec)}.png"
     if not out_path.exists():
-        img = draw_wojak(spec)
+        img = resolve_character_image(
+            expression=spec.expression,
+            gender=spec.gender,
+            race=spec.race,
+            age=spec.age,
+            archetype=archetype_from_expression(spec.expression),
+            seed=spec.seed,
+            spec=lambda: draw_wojak(spec),
+        )
         img.save(out_path, format="PNG")
     return out_path

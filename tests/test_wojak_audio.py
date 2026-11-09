@@ -1,6 +1,7 @@
 """Unit tests for Wojak comedic audio synthesis and mastering."""
 
 from pathlib import Path
+
 import numpy as np
 
 from autoshorts.longform.wojak_audio import (
@@ -44,7 +45,9 @@ def test_sfx_generators():
 
 def test_wav_read_write(tmp_path: Path):
     wav_path = tmp_path / "test_io.wav"
-    samples = np.sin(2.0 * np.pi * 440.0 * np.linspace(0, 0.5, int(SAMPLE_RATE * 0.5), endpoint=False)).astype(np.float32)
+    samples = np.sin(
+        2.0 * np.pi * 440.0 * np.linspace(0, 0.5, int(SAMPLE_RATE * 0.5), endpoint=False)
+    ).astype(np.float32)
     saved_path = write_wav(wav_path, samples, sr=SAMPLE_RATE)
     assert saved_path.is_file()
 

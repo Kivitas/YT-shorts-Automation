@@ -1,6 +1,5 @@
 """Unit tests for pure-PIL 16:9 Wojak Compositor (SapX style)."""
 
-import pytest
 from PIL import Image
 
 from autoshorts.longform.wojak_compositor import (

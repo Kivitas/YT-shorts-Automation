@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import types
 import wave
 from pathlib import Path
@@ -15,33 +14,33 @@ from autoshorts import cli
 from autoshorts.longform.wojak_shorts import (
     CARD_MAX_HEIGHT,
     CARD_Y0,
-    COLOR_BLACK,
     COLOR_WHITE,
     DISCLAIMER_DURATION,
     HEADER_HEIGHT,
+    KINETIC_CENTER_Y,
     SAFE_BOTTOM_OVERLAY,
     SAFE_LEFT,
     SAFE_RIGHT,
     SAFE_WIDTH,
     SHORTS_HEIGHT,
     SHORTS_WIDTH,
-    WojakShortsConfig,
     WojakShortsSegment,
     assemble_shorts_audio,
+    build_shorts_remotion_plan,
     build_wojak_shorts_script,
-    create_soft_drop_shadow,
-    draw_country_header_banner,
+    draw_country_header_badge,
+    draw_kinetic_subtitles,
     fit_punchline,
+    get_kinetic_burst_layer,
     make_shorts_thumbnail,
     render_shorts_country_frame,
     render_shorts_disclaimer_frame,
-    render_wojak_shorts_video,
+    split_into_bursts,
     synth_bouncy_meme_bgm,
     synth_cash_register,
     synth_flatline,
-    synth_record_scratch,
+    write_record_scratch_sfx,
 )
-
 
 # ============================================================================
 # 1. Format & Vertical Geometry Tests
@@ -155,7 +154,7 @@ def test_synth_flatline(tmp_path: Path) -> None:
 
 def test_synth_record_scratch(tmp_path: Path) -> None:
     out = tmp_path / "scratch.wav"
-    synth_record_scratch(out, duration=0.45)
+    write_record_scratch_sfx(out, duration=0.45)
     assert out.is_file()
     with wave.open(str(out), "rb") as w:
         assert w.getframerate() == 48000
@@ -174,7 +173,9 @@ def test_synth_bouncy_meme_bgm(tmp_path: Path) -> None:
 
 def test_assemble_shorts_audio(tmp_path: Path) -> None:
     segs = [
-        WojakShortsSegment(country="USA", caption="Bill: $100K", sfx_cue="cash_register", duration=4.0),
+        WojakShortsSegment(
+            country="USA", caption="Bill: $100K", sfx_cue="cash_register", duration=4.0
+        ),
         WojakShortsSegment(country="UK", caption="Wait: 5 years", sfx_cue="flatline", duration=4.0),
     ]
     total_dur = DISCLAIMER_DURATION + 8.0
@@ -234,7 +235,9 @@ def test_parser_accepts_aspect_ratio_and_shorts_flags() -> None:
     assert args3.segments == 8
 
 
-def test_cmd_longform_routes_to_wojak_shorts(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cmd_longform_routes_to_wojak_shorts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     mock_render = MagicMock()
     mock_render.return_value = types.SimpleNamespace(
         title="Test Shorts Title",
@@ -255,7 +258,9 @@ def test_cmd_longform_routes_to_wojak_shorts(monkeypatch: pytest.MonkeyPatch, ca
     assert "Duration: 32.5s" in out
 
 
-def test_cmd_longform_default_maintains_16_9(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cmd_longform_default_maintains_16_9(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     mock_render_lf = MagicMock()
     mock_render_lf.return_value = types.SimpleNamespace(
         title="Standard Longform",
@@ -273,3 +278,137 @@ def test_cmd_longform_default_maintains_16_9(monkeypatch: pytest.MonkeyPatch, ca
     out = capsys.readouterr().out
     assert "Standard Longform" in out
     assert "Aspect Ratio: 9:16" not in out
+
+
+# ============================================================================
+# 5. Kinetic Subtitles, Badges & Remotion Tests
+# ============================================================================
+
+
+def test_split_into_bursts_chunking() -> None:
+    caption = "Free emergency hospital band-aid: $84,200. Ambulance ride: mortgage house."
+    bursts = split_into_bursts(caption, words_per_burst=2)
+    assert len(bursts) > 0
+    for b in bursts:
+        assert 1 <= len(b) <= 2
+    total_words = sum(len(b) for b in bursts)
+    assert total_words == len(caption.strip().split())
+
+
+def test_get_kinetic_burst_layer() -> None:
+    words = ("AMBULANCE", "RIDE")
+    layer, lw, lh = get_kinetic_burst_layer(words, font_size=84)
+    assert layer.mode == "RGBA"
+    assert lw > 0
+    assert lh > 0
+    assert layer.width >= lw
+    assert layer.height >= lh
+
+
+def test_draw_kinetic_subtitles_on_canvas() -> None:
+    canvas = Image.new("RGB", (SHORTS_WIDTH, SHORTS_HEIGHT), (0, 0, 0))
+    caption = "EMERGENCY ROOM"
+    draw_kinetic_subtitles(
+        canvas,
+        caption=caption,
+        duration=4.0,
+        t_seg=0.1,
+        words_per_burst=2,
+        font_size=84,
+        center_y=KINETIC_CENTER_Y,
+    )
+    # Verify non-black pixels exist around center_y
+    modified = False
+    for y in range(KINETIC_CENTER_Y - 50, KINETIC_CENTER_Y + 50, 10):
+        for x in range(SAFE_LEFT, SAFE_RIGHT, 20):
+            if canvas.getpixel((x, y)) != (0, 0, 0):
+                modified = True
+                break
+        if modified:
+            break
+    assert modified is True
+
+
+def test_draw_country_header_badge() -> None:
+    canvas = Image.new("RGB", (SHORTS_WIDTH, SHORTS_HEIGHT), (0, 0, 0))
+    draw_country_header_badge(canvas, country="USA", flag="🇺🇸")
+    # Header zone is top 150px
+    assert canvas.getpixel((20, 20)) == COLOR_WHITE
+    assert canvas.getpixel((SHORTS_WIDTH - 20, 20)) == COLOR_WHITE
+    # Pill badge container has subtle background and dark text inside
+    mid_pixel = canvas.getpixel((SHORTS_WIDTH // 2, HEADER_HEIGHT // 2))
+    assert mid_pixel != (0, 0, 0)
+
+
+def test_build_shorts_remotion_plan(tmp_path: Path) -> None:
+    segs = [
+        WojakShortsSegment(
+            country="USA",
+            caption="Bill: $100K. Sold kidney.",
+            sfx_cue="cash_register",
+            duration=4.0,
+        ),
+        WojakShortsSegment(
+            country="UK",
+            caption="Wait 5 years for paracetamol.",
+            sfx_cue="flatline",
+            duration=4.0,
+        ),
+    ]
+    plan_path = tmp_path / "caption_plan.json"
+    result_path = build_shorts_remotion_plan(
+        segments=segs,
+        output_plan_path=plan_path,
+        words_per_burst=2,
+        font_size=84,
+    )
+    assert result_path.is_file()
+    import json
+
+    with open(result_path, encoding="utf-8") as f:
+        data = json.load(f)
+    assert "words" in data
+    assert len(data["words"]) > 0
+    assert data["wordsPerPage"] == 2
+    assert data["fontSize"] == 84
+    assert data["fps"] == 30
+    assert data["durationSec"] == DISCLAIMER_DURATION + 8.0
+
+
+def test_cmd_longform_passes_kinetic_subtitle_flags(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mock_render = MagicMock()
+    mock_render.return_value = types.SimpleNamespace(
+        title="Test Shorts Kinetic",
+        video_path=Path("out/shorts_video.mp4"),
+        thumbnail_path=Path("out/shorts_thumb.png"),
+        duration=30.0,
+    )
+    monkeypatch.setattr("autoshorts.longform.wojak_shorts.render_wojak_shorts_video", mock_render)
+
+    args = cli.build_parser().parse_args(
+        [
+            "longform",
+            "--topic",
+            "hospital",
+            "--shorts",
+            "--subtitles",
+            "kinetic",
+            "--words-per-burst",
+            "2",
+            "--font-size",
+            "84",
+            "--render-method",
+            "ffmpeg",
+        ]
+    )
+    rc = cli.cmd_longform(args, MagicMock(), MagicMock())
+
+    assert rc == 0
+    mock_render.assert_called_once()
+    _, kwargs = mock_render.call_args
+    assert kwargs.get("subtitle_mode") == "kinetic"
+    assert kwargs.get("words_per_burst") == 2
+    assert kwargs.get("font_size") == 84
+    assert kwargs.get("render_method") == "ffmpeg"

@@ -1,0 +1,29 @@
+# AutoShorts dependencies used by start.bat / start.sh (core).
+# SOURCE OF TRUTH: pyproject.toml [project].dependencies. Keep these two lists in sync
+# when adding or changing a dependency.
+yt-dlp>=2024.10.7
+pillow>=11.0.0
+youtube-transcript-api>=0.6.2
+google-api-python-client>=2.149.0
+google-auth-oauthlib>=1.2.1
+google-genai>=0.1.1
+httpx>=0.27.2
+fastapi>=0.115.0
+uvicorn>=0.31.0
+pydantic>=2.9.2
+pydantic-settings>=2.5.2
+pyyaml>=6.0.2
+send2trash>=1.8.3
+tzdata>=2024.1
+jinja2>=3.1.4
+python-multipart>=0.0.12
+playwright>=1.49.0
+imageio-ffmpeg>=0.5.0
+edge-tts>=7.0.0
+faster-whisper>=1.0.3
+av>=15,<19
+opencv-python-headless>=4.9.0,<5
+
+# Still imported by src: torch (media/compositor.py), scipy (analytics/forecasting.py).
+torch>=2.1.0
+scipy>=1.11.0

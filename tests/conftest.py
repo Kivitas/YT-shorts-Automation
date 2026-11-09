@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from autoshorts.pipeline import ShortsPipeline
+
+os.environ.setdefault("AUTOSHORTS_WOJAK_REMOTE_ASSETS", "0")
 
 
 @pytest.fixture(autouse=True)

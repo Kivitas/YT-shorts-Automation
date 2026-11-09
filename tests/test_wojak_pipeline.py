@@ -69,3 +69,22 @@ def test_cli_cmd_wojak(tmp_path: Path):
     exit_code = cmd_wojak(args, config, sm)
     assert exit_code == 0
     assert (tmp_path / "cli_test" / "wojak_longform.mp4").is_file()
+
+
+def test_auto_research_and_improver_pipeline(tmp_path: Path):
+    """Verify that omitting scenes and script automatically triggers the viral researcher & improver."""
+    cfg = WojakPipelineConfig(
+        topic="introverts",
+        scenes=[],
+        script=None,
+        fps=15,
+        disclaimer_duration=0.5,
+        scene_duration=0.5,
+        output_dir=tmp_path / "auto_research",
+        generate_thumbnail=False,
+    )
+    result = run_wojak_pipeline(cfg)
+    assert result.video_path.is_file()
+    assert "Introverts" in result.title
+    assert result.scene_count > 0
+    assert result.duration_sec > 0

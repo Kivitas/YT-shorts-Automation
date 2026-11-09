@@ -152,6 +152,14 @@
         <span class="tab-title">YouTube Shorts Analytics</span>
         <span class="tab-badge kpi-badge" id="analytics-tab-badge">LIVE</span>
       </button>
+      <button type="button" class="view-tab-btn" id="tab-btn-wojak" data-view="view-wojak" onclick="switchMainView('view-wojak')" role="tab" aria-selected="false">
+        <span class="tab-icon">
+          <svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+        </span>
+        <span class="tab-title">🎭 Wojak Studio</span>
+        <span class="tab-badge" style="background:#f59e0b;color:#000;font-weight:700;">VIRAL</span>
+      </button>
+
     </nav>
 
     <!-- ===================================================================== -->
@@ -988,8 +996,8 @@
               <button id="process-queue-btn" class="btn btn-secondary btn-xs" onclick="processQueueNow()" title="Process queued jobs immediately with parallel workers">
                 ⚡ Process Queue Now
               </button>
-              <button id="batch-retry-btn" class="btn btn-secondary btn-xs" onclick="batchRetryFailed()" title="Retry all failed jobs">
-                🔄 Retry Failed
+              <button id="batch-retry-btn" class="btn btn-warning btn-xs" onclick="batchRetryFailed()" title="Retry all failed jobs and failed scheduled uploads">
+                🔄 Retry All Failed (Uploads & Jobs)
               </button>
               <button id="batch-clean-btn" class="btn btn-secondary btn-xs" onclick="batchCleanCompleted()" title="Clean completed job files">
                 🧹 Clean Completed
@@ -1741,7 +1749,145 @@
     </div>
   </div>
 
-  <!-- Stage Inspection Modal -->
+      <!-- ===================================================================== -->
+    <!-- VIEW 5: 🎭 Wojak Meme Studio (SapX & Wojak Explainer Engine)         -->
+    <!-- ===================================================================== -->
+    <div id="view-wojak" class="main-view-container" style="display: none;">
+      <section class="card" style="margin-bottom: 20px; border-top: 4px solid #f59e0b;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+          <div>
+            <h2 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+              🎭 Wojak Meme Studio
+              <span class="badge" style="background:#f59e0b; color:#000; font-size:12px; font-weight:700;">VIRAL ENGINE</span>
+            </h2>
+            <p style="margin: 4px 0 0 0; color: var(--color-text-muted); font-size: 13px;">
+              Create viral country parodies (SapX 16:9) and archetype anthologies (@Wojak-Explainer 9:16 Shorts) with dynamic diversity, authentic hand-drawn Wojaks, and country-specific architectural sets.
+            </p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="researchWojakIdeas()">
+              🔍 Research Viral Ideas
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="improveWojakDeck()" style="border-color: #10b981; color: #10b981;">
+              ⚡ AI Improver &amp; Diversity
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="generateWojakVideoNow()" style="background: #f59e0b; border-color: #d97706; color: #000; font-weight: 700;">
+              🎬 Generate Wojak Video
+            </button>
+          </div>
+        </div>
+
+        <!-- Controls Bar -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; background: var(--color-surface-elevated, #1e222d); padding: 14px; border-radius: 8px; margin-bottom: 16px;">
+          <div>
+            <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--color-text-muted);">Aspect Ratio / Format</label>
+            <select id="wojak-aspect-ratio" class="form-control" onchange="onWojakAspectChanged()" style="width: 100%; margin-top: 4px;">
+              <option value="16:9">16:9 Landscape (Longform 2.5m - SapX Style)</option>
+              <option value="9:16">9:16 Shorts (YouTube Shorts 30-45s - Wojak Explainer)</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--color-text-muted);">Topic / Premise</label>
+            <select id="wojak-topic-preset" class="form-control" onchange="onWojakPresetSelected()" style="width: 100%; margin-top: 4px;">
+              <option value="hospital">Every Country's Hospital Bill (hospital)</option>
+              <option value="transport">Every Country's Public Transport (transport)</option>
+              <option value="school">Every Country's High School Lunch (school)</option>
+              <option value="introverts">Types of Introverts Be Like (introverts)</option>
+              <option value="gym">Types of Gym Members Be Like (gym)</option>
+              <option value="generations">Every Generation In A Nutshell (generations)</option>
+              <option value="coders">Types of Developers Be Like (coders)</option>
+              <option value="students">Types of Students During Exams (students)</option>
+              <option value="drivers">Types of Drivers On The Road (drivers)</option>
+              <option value="music">Types of Music Listeners (music)</option>
+              <option value="dating">Types of Dating Profiles (dating)</option>
+              <option value="workers">Types of Office Workers (workers)</option>
+              <option value="gamers">Types of Gamers Be Like (gamers)</option>
+              <option value="custom">Custom / Procedural Topic...</option>
+            </select>
+          </div>
+          <div id="wojak-custom-topic-wrap" style="display: none;">
+            <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--color-text-muted);">Custom Topic</label>
+            <input type="text" id="wojak-custom-topic-input" class="form-control" placeholder="e.g. Gamers, Roommates, Fast Food" style="width: 100%; margin-top: 4px;" />
+          </div>
+          <div>
+            <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--color-text-muted);">Scene Count</label>
+            <input type="number" id="wojak-scene-count" class="form-control" min="3" max="15" value="6" style="width: 100%; margin-top: 4px;" />
+          </div>
+        </div>
+
+        <!-- AI Improver Insights Box -->
+        <div id="wojak-improver-banner" style="display: none; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+          <div style="font-weight: 600; color: #10b981; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+            <span>✨ AI Improver Optimization Complete</span>
+            <span id="wojak-diversity-badge" class="badge" style="background: #10b981; color: #fff;">Diversity: 100%</span>
+            <span id="wojak-pacing-badge" class="badge" style="background: #3b82f6; color: #fff;">Timing: Optimized</span>
+          </div>
+          <ul id="wojak-improvements-list" style="margin: 0; padding-left: 20px; font-size: 12px; color: var(--color-text-muted);"></ul>
+        </div>
+
+        <!-- Layout: Scenes Editor + Live Character Preview -->
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 18px; align-items: start;">
+          <!-- Scenes Table -->
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h3 style="margin: 0; font-size: 15px;">Scene Sequence &amp; Cultural Cards</h3>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addWojakSceneRow()">+ Add Scene</button>
+            </div>
+            <div style="overflow-x: auto; max-height: 520px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 6px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                  <tr style="background: var(--color-surface-elevated, #1e222d); text-align: left; border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 8px 10px;">#</th>
+                    <th style="padding: 8px 10px;">Heading / Country</th>
+                    <th style="padding: 8px 10px;">Punchline (&lt;120 chars)</th>
+                    <th style="padding: 8px 10px;">Gender / Race</th>
+                    <th style="padding: 8px 10px;">Height</th>
+                    <th style="padding: 8px 10px;">Emotion</th>
+                    <th style="padding: 8px 10px;">Prop</th>
+                    <th style="padding: 8px 10px;">Side</th>
+                    <th style="padding: 8px 10px;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="wojak-scenes-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Character Live Preview Card -->
+          <div class="card" style="background: var(--color-surface-elevated, #1e222d); border-radius: 8px; padding: 14px; text-align: center;">
+            <h4 style="margin: 0 0 10px 0; font-size: 14px;">Live Character Preview</h4>
+            <div style="background: rgba(0,0,0,0.25); border: 1px dashed var(--color-border); border-radius: 8px; min-height: 280px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;">
+              <img id="wojak-char-preview-img" src="/api/wojak/character/preview?country=USA&expression=crying&prop=usa_bill&clothing=hospital_gown" alt="Wojak Preview" style="max-height: 280px; width: auto; object-fit: contain;" />
+            </div>
+            <div id="wojak-char-preview-label" style="font-size: 12px; margin-top: 8px; font-weight: 600; color: #f59e0b;">USA (Crying, Tall Fair Male)</div>
+            <div style="display: flex; gap: 6px; justify-content: center; margin-top: 10px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="refreshSelectedCharPreview()">🔄 Refresh</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generation Progress / Output Player -->
+        <div id="wojak-generation-output" style="display: none; margin-top: 20px; padding: 16px; background: var(--color-surface-elevated, #1e222d); border-radius: 8px;">
+          <h3 style="margin: 0 0 10px 0; display: flex; align-items: center; gap: 8px;">
+            <span>🎉 Rendered Video Ready</span>
+            <span id="wojak-output-fps-badge" class="badge" style="background: #10b981; color: #fff;"></span>
+          </h3>
+          <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 300px; max-width: 640px;">
+              <video id="wojak-output-video-player" controls autoplay loop style="width: 100%; border-radius: 6px; background: #000;"></video>
+            </div>
+            <div style="flex: 1; min-width: 240px;">
+              <div id="wojak-output-metrics" style="font-size: 13px; line-height: 1.8; color: var(--color-text-muted);"></div>
+              <div style="margin-top: 14px;">
+                <a id="wojak-output-download-btn" href="#" download class="btn btn-primary btn-sm" style="display: inline-block;">⬇️ Download Video</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+<!-- Stage Inspection Modal -->
   <div id="stage-modal" class="modal-backdrop" onclick="closeStageModal(event)">
     <div class="modal-content modal-lg" onclick="event.stopPropagation()">
       <div class="modal-header">
@@ -1852,9 +1998,14 @@
               </div>
               <div class="control-group">
                 <label>Direct OAuth Authorization:</label>
-                <button type="button" id="yt-oauth-authorize-btn" class="btn btn-primary btn-sm" onclick="triggerYouTubeOAuth()">
-                  🔗 Authorize YouTube Account (OAuth 2.0)
-                </button>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                  <button type="button" id="yt-oauth-authorize-btn" class="btn btn-primary btn-sm" onclick="triggerYouTubeOAuth()">
+                    🔗 Authorize YouTube Account (OAuth 2.0)
+                  </button>
+                  <button type="button" id="yt-oauth-reapprove-btn" class="btn btn-warning btn-sm" onclick="triggerYouTubeOAuth()" title="Click to immediately re-approve or refresh your YouTube OAuth token">
+                    🔄 Re-Approve YouTube OAuth
+                  </button>
+                </div>
               </div>
             </div>
 

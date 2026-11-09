@@ -1,6 +1,7 @@
 """Unit tests for Wojak backgrounds module."""
 
 from pathlib import Path
+
 from PIL import Image
 
 from autoshorts.longform.wojak_backgrounds import (

@@ -14,12 +14,7 @@ Provides:
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import math
-import os
-import random
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -129,6 +124,299 @@ def _add_subtle_grain(img: Image.Image, intensity: float = 0.035) -> Image.Image
     return Image.fromarray(noisy)
 
 
+def _draw_country_specific_elements(
+    draw: ImageDraw.ImageDraw,
+    slug: str,
+    wall_h: int,
+    floor_h: int,
+    width: int,
+    height: int,
+) -> None:
+    """Render authentic, instantly identifiable architectural set-pieces for each country."""
+    # 1. USA: Luxury Marble Reception Desk with Billing POS Terminal
+    if any(k in slug for k in ("usa", "united_states", "america")):
+        desk_w = int(width * 0.28)
+        desk_h = int(floor_h * 0.55)
+        desk_x = width - desk_w - 40
+        desk_y = wall_h - 20
+        # Marble reception desk with gold trim
+        draw.rectangle(
+            [(desk_x, desk_y), (desk_x + desk_w, desk_y + desk_h)],
+            fill=(240, 238, 242),
+            outline=(180, 160, 130),
+            width=3,
+        )
+        draw.line(
+            [(desk_x, desk_y + 12), (desk_x + desk_w, desk_y + 12)], fill=(212, 175, 55), width=3
+        )
+        # Digital Billing Kiosk terminal
+        pos_x = desk_x + 30
+        pos_y = desk_y - 70
+        draw.rectangle(
+            [(pos_x, pos_y), (pos_x + 85, desk_y)], fill=(30, 35, 45), outline=(60, 65, 80), width=2
+        )
+        draw.rectangle(
+            [(pos_x + 8, pos_y + 8), (pos_x + 77, pos_y + 45)], fill=(16, 185, 129)
+        )  # Green screen
+        draw.text((pos_x + 14, pos_y + 16), "PAY BILL", fill=(255, 255, 255))
+        draw.text((pos_x + 10, pos_y + 28), "$148,920", fill=(255, 255, 255))
+
+    # 2. UK: NHS Waiting Queue Ticker Sign + NHS Gurney Trolley
+    elif any(k in slug for k in ("uk", "united_kingdom", "britain", "england", "scotland")):
+        # Overhead digital LED ticker
+        ticker_w = int(width * 0.35)
+        ticker_x = (width - ticker_w) // 2
+        ticker_y = 75
+        draw.rectangle(
+            [(ticker_x, ticker_y), (ticker_x + ticker_w, ticker_y + 48)],
+            fill=(15, 15, 20),
+            outline=(50, 55, 65),
+            width=3,
+        )
+        # Red LED text
+        draw.text(
+            (ticker_x + 18, ticker_y + 14),
+            "NHS A&E WAIT: 418 MINS  |  TROLLEY QUEUE: 42",
+            fill=(239, 68, 68),
+        )
+        # Parked NHS gurney trolley against left wall
+        tr_x0, tr_y0 = 60, wall_h - 40
+        tr_w, tr_h = 220, 110
+        draw.rectangle(
+            [(tr_x0, tr_y0 + 20), (tr_x0 + tr_w, tr_y0 + 45)],
+            fill=(14, 116, 144),
+            outline=(100, 116, 139),
+            width=2,
+        )  # Blue NHS mattress
+        draw.line(
+            [(tr_x0 + 15, tr_y0 + 45), (tr_x0 + 15, tr_y0 + tr_h)], fill=(148, 163, 184), width=4
+        )
+        draw.line(
+            [(tr_x0 + tr_w - 15, tr_y0 + 45), (tr_x0 + tr_w - 15, tr_y0 + tr_h)],
+            fill=(148, 163, 184),
+            width=4,
+        )
+        draw.ellipse(
+            [(tr_x0 + 8, tr_y0 + tr_h - 10), (tr_x0 + 22, tr_y0 + tr_h + 4)], fill=(51, 65, 85)
+        )
+        draw.ellipse(
+            [(tr_x0 + tr_w - 22, tr_y0 + tr_h - 10), (tr_x0 + tr_w - 8, tr_y0 + tr_h + 4)],
+            fill=(51, 65, 85),
+        )
+
+    # 3. South Korea: Gangnam Aesthetic Plastic Surgery Neon & Mirrors
+    elif any(k in slug for k in ("korea", "south_korea")):
+        # Ambient Purple / Pink Neon Wall Glow
+        draw.line([(0, wall_h - 180), (width, wall_h - 180)], fill=(217, 70, 239, 180), width=6)
+        draw.line([(0, wall_h - 184), (width, wall_h - 184)], fill=(244, 114, 182, 120), width=12)
+        # Vanity Ring Light Mirror on left wall
+        mir_x, mir_y = 120, wall_h - 320
+        draw.ellipse(
+            [(mir_x, mir_y), (mir_x + 160, mir_y + 240)],
+            fill=(248, 250, 252),
+            outline=(217, 70, 239),
+            width=8,
+        )
+        draw.ellipse(
+            [(mir_x + 10, mir_y + 10), (mir_x + 150, mir_y + 230)], outline=(255, 255, 255), width=4
+        )
+        # Gangnam aesthetic clinic cursive logo plaque
+        draw.rectangle(
+            [(width - 280, wall_h - 260), (width - 60, wall_h - 200)],
+            fill=(255, 255, 255, 220),
+            outline=(236, 72, 153),
+            width=2,
+        )
+        draw.text((width - 265, wall_h - 240), "GANGNAM BEAUTY CLINIC", fill=(219, 39, 119))
+
+    # 4. India: Ceiling Fans & Sunny Arched Windows
+    elif "india" in slug:
+        # High arched sunlit window with tropical yellow sunlight
+        win_x = width - 320
+        win_y = wall_h - 340
+        draw.polygon(
+            [
+                (win_x, win_y + 60),
+                (win_x + 90, win_y),
+                (win_x + 180, win_y + 60),
+                (win_x + 180, wall_h - 40),
+                (win_x, wall_h - 40),
+            ],
+            fill=(254, 240, 138),
+            outline=(180, 140, 70),
+            width=3,
+        )
+        # Open sky with sunbeam
+        draw.polygon(
+            [
+                (win_x + 20, win_y + 60),
+                (win_x + 160, win_y + 60),
+                (win_x + 260, height),
+                (win_x - 80, height),
+            ],
+            fill=(255, 255, 200, 25),
+        )
+        # 3-Blade Ceiling Fan hanging overhead
+        fan_cx, fan_cy = int(width * 0.35), 90
+        draw.line([(fan_cx, 0), (fan_cx, fan_cy)], fill=(50, 50, 55), width=5)
+        draw.ellipse([(fan_cx - 16, fan_cy - 12), (fan_cx + 16, fan_cy + 12)], fill=(40, 42, 48))
+        # Fan blades
+        draw.polygon(
+            [(fan_cx - 10, fan_cy), (fan_cx - 110, fan_cy - 15), (fan_cx - 105, fan_cy + 15)],
+            fill=(60, 65, 75),
+        )
+        draw.polygon(
+            [(fan_cx + 10, fan_cy), (fan_cx + 110, fan_cy - 10), (fan_cx + 105, fan_cy + 20)],
+            fill=(60, 65, 75),
+        )
+        draw.polygon(
+            [(fan_cx, fan_cy + 10), (fan_cx - 20, fan_cy + 95), (fan_cx + 15, fan_cy + 95)],
+            fill=(60, 65, 75),
+        )
+
+    # 5. Canada: Snowy Panoramic Window & Bilingual Emergency Sign
+    elif "canada" in slug:
+        # Large winter window with snow
+        win_w, win_h = 360, 220
+        win_x, win_y = 100, wall_h - 300
+        draw.rectangle(
+            [(win_x, win_y), (win_x + win_w, win_y + win_h)],
+            fill=(203, 213, 225),
+            outline=(100, 116, 139),
+            width=4,
+        )
+        draw.line(
+            [(win_x + win_w // 2, win_y), (win_x + win_w // 2, win_y + win_h)],
+            fill=(100, 116, 139),
+            width=3,
+        )
+        # Pine tree silhouettes outside
+        draw.polygon(
+            [
+                (win_x + 80, win_y + win_h - 20),
+                (win_x + 110, win_y + 60),
+                (win_x + 140, win_y + win_h - 20),
+            ],
+            fill=(71, 85, 105),
+        )
+        draw.polygon(
+            [
+                (win_x + 220, win_y + win_h - 20),
+                (win_x + 250, win_y + 40),
+                (win_x + 280, win_y + win_h - 20),
+            ],
+            fill=(71, 85, 105),
+        )
+        # Snowflakes on pane
+        for sx, sy in [
+            (win_x + 40, win_y + 40),
+            (win_x + 180, win_y + 90),
+            (win_x + 300, win_y + 50),
+            (win_x + 130, win_y + 140),
+        ]:
+            draw.ellipse([(sx - 4, sy - 4), (sx + 4, sy + 4)], fill=(255, 255, 255))
+        # Bilingual Urgence / Emergency sign
+        sign_x = width - 360
+        draw.rectangle(
+            [(sign_x, 80), (sign_x + 280, 130)],
+            fill=(220, 38, 38),
+            outline=(255, 255, 255),
+            width=2,
+        )
+        draw.text((sign_x + 20, 95), "URGENCE / EMERGENCY →", fill=(255, 255, 255))
+
+    # 6. Germany: Filing Cabinets & DIN Stamped Forms
+    elif "germany" in slug:
+        # Multi-drawer steel filing cabinet on right
+        cab_x, cab_y = width - 260, wall_h - 280
+        cab_w, cab_h = 180, 260
+        draw.rectangle(
+            [(cab_x, cab_y), (cab_x + cab_w, cab_y + cab_h)],
+            fill=(100, 116, 139),
+            outline=(51, 65, 85),
+            width=3,
+        )
+        for d in range(4):
+            dy = cab_y + d * 62 + 6
+            draw.rectangle(
+                [(cab_x + 8, dy), (cab_x + cab_w - 8, dy + 52)],
+                fill=(148, 163, 184),
+                outline=(71, 85, 105),
+                width=1,
+            )
+            # Handle and label card
+            draw.rectangle([(cab_x + 30, dy + 16), (cab_x + 70, dy + 34)], fill=(255, 255, 255))
+            draw.line([(cab_x + 110, dy + 25), (cab_x + 150, dy + 25)], fill=(30, 41, 59), width=3)
+        # DIN 5008 official stamp on left notice board
+        board_x, board_y = 120, wall_h - 250
+        draw.rectangle(
+            [(board_x, board_y), (board_x + 140, board_y + 180)],
+            fill=(217, 119, 6),
+            outline=(120, 53, 15),
+            width=3,
+        )
+        draw.rectangle(
+            [(board_x + 20, board_y + 20), (board_x + 120, board_y + 150)], fill=(254, 252, 232)
+        )
+        draw.ellipse(
+            [(board_x + 40, board_y + 60), (board_x + 100, board_y + 110)],
+            outline=(220, 38, 38),
+            width=3,
+        )
+        draw.text((board_x + 46, board_y + 78), "GENEHMIGT", fill=(220, 38, 38))
+
+    # 7. Italy: Terracotta Arches & Espresso Machine Cart
+    elif "italy" in slug:
+        # Terracotta arched door border
+        arch_x = 180
+        draw.arc(
+            [arch_x, wall_h - 320, arch_x + 200, wall_h - 120],
+            start=180,
+            end=0,
+            fill=(180, 83, 9),
+            width=8,
+        )
+        # Espresso utility cart on right
+        cart_x, cart_y = width - 240, wall_h - 30
+        draw.rectangle(
+            [(cart_x, cart_y), (cart_x + 140, cart_y + 90)],
+            fill=(203, 213, 225),
+            outline=(71, 85, 105),
+            width=2,
+        )
+        # Italian Moka pot
+        pot_x, pot_y = cart_x + 40, cart_y - 45
+        draw.polygon(
+            [
+                (pot_x, pot_y + 35),
+                (pot_x + 10, pot_y),
+                (pot_x + 35, pot_y),
+                (pot_x + 45, pot_y + 35),
+            ],
+            fill=(148, 163, 184),
+            outline=(51, 65, 85),
+        )
+        draw.line([(pot_x + 45, pot_y + 10), (pot_x + 55, pot_y + 25)], fill=(30, 41, 59), width=3)
+
+    # 8. Sweden: Blonde Wood Slats & Queue Ticket Kiosk
+    elif "sweden" in slug:
+        # Scandinavian vertical birch slats on wall
+        for sx in range(60, width - 60, 40):
+            draw.rectangle(
+                [(sx, 40), (sx + 24, wall_h - 20)],
+                fill=(234, 215, 185),
+                outline=(210, 190, 155),
+                width=1,
+            )
+        # Digital Queue Ticket Kiosk
+        k_x, k_y = width - 200, wall_h - 100
+        draw.rectangle(
+            [(k_x, k_y), (k_x + 70, k_y + 160)], fill=(30, 41, 59), outline=(15, 23, 42), width=2
+        )
+        draw.rectangle([(k_x + 10, k_y + 20), (k_x + 60, k_y + 55)], fill=(220, 38, 38))
+        draw.text((k_x + 15, k_y + 30), "NO. 147", fill=(255, 255, 255))
+
+
 def render_procedural_hospital(
     country: str,
     width: int = WIDTH,
@@ -215,16 +503,24 @@ def render_procedural_hospital(
         )
 
     # 5. Background Medical / Clinic Elements (Doors, Windows, Waiting Chairs, Signage)
-    rng = random.Random(seed + zlib_crc(slug))
 
     # Doorways in background
     door_w = 110
     door_h = 240
     for dx in [240, width - 360]:
         dy0 = wall_h - door_h
-        draw.rectangle([(dx, dy0), (dx + door_w, wall_h)], fill=(230, 234, 240), outline=(160, 168, 178), width=2)
+        draw.rectangle(
+            [(dx, dy0), (dx + door_w, wall_h)],
+            fill=(230, 234, 240),
+            outline=(160, 168, 178),
+            width=2,
+        )
         # Door window pane
-        draw.rectangle([(dx + 25, dy0 + 30), (dx + door_w - 25, dy0 + 100)], fill=(180, 210, 230), outline=(140, 160, 180))
+        draw.rectangle(
+            [(dx + 25, dy0 + 30), (dx + door_w - 25, dy0 + 100)],
+            fill=(180, 210, 230),
+            outline=(140, 160, 180),
+        )
         # Door handle
         draw.rectangle([(dx + 12, dy0 + 125), (dx + 22, dy0 + 132)], fill=(100, 105, 115))
 
@@ -234,6 +530,9 @@ def render_procedural_hospital(
     draw.rectangle([(sign_x, sign_y), (sign_x + 90, sign_y + 36)], fill=palette["accent"])
     draw.rectangle([(sign_x + 40, sign_y + 8), (sign_x + 50, sign_y + 28)], fill=(255, 255, 255))
     draw.rectangle([(sign_x + 30, sign_y + 14), (sign_x + 60, sign_y + 22)], fill=(255, 255, 255))
+
+    # 5b. Authentic Country-Specific Cultural Set Pieces
+    _draw_country_specific_elements(draw, slug, wall_h, floor_h, width, height)
 
     # 6. Subtle Depth-of-Field Lens Blur (keeps background soft so foreground pops)
     blurred = canvas.filter(ImageFilter.GaussianBlur(1.8))
@@ -254,7 +553,6 @@ def render_procedural_school(
     draw = ImageDraw.Draw(canvas)
 
     wall_h = int(height * 0.60)
-    floor_h = height - wall_h
 
     # Wall & Floor
     draw.rectangle([(0, 0), (width, wall_h)], fill=(235, 230, 215))
@@ -268,15 +566,30 @@ def render_procedural_school(
 
     for idx, lx in enumerate(range(120, width - 120, locker_w + 6)):
         c = locker_colors[idx % len(locker_colors)]
-        draw.rectangle([(lx, locker_y), (lx + locker_w, wall_h)], fill=c, outline=(30, 50, 80), width=1)
+        draw.rectangle(
+            [(lx, locker_y), (lx + locker_w, wall_h)], fill=c, outline=(30, 50, 80), width=1
+        )
         # Locker vents & latch
-        draw.line([(lx + 10, locker_y + 20), (lx + locker_w - 10, locker_y + 20)], fill=(20, 30, 50), width=1)
-        draw.line([(lx + 10, locker_y + 28), (lx + locker_w - 10, locker_y + 28)], fill=(20, 30, 50), width=1)
-        draw.rectangle([(lx + locker_w - 14, locker_y + 110), (lx + locker_w - 8, locker_y + 124)], fill=(200, 200, 200))
+        draw.line(
+            [(lx + 10, locker_y + 20), (lx + locker_w - 10, locker_y + 20)],
+            fill=(20, 30, 50),
+            width=1,
+        )
+        draw.line(
+            [(lx + 10, locker_y + 28), (lx + locker_w - 10, locker_y + 28)],
+            fill=(20, 30, 50),
+            width=1,
+        )
+        draw.rectangle(
+            [(lx + locker_w - 14, locker_y + 110), (lx + locker_w - 8, locker_y + 124)],
+            fill=(200, 200, 200),
+        )
 
     # Ceiling and lights
     for lx in range(200, width, 300):
-        draw.rounded_rectangle([(lx, 10), (lx + 140, 38)], radius=4, fill=(255, 255, 240), outline=(200, 200, 190))
+        draw.rounded_rectangle(
+            [(lx, 10), (lx + 140, 38)], radius=4, fill=(255, 255, 240), outline=(200, 200, 190)
+        )
 
     blurred = canvas.filter(ImageFilter.GaussianBlur(1.8))
     return _add_subtle_grain(blurred, intensity=0.025)
@@ -380,7 +693,12 @@ def get_wojak_background(
     elif setting_norm in ("transport", "subway", "train", "metro", "bus", "airport"):
         return render_procedural_transport(country, width, height)
     else:
-        # Default to Hospital / Healthcare
+        # Outdoor / home / rural settings get their own environment; hospital is the default.
+        from autoshorts.longform.wojak_environments import environment_for, render_environment
+
+        env = environment_for(setting_norm, country)
+        if env is not None:
+            return render_environment(env, country, width, height)
         return render_procedural_hospital(country, width, height)
 
 

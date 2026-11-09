@@ -10,20 +10,16 @@ import pytest
 
 from autoshorts.longform import character_composer
 from autoshorts.longform.wojak_script import (
-    VALID_ATTIRES,
     VALID_EXPRESSIONS,
-    VALID_GENDERS,
     VALID_PROPS,
-    VALID_SKIN_TONES,
     WojakLongformScript,
     WojakSegment,
     build_wojak_script,
-    procedural_wojak_script,
 )
 from autoshorts.longform.wojak_topics import (
+    _TOPIC_CATALOGS,
     ASPECT_RATIO,
     CANONICAL_TOPICS,
-    COUNTRY_CATALOG,
     DISCLAIMER_DURATION_SECONDS,
     LANDSCAPE_HEIGHT,
     LANDSCAPE_WIDTH,
@@ -31,20 +27,20 @@ from autoshorts.longform.wojak_topics import (
     MANDATORY_DISCLAIMER_HEADING,
     MAX_COUNTRIES_PER_VIDEO,
     MAX_COUNTRY_DURATION,
+    MAX_PUNCHLINE_CHARS,
     MAX_TOTAL_DURATION,
     MIN_COUNTRIES_PER_VIDEO,
     MIN_COUNTRY_DURATION,
     MIN_TOTAL_DURATION,
+    generate_procedural_joke,
     get_country_meta,
     list_available_countries,
-    list_canonical_topics,
-    normalize_wojak_topic,
 )
-
 
 # ==============================================================================
 # 1. Video Structure & Pacing Constraints Tests
 # ==============================================================================
+
 
 def test_mandatory_disclaimer_card():
     script = build_wojak_script("hospital")
@@ -82,6 +78,7 @@ def test_video_format_and_duration_bounds():
 # ==============================================================================
 # 2. Canonical Topics & Curated Joke Catalogs
 # ==============================================================================
+
 
 @pytest.mark.parametrize("topic_key", CANONICAL_TOPICS)
 def test_all_canonical_topics_generate_valid_scripts(topic_key):
@@ -148,6 +145,7 @@ def test_sapx_viral_hospital_punchlines():
 # 3. Procedural Generation for Arbitrary Topics
 # ==============================================================================
 
+
 def test_procedural_generation_for_custom_topics():
     custom_topics = [
         "Every Country's Coffee Culture Be Like",
@@ -172,6 +170,7 @@ def test_procedural_generation_for_custom_topics():
 # ==============================================================================
 # 4. Structured Data Models & Interoperability
 # ==============================================================================
+
 
 def test_wojak_segment_model():
     seg = WojakSegment(
@@ -256,6 +255,7 @@ def test_summary_output():
 # 5. Validation & Pacing Enforcement
 # ==============================================================================
 
+
 def test_validation_fails_on_out_of_bounds_duration():
     script = build_wojak_script("hospital")
     # Artificially alter segments duration to break bounds
@@ -286,6 +286,7 @@ def test_validation_fails_on_too_few_countries():
 # 6. LLM Generation & Resilience Fallback Tests
 # ==============================================================================
 
+
 class _MockLLMProvider:
     def __init__(self, response_text: str):
         self.response_text = response_text
@@ -297,24 +298,6 @@ class _MockLLMProvider:
 
 
 def test_llm_generation_success(monkeypatch):
-    sample_segments = [
-        {
-            "country": "United States",
-            "country_code": "US",
-            "heading": "USA",
-            "joke_text": "VIP hospital suite costs more than buying a house.",
-            "setting": "luxury lobby",
-            "character_context": {
-                "age": 35,
-                "gender": "male",
-                "race": "fair",
-                "expression": "shocked",
-                "prop": "bill",
-                "attire": "jacket",
-            },
-            "duration": 4.5,
-        }
-    ]
     # Replicate 33 segments for pacing
     countries = list_available_countries()[:33]
     full_segments = []
@@ -379,3 +362,60 @@ def test_llm_failure_falls_back_to_procedural(monkeypatch):
     assert len(script.segments) == 33
     assert "USA" in [s.heading for s in script.segments]
     assert 150.0 <= script.total_duration <= 180.0
+
+
+# ==============================================================================
+# 7. Punchline Brevity (<120 Chars) & Wojak Explainer Tone
+# ==============================================================================
+
+
+def test_all_curated_jokes_strictly_under_120_chars():
+    """Verify that 100% of the 280 curated punchlines in the research catalog are < 120 chars."""
+    oversized = []
+    for topic, catalog in _TOPIC_CATALOGS.items():
+        for country, data in catalog.items():
+            joke = data["joke_text"]
+            if len(joke) >= MAX_PUNCHLINE_CHARS:
+                oversized.append((topic, country, len(joke), joke))
+
+    assert oversized == [], f"Found curated punchlines >= {MAX_PUNCHLINE_CHARS} chars: {oversized}"
+
+
+def test_procedural_generation_punchline_brevity():
+    """Verify that procedural jokes across all topics and countries are < 120 chars."""
+    oversized = []
+    for topic in CANONICAL_TOPICS:
+        for country in list_available_countries():
+            for seed in (1, 42, 100):
+                proc = generate_procedural_joke(topic, country, seed=seed)
+                joke = proc["joke_text"]
+                if len(joke) >= MAX_PUNCHLINE_CHARS:
+                    oversized.append((topic, country, len(joke), joke))
+
+    assert oversized == [], (
+        f"Found procedural punchlines >= {MAX_PUNCHLINE_CHARS} chars: {oversized}"
+    )
+
+
+def test_validation_fails_on_long_punchline():
+    """Verify validate_pacing catches punchlines that exceed 120 characters."""
+    script = build_wojak_script("hospital")
+    # Bypass post_init auto-truncation by assigning directly
+    script.segments[0].joke_text = "A" * 125
+    with pytest.raises(ValueError, match="exceeds brevity limit"):
+        script.validate_pacing(strict=True)
+
+
+def test_wojak_segment_truncates_oversized_punchline():
+    """Verify WojakSegment post_init auto-truncates oversized joke text on word boundary."""
+    long_joke = "This is a ridiculously long joke text designed to exceed one hundred and twenty characters in total length for testing purposes."
+    assert len(long_joke) >= 120
+    seg = WojakSegment(
+        country="United States",
+        country_code="US",
+        heading="USA",
+        joke_text=long_joke,
+        setting="hospital lobby",
+        duration=4.5,
+    )
+    assert len(seg.joke_text) < MAX_PUNCHLINE_CHARS

@@ -21,14 +21,11 @@ from __future__ import annotations
 import logging
 import math
 import os
-import random
-import re
-import struct
 import subprocess
 import threading
 import time
 import wave
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -41,6 +38,7 @@ from autoshorts.core.paths import get_output_dir, get_work_dir
 from autoshorts.longform.country_photos import pick_photo
 from autoshorts.longform.flags import get_country_flag
 from autoshorts.longform.types import LongformResult
+from autoshorts.longform.wojak_compositor import wrap_text
 from autoshorts.longform.wojak_generator import draw_wojak, spec_from_country_and_context
 from autoshorts.media.audio_master import normalize_two_pass
 from autoshorts.media.encoder_probe import get_ffmpeg_path
@@ -87,46 +85,53 @@ COLOR_DISCLAIMER_CARD = (25, 30, 40)
 COLOR_DISCLAIMER_BORDER = (55, 65, 80)
 COLOR_GOLD = (245, 180, 28)
 COLOR_GOLD_BG = (45, 36, 18)
+COLOR_NEON_GLOW = (255, 225, 0)  # Dopamine neon yellow glow border
+COLOR_TEXT_STROKE = (12, 14, 18, 255)
+
+# Rapid Kinetic Subtitles
+WORDS_PER_BURST = 2
+KINETIC_FONT_SIZE = 84
+KINETIC_CENTER_Y = 530
 
 SAMPLE_RATE = 48000
 _MAX_INT16 = 32767
 
 # Country to Flag Emoji Mapping
 COUNTRY_FLAGS: dict[str, str] = {
-    "USA": "\U0001F1FA\U0001F1F8",
-    "UNITED STATES": "\U0001F1FA\U0001F1F8",
-    "AMERICA": "\U0001F1FA\U0001F1F8",
-    "UK": "\U0001F1EC\U0001F1E7",
-    "UNITED KINGDOM": "\U0001F1EC\U0001F1E7",
-    "BRITAIN": "\U0001F1EC\U0001F1E7",
-    "ENGLAND": "\U0001F1EC\U0001F1E7",
-    "GERMANY": "\U0001F1E9\U0001F1EA",
-    "CANADA": "\U0001F1E8\U0001F1E6",
-    "JAPAN": "\U0001F1EF\U0001F1F5",
-    "FRANCE": "\U0001F1EB\U0001F1F7",
-    "AUSTRALIA": "\U0001F1E6\U0001F1FA",
-    "INDIA": "\U0001F1EE\U0001F1F3",
-    "ITALY": "\U0001F1EE\U0001F1F9",
-    "BRAZIL": "\U0001F1E7\U0001F1F7",
-    "SWITZERLAND": "\U0001F1E8\U0001F1ED",
-    "SWEDEN": "\U0001F1F8\U0001F1EA",
-    "POLAND": "\U0001F1F5\U0001F1F1",
-    "NORWAY": "\U0001F1F3\U0001F1F4",
-    "SPAIN": "\U0001F1EA\U0001F1F8",
-    "NETHERLANDS": "\U0001F1F3\U0001F1F1",
-    "NEW ZEALAND": "\U0001F1F3\U0001F1FF",
-    "MEXICO": "\U0001F1F2\U0001F1FD",
-    "SOUTH KOREA": "\U0001F1F0\U0001F1F7",
-    "KOREA": "\U0001F1F0\U0001F1F7",
-    "CHINA": "\U0001F1E8\U0001F1F3",
-    "FINLAND": "\U0001F1EB\U0001F1EE",
-    "GREECE": "\U0001F1EC\U0001F1F7",
-    "ARGENTINA": "\U0001F1E6\U0001F1F7",
-    "IRELAND": "\U0001F1EE\U0001F1EA",
-    "AUSTRIA": "\U0001F1E6\U0001F1F9",
-    "BELGIUM": "\U0001F1E7\U0001F1EA",
-    "PORTUGAL": "\U0001F1F5\U0001F1F9",
-    "DENMARK": "\U0001F1E9\U0001F1F0",
+    "USA": "\U0001f1fa\U0001f1f8",
+    "UNITED STATES": "\U0001f1fa\U0001f1f8",
+    "AMERICA": "\U0001f1fa\U0001f1f8",
+    "UK": "\U0001f1ec\U0001f1e7",
+    "UNITED KINGDOM": "\U0001f1ec\U0001f1e7",
+    "BRITAIN": "\U0001f1ec\U0001f1e7",
+    "ENGLAND": "\U0001f1ec\U0001f1e7",
+    "GERMANY": "\U0001f1e9\U0001f1ea",
+    "CANADA": "\U0001f1e8\U0001f1e6",
+    "JAPAN": "\U0001f1ef\U0001f1f5",
+    "FRANCE": "\U0001f1eb\U0001f1f7",
+    "AUSTRALIA": "\U0001f1e6\U0001f1fa",
+    "INDIA": "\U0001f1ee\U0001f1f3",
+    "ITALY": "\U0001f1ee\U0001f1f9",
+    "BRAZIL": "\U0001f1e7\U0001f1f7",
+    "SWITZERLAND": "\U0001f1e8\U0001f1ed",
+    "SWEDEN": "\U0001f1f8\U0001f1ea",
+    "POLAND": "\U0001f1f5\U0001f1f1",
+    "NORWAY": "\U0001f1f3\U0001f1f4",
+    "SPAIN": "\U0001f1ea\U0001f1f8",
+    "NETHERLANDS": "\U0001f1f3\U0001f1f1",
+    "NEW ZEALAND": "\U0001f1f3\U0001f1ff",
+    "MEXICO": "\U0001f1f2\U0001f1fd",
+    "SOUTH KOREA": "\U0001f1f0\U0001f1f7",
+    "KOREA": "\U0001f1f0\U0001f1f7",
+    "CHINA": "\U0001f1e8\U0001f1f3",
+    "FINLAND": "\U0001f1eb\U0001f1ee",
+    "GREECE": "\U0001f1ec\U0001f1f7",
+    "ARGENTINA": "\U0001f1e6\U0001f1f7",
+    "IRELAND": "\U0001f1ee\U0001f1ea",
+    "AUSTRIA": "\U0001f1e6\U0001f1f9",
+    "BELGIUM": "\U0001f1e7\U0001f1ea",
+    "PORTUGAL": "\U0001f1f5\U0001f1f9",
+    "DENMARK": "\U0001f1e9\U0001f1f0",
 }
 
 # Typography candidates (Windows, Linux, macOS)
@@ -186,6 +191,10 @@ class WojakShortsConfig:
     bgm_mood: str = "playful"
     enable_voiceover: bool = False
     voice: str = "en-US-ChristopherNeural"
+    subtitle_mode: str = "kinetic"
+    words_per_burst: int = WORDS_PER_BURST
+    font_size: int = KINETIC_FONT_SIZE
+    render_method: str = "ffmpeg"
 
 
 # ============================================================================
@@ -239,24 +248,6 @@ def _ink_metrics(font: Any, sample_text: str = "H") -> tuple[int, int]:
     return 0, 28
 
 
-def wrap_text(font: Any, text: str, max_width: float) -> list[str]:
-    words = text.split()
-    if not words:
-        return []
-    lines: list[str] = []
-    current: list[str] = []
-    for word in words:
-        candidate = " ".join([*current, word])
-        if not current or font.getlength(candidate) <= max_width:
-            current.append(word)
-        else:
-            lines.append(" ".join(current))
-            current = [word]
-    if current:
-        lines.append(" ".join(current))
-    return lines
-
-
 def fit_punchline(
     text: str,
     max_w: int = 740,
@@ -294,6 +285,235 @@ def fit_punchline(
 # ============================================================================
 
 
+def split_into_bursts(text: str, words_per_burst: int = WORDS_PER_BURST) -> list[list[str]]:
+    """Split caption text into punchy uppercase word bursts (typically 2 words per burst)."""
+    cleaned = " ".join(text.split()).upper()
+    words = cleaned.split()
+    if not words:
+        return []
+    bursts: list[list[str]] = []
+    for i in range(0, len(words), max(1, words_per_burst)):
+        bursts.append(words[i : i + words_per_burst])
+    return bursts
+
+
+@lru_cache(maxsize=128)
+def get_kinetic_burst_layer(
+    burst_tuple: tuple[str, ...],
+    font_size: int = KINETIC_FONT_SIZE,
+    glow_color_rgb: tuple[int, int, int] = COLOR_NEON_GLOW,
+    max_safe_width: int = SAFE_WIDTH - 40,
+) -> tuple[Image.Image, int, int]:
+    """Pre-render a 2-word kinetic burst with neon glowing border and dark outline."""
+    words = list(burst_tuple)
+    font = get_font(font_size, bold=True)
+
+    # Check single-line vs stacked 2-line layout
+    single_line = " ".join(words)
+    if font.getlength(single_line) <= max_safe_width:
+        lines = [single_line]
+    else:
+        # If single line is too wide, stack words on 2 lines
+        lines = words
+
+    # Check if stacked words fit; if any word still exceeds max_safe_width, scale font size
+    max_w = max(int(font.getlength(word_line)) for word_line in lines)
+    effective_font = font
+    current_size = font_size
+    while max_w > max_safe_width and current_size > 54:
+        current_size -= 4
+        effective_font = get_font(current_size, bold=True)
+        max_w = max(int(effective_font.getlength(word_line)) for word_line in lines)
+
+    line_h = math.ceil(current_size * 1.15)
+    total_h = len(lines) * line_h
+    pad = 44
+    layer_w = max_w + pad * 2
+    layer_h = total_h + pad * 2
+
+    # 1. Multi-pass Gaussian Glow Border
+    glow = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow)
+    for idx, line in enumerate(lines):
+        lw = effective_font.getlength(line)
+        lx = (layer_w - lw) / 2
+        ly = pad + idx * line_h
+        # Heavy neon stroke
+        gdraw.text(
+            (lx, ly),
+            line,
+            font=effective_font,
+            fill=(*glow_color_rgb, 255),
+            stroke_width=18,
+            stroke_fill=(*glow_color_rgb, 255),
+        )
+    glow = glow.filter(ImageFilter.GaussianBlur(12))
+
+    # 2. Crisp Black Outline + Luminous Inner Text
+    txt = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+    tdraw = ImageDraw.Draw(txt)
+    for idx, line in enumerate(lines):
+        lw = effective_font.getlength(line)
+        lx = (layer_w - lw) / 2
+        ly = pad + idx * line_h
+        # Color accents: last word is vibrant neon yellow, first word is crisp white
+        is_accent = idx == len(lines) - 1
+        fill_color = (*glow_color_rgb, 255) if is_accent else (255, 255, 255, 255)
+        tdraw.text(
+            (lx, ly),
+            line,
+            font=effective_font,
+            fill=fill_color,
+            stroke_width=8,
+            stroke_fill=COLOR_TEXT_STROKE,
+        )
+
+    composite = Image.alpha_composite(glow, txt)
+    return composite, layer_w, layer_h
+
+
+def draw_kinetic_subtitles(
+    canvas: Image.Image,
+    caption: str,
+    t_seg: float,
+    duration: float,
+    words_per_burst: int = WORDS_PER_BURST,
+    font_size: int = KINETIC_FONT_SIZE,
+    center_y: int = KINETIC_CENTER_Y,
+    pop_scale: bool = True,
+) -> None:
+    """Draw rapid kinetic 2-word burst subtitle with glowing border and scale pop."""
+    bursts = split_into_bursts(caption, words_per_burst=words_per_burst)
+    if not bursts:
+        return
+
+    burst_duration = duration / len(bursts)
+    current_idx = min(len(bursts) - 1, int(t_seg / max(0.01, burst_duration)))
+    active_burst = bursts[current_idx]
+
+    # Time within this burst
+    time_in_burst = t_seg - current_idx * burst_duration
+    pop_dur = 0.12  # 120ms snappy entrance scale pop
+    scale = 1.0
+    if pop_scale and time_in_burst < pop_dur:
+        p = time_in_burst / pop_dur
+        scale = 1.0 + 0.10 * ((1.0 - p) ** 2)
+
+    layer, lw, lh = get_kinetic_burst_layer(tuple(active_burst), font_size=font_size)
+
+    if abs(scale - 1.0) > 0.01:
+        nw = max(1, round(lw * scale))
+        nh = max(1, round(lh * scale))
+        scaled_layer = layer.resize((nw, nh), Image.Resampling.BILINEAR)
+        px = (SHORTS_WIDTH - nw) // 2
+        py = center_y - nh // 2
+        canvas.paste(scaled_layer, (px, py), scaled_layer)
+    else:
+        px = (SHORTS_WIDTH - lw) // 2
+        py = center_y - lh // 2
+        canvas.paste(layer, (px, py), layer)
+
+
+@lru_cache(maxsize=64)
+def get_country_header_badge_layer(
+    country: str,
+    flag: str = "",
+    width: int = SHORTS_WIDTH,
+    height: int = HEADER_HEIGHT,
+) -> Image.Image:
+    header = Image.new("RGB", (width, height), COLOR_WHITE)
+    hdraw = ImageDraw.Draw(header)
+
+    # Bottom 2px subtle divider rule
+    hdraw.rectangle((0, height - HEADER_RULE_PX, width - 1, height - 1), fill=COLOR_HEADER_BORDER)
+
+    title_text = country.strip().upper()
+    font_text = get_font(50, bold=True)
+    text_w = font_text.getlength(title_text)
+    ink_top, ink_h = _ink_metrics(font_text, title_text)
+
+    flag_img = get_country_flag(country, target_height=48)
+    flag_w = flag_img.width if flag_img else 60
+    pad_x = 28
+    spacing = 18
+
+    badge_w = int(pad_x * 2 + flag_w + spacing + text_w)
+    badge_h = 72
+    bx0 = (width - badge_w) // 2
+    by0 = (height - badge_h) // 2
+
+    # Draw refined pill badge container
+    hdraw.rounded_rectangle(
+        (bx0, by0, bx0 + badge_w, by0 + badge_h),
+        radius=22,
+        fill=(245, 248, 252),
+        outline=(195, 205, 220),
+        width=2,
+    )
+
+    if flag_img:
+        fx = bx0 + pad_x
+        fy = by0 + (badge_h - flag_img.height) // 2
+        header.paste(flag_img, (fx, fy), flag_img)
+        tx = fx + flag_w + spacing
+    else:
+        tx = bx0 + pad_x
+
+    ty = by0 + (badge_h - ink_h) // 2 - ink_top
+    hdraw.text((round(tx), round(ty)), title_text, font=font_text, fill=COLOR_BLACK)
+    return header
+
+
+def draw_country_header_badge(
+    canvas: Image.Image,
+    country: str,
+    flag: str = "",
+    width: int = SHORTS_WIDTH,
+    height: int = HEADER_HEIGHT,
+) -> None:
+    """Draw Top Country Header Badge (150px) with stylized pill container and real flag."""
+    header = get_country_header_badge_layer(country, flag, width, height)
+    canvas.paste(header, (0, 0))
+
+
+draw_country_header_banner = draw_country_header_badge
+
+
+def build_shorts_remotion_plan(
+    segments: list[WojakShortsSegment],
+    output_plan_path: Path,
+    disclaimer_duration: float = DISCLAIMER_DURATION,
+    words_per_burst: int = WORDS_PER_BURST,
+    font_size: int = KINETIC_FONT_SIZE,
+    fps: int = FPS,
+) -> Path:
+    """Build a Remotion-compatible rapid caption plan JSON for 9:16 Shorts."""
+    from autoshorts.media.ass_styler import TimedWord
+    from autoshorts.media.remotion_overlay import write_caption_plan
+
+    timed_words: list[TimedWord] = []
+    curr_t = disclaimer_duration
+    for seg in segments:
+        words = [w for w in seg.caption.strip().split() if w]
+        if words:
+            word_dur = seg.duration / len(words)
+            for i, w in enumerate(words):
+                w_start = curr_t + i * word_dur
+                w_end = w_start + word_dur
+                timed_words.append(TimedWord(word=w, start=w_start, end=w_end))
+        curr_t += seg.duration
+
+    total_dur = curr_t
+    return write_caption_plan(
+        path=output_plan_path,
+        words=timed_words,
+        duration_sec=total_dur,
+        style_preset="rapid",
+        fps=fps,
+        top_percent=28.0,
+    )
+
+
 def create_soft_drop_shadow(
     width: int,
     height: int,
@@ -319,48 +539,20 @@ def create_soft_drop_shadow(
     return blurred, pad, pad
 
 
-def draw_country_header_banner(
-    canvas: Image.Image,
-    country: str,
-    flag: str = "",
-    width: int = SHORTS_WIDTH,
-    height: int = HEADER_HEIGHT,
-) -> None:
-    """Draw Top White Banner Strip (150px) with centered bold country name & real flag."""
-    header = Image.new("RGB", (width, height), COLOR_WHITE)
-    hdraw = ImageDraw.Draw(header)
-
-    # Bottom 2px subtle divider rule
-    hdraw.rectangle((0, height - HEADER_RULE_PX, width - 1, height - 1), fill=COLOR_HEADER_BORDER)
-
-    title_text = country.strip().upper()
-    font_text = get_font(56, bold=True)
-    w_text = font_text.getlength(title_text)
-    ink_top, ink_h = _ink_metrics(font_text, title_text)
-
-    flag_img = get_country_flag(country, target_height=60)
-    if flag_img:
-        spacing = 20
-        total_w = flag_img.width + spacing + w_text
-        start_x = (width - total_w) / 2
-        flag_x = round(start_x)
-        flag_y = round((height - flag_img.height) / 2)
-        header.paste(flag_img, (flag_x, flag_y), flag_img)
-        title_x = start_x + flag_img.width + spacing
-    else:
-        title_x = (width - w_text) / 2
-
-    y_text = (height - ink_h) / 2 - ink_top
-    hdraw.text((round(title_x), round(y_text)), title_text, font=font_text, fill=COLOR_BLACK)
-
-    canvas.paste(header, (0, 0))
-
-
-def generate_procedural_background(country: str, width: int = SHORTS_WIDTH, height: int = 1770) -> Image.Image:
+@lru_cache(maxsize=32)
+def _cached_procedural_background(
+    country: str, width: int = SHORTS_WIDTH, height: int = 1770
+) -> Image.Image:
     """Generate high-contrast atmospheric background when no photo is on disk."""
+    try:
+        from autoshorts.longform.wojak_backgrounds import render_procedural_hospital
+
+        return render_procedural_hospital(country, width=width, height=height)
+    except Exception:
+        logger.warning("Procedural hospital background failed; using fallback", exc_info=True)
+
     slug = country.strip().lower()
     # Seed based on country for determinism
-    rng = random.Random(slug)
     hue_map = {
         "usa": ((35, 45, 65), (75, 90, 120)),
         "germany": ((40, 42, 45), (70, 75, 80)),
@@ -394,6 +586,13 @@ def generate_procedural_background(country: str, width: int = SHORTS_WIDTH, heig
     return img
 
 
+def generate_procedural_background(
+    country: str, width: int = SHORTS_WIDTH, height: int = 1770
+) -> Image.Image:
+    """Return a fresh copy of the cached procedural background."""
+    return _cached_procedural_background(country.strip().lower(), width=width, height=height).copy()
+
+
 # ============================================================================
 # Opening Scene 0: 2.5s Parody Disclaimer / Hook Banner
 # ============================================================================
@@ -420,7 +619,6 @@ def render_shorts_disclaimer_frame(
     card_h = 760
     card_x0 = SAFE_LEFT
     card_y0 = (h - card_h) // 2 - 40
-    card_x1 = card_x0 + card_w
     card_y1 = card_y0 + card_h
 
     # Card Drop Shadow
@@ -523,8 +721,13 @@ def render_shorts_country_frame(
     size: tuple[int, int] = (SHORTS_WIDTH, SHORTS_HEIGHT),
     character_height: int = CHARACTER_HEIGHT,
     progress: float = 0.0,
+    t_seg: float = 0.0,
+    duration: float = DEFAULT_SEGMENT_DURATION,
+    subtitle_mode: str = "kinetic",
+    words_per_burst: int = WORDS_PER_BURST,
+    font_size: int = KINETIC_FONT_SIZE,
 ) -> Image.Image:
-    """Render a 1080x1920 YouTube Shorts frame compliant with Mobile Safe Zones."""
+    """Render a 1080x1920 YouTube Shorts frame with kinetic subtitles or joke card."""
     w, h = size
     canvas = Image.new("RGB", (w, h), COLOR_WHITE)
 
@@ -548,10 +751,9 @@ def render_shorts_country_frame(
     # Subtle contrast treatment so text cards and characters pop
     canvas.paste(bg, (0, HEADER_HEIGHT))
 
-    # 2. Floating White Joke Card (Upper-Mid Mobile Safe Zone)
-    # Positioned at CARD_Y0 (y: 210), leaving clear space above character
+    # 2. Floating White Joke Card (when card or both subtitle mode is active)
     clean_caption = " ".join(caption.split())
-    if clean_caption:
+    if clean_caption and subtitle_mode in ("card", "both"):
         card_w = SAFE_WIDTH  # 820px (Safe from right action buttons x > 920)
         card_x0 = SAFE_LEFT  # 100px (Centered inside safe horizontal corridor)
         pad_x = 42
@@ -626,18 +828,31 @@ def render_shorts_country_frame(
     else:
         char_img = character_img
 
-    char = char_img.convert("RGBA")
     target_h = min(character_height, bg_h)
-    target_w = max(1, round(char.width * (target_h / char.height)))
-    char = char.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    target_w = max(1, round(char_img.width * (target_h / char_img.height)))
+    if char_img.mode == "RGBA" and char_img.size == (target_w, target_h):
+        char = char_img
+    else:
+        char = char_img.convert("RGBA").resize((target_w, target_h), Image.Resampling.BILINEAR)
 
     # Center character horizontally in safe zone (e.g. x: 100 to 920)
     char_x = (w - target_w) // 2
     char_y = h - target_h + 30  # Slight ground overlap for grounded look
     canvas.paste(char, (char_x, char_y), char)
 
-    # 4. Top White Header Banner Strip (Always on top for razor-sharp demarcation)
-    draw_country_header_banner(canvas, country, flag=flag, width=w, height=HEADER_HEIGHT)
+    # 4. Top White Header Banner Strip & Country Header Badge
+    draw_country_header_badge(canvas, country, flag=flag, width=w, height=HEADER_HEIGHT)
+
+    # 5. Rapid Kinetic Subtitles (2 words/burst, 84pt font, glowing borders)
+    if clean_caption and subtitle_mode in ("kinetic", "both"):
+        draw_kinetic_subtitles(
+            canvas,
+            caption=clean_caption,
+            t_seg=t_seg,
+            duration=duration,
+            words_per_burst=words_per_burst,
+            font_size=font_size,
+        )
 
     return canvas
 
@@ -670,7 +885,9 @@ def synth_cash_register(path: Path, duration: float = 0.85) -> Path:
     t = np.linspace(0.0, duration, n, endpoint=False)
 
     # 1. Dual Bell Ding (Ka-Ching!) at 2180 Hz and 4360 Hz with exponential decay
-    bell = (0.68 * np.sin(2.0 * np.pi * 2180.0 * t) + 0.32 * np.sin(2.0 * np.pi * 4360.0 * t)) * np.exp(-t / 0.14)
+    bell = (
+        0.68 * np.sin(2.0 * np.pi * 2180.0 * t) + 0.32 * np.sin(2.0 * np.pi * 4360.0 * t)
+    ) * np.exp(-t / 0.14)
 
     # 2. Mechanical drawer spring & metallic latch clack at 0.18s
     t_clack = np.maximum(0.0, t - 0.18)
@@ -683,7 +900,12 @@ def synth_cash_register(path: Path, duration: float = 0.85) -> Path:
         ct = rng.uniform(0.20, 0.65)
         cf = rng.uniform(3200.0, 7800.0)
         tc = np.maximum(0.0, t - ct)
-        coins += rng.uniform(0.12, 0.35) * np.sin(2.0 * np.pi * cf * tc) * np.exp(-tc / 0.015) * (t >= ct)
+        coins += (
+            rng.uniform(0.12, 0.35)
+            * np.sin(2.0 * np.pi * cf * tc)
+            * np.exp(-tc / 0.015)
+            * (t >= ct)
+        )
 
     mix = bell + clack + coins
     return _write_wav(path, np.tanh(1.5 * mix), sr)
@@ -705,8 +927,13 @@ def synth_flatline(path: Path, duration: float = 1.2) -> Path:
     return _write_wav(path, np.tanh(1.2 * tone * env), sr)
 
 
-def synth_record_scratch(path: Path, duration: float = 0.45) -> Path:
-    """Synthesize sudden record scratch / vinyl drag."""
+def write_record_scratch_sfx(path: Path, duration: float = 0.45) -> Path:
+    """Write a record-scratch SFX WAV for the Shorts renderer.
+
+    Note: a differently-tuned record scratch also exists in ``wojak_audio``
+    (array-returning) and ``meme.audio``; they are intentionally not merged,
+    since merging would change the audio of existing renders.
+    """
     sr = SAMPLE_RATE
     n = int(round(duration * sr))
     t = np.linspace(0.0, duration, n, endpoint=False)
@@ -770,10 +997,8 @@ def synth_bouncy_meme_bgm(path: Path, duration: float, bpm: float = 126.0) -> Pa
     """Synthesize unbroken, upbeat 126 BPM bouncy comedy walking bass and synth stabs."""
     sr = SAMPLE_RATE
     n = int(round(duration * sr))
-    t = np.linspace(0.0, duration, n, endpoint=False)
 
     beat_dur = 60.0 / bpm
-    bar_dur = beat_dur * 4.0
 
     output = np.zeros(n, dtype=np.float32)
 
@@ -821,7 +1046,9 @@ def synth_bouncy_meme_bgm(path: Path, duration: float, bpm: float = 126.0) -> Pa
             stab_env = np.exp(-sub_t / 0.08)
             stab_wave = np.zeros(stab_len, dtype=np.float32)
             for f in chord:
-                stab_wave += np.sin(2.0 * np.pi * f * sub_t) + 0.25 * np.sin(4.0 * np.pi * f * sub_t)
+                stab_wave += np.sin(2.0 * np.pi * f * sub_t) + 0.25 * np.sin(
+                    4.0 * np.pi * f * sub_t
+                )
             output[sample_start : sample_start + stab_len] += 0.22 * stab_wave * stab_env
 
     # 3. Brush drum groove (Kick on 1 & 3, light snare brush on 2 & 4, hihat swing)
@@ -831,14 +1058,16 @@ def synth_bouncy_meme_bgm(path: Path, duration: float, bpm: float = 126.0) -> Pa
         if t_start >= duration:
             break
         sample_start = int(t_start * sr)
-        is_downbeat = (b_idx % 2 == 0)
+        is_downbeat = b_idx % 2 == 0
         drum_len = min(int(0.12 * sr), n - sample_start)
         if drum_len <= 0:
             continue
         dt = np.linspace(0.0, drum_len / sr, drum_len, endpoint=False)
         if is_downbeat:
             # Kick punch (sub sweep)
-            kick = np.sin(2.0 * np.pi * (110.0 * np.exp(-32.0 * dt) + 42.0) * dt) * np.exp(-18.0 * dt)
+            kick = np.sin(2.0 * np.pi * (110.0 * np.exp(-32.0 * dt) + 42.0) * dt) * np.exp(
+                -18.0 * dt
+            )
             output[sample_start : sample_start + drum_len] += 0.32 * kick
         else:
             # Snare brush tap
@@ -865,12 +1094,22 @@ def assemble_shorts_audio(
     total_samples = int(round(total_duration * master_sr))
     mix_buf = np.zeros(total_samples, dtype=np.float32)
 
-    # 1. Synthesize Continuous Bouncy BGM
+    # 1. Synthesize Continuous BGM matching mood (Production Bible Section 5)
+    from autoshorts.longform.wojak_audio import generate_procedural_wojak_bgm
+
     bgm_path = work_dir / f"bgm_{uuid4().hex[:8]}.wav"
-    synth_bouncy_meme_bgm(bgm_path, duration=total_duration)
+    try:
+        bgm_data = generate_procedural_wojak_bgm(total_duration, sr=master_sr, mood=bgm_mood)
+        _write_wav(bgm_path, bgm_data, master_sr)
+    except Exception as exc:
+        logger.warning("Procedural genre BGM generation fallback: %s", exc)
+        synth_bouncy_meme_bgm(bgm_path, duration=total_duration)
 
     with wave.open(str(bgm_path), "rb") as w:
-        bgm_data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / _MAX_INT16
+        bgm_data = (
+            np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
+            / _MAX_INT16
+        )
     bgm_len = min(len(bgm_data), total_samples)
     mix_buf[:bgm_len] += 0.70 * bgm_data[:bgm_len]
 
@@ -878,7 +1117,7 @@ def assemble_shorts_audio(
     sfx_cache: dict[str, Path] = {}
     current_time = disclaimer_duration
 
-    for idx, seg in enumerate(segments):
+    for seg in segments:
         cue = seg.sfx_cue.lower()
         if cue and cue != "none":
             sfx_file = sfx_cache.get(cue)
@@ -889,7 +1128,7 @@ def assemble_shorts_audio(
                 elif cue == "flatline":
                     synth_flatline(sfx_file)
                 elif cue == "record_scratch":
-                    synth_record_scratch(sfx_file)
+                    write_record_scratch_sfx(sfx_file)
                 elif cue == "whoosh":
                     synth_whoosh(sfx_file)
                 elif cue == "punch":
@@ -899,7 +1138,12 @@ def assemble_shorts_audio(
             if sfx_file and sfx_file.is_file():
                 try:
                     with wave.open(str(sfx_file), "rb") as sw:
-                        sfx_raw = np.frombuffer(sw.readframes(sw.getnframes()), dtype=np.int16).astype(np.float32) / _MAX_INT16
+                        sfx_raw = (
+                            np.frombuffer(sw.readframes(sw.getnframes()), dtype=np.int16).astype(
+                                np.float32
+                            )
+                            / _MAX_INT16
+                        )
                     # Trigger SFX 0.25s into the segment
                     sfx_start = int((current_time + 0.25) * master_sr)
                     sfx_len = min(len(sfx_raw), total_samples - sfx_start)
@@ -910,15 +1154,19 @@ def assemble_shorts_audio(
 
         current_time += seg.duration
 
-    # Master limiter & write output
+    # Master peak limiter & write output (-1.0 dBFS ceiling)
     raw_path = work_dir / "shorts_audio_raw.wav"
     master = np.tanh(1.2 * mix_buf)
+    ceiling_linear = 10.0 ** (-1.0 / 20.0)
+    peak = float(np.max(np.abs(master))) if len(master) > 0 else 0.0
+    if peak > ceiling_linear:
+        master = (master / peak) * ceiling_linear
     _write_wav(raw_path, master, master_sr)
 
-    # Apply EBU R128 loudness normalization (-14 LUFS) for broadcast parity
+    # Apply EBU R128 loudness normalization (-14.0 LUFS, -1.0 dBFS true peak)
     out_path = work_dir / "shorts_audio_master.wav"
     try:
-        normalize_two_pass(raw_path, out_path, target_lufs=-14.0)
+        normalize_two_pass(raw_path, out_path, target_lufs=-14.0, true_peak_db=-1.0)
     except Exception as norm_err:
         logger.warning("Shorts audio loudness normalization fallback: %s", norm_err)
         return raw_path
@@ -1090,7 +1338,9 @@ def build_wojak_shorts_script(topic: str, segment_count: int = 7) -> list[WojakS
     """Select or generate punchy country comparison segments for vertical Shorts."""
     topic_clean = topic.strip().lower()
 
-    if any(k in topic_clean for k in ("hospital", "health", "doctor", "medicine", "medical", "bill")):
+    if any(
+        k in topic_clean for k in ("hospital", "health", "doctor", "medicine", "medical", "bill")
+    ):
         key = "healthcare"
     elif any(k in topic_clean for k in ("transport", "subway", "train", "metro", "bus")):
         key = "transport"
@@ -1100,6 +1350,7 @@ def build_wojak_shorts_script(topic: str, segment_count: int = 7) -> list[WojakS
         # Check if topic is covered by curated longform topics (e.g. school, transport, etc.)
         try:
             from autoshorts.longform.wojak_pipeline import resolve_topic_scenes
+
             _, p_scenes = resolve_topic_scenes(topic, scene_count=segment_count)
             if p_scenes:
                 segments: list[WojakShortsSegment] = []
@@ -1118,7 +1369,7 @@ def build_wojak_shorts_script(topic: str, segment_count: int = 7) -> list[WojakS
                     )
                 return segments
         except Exception:
-            pass
+            logger.warning("Curated topic lookup failed; using generic script", exc_info=True)
         key = "healthcare"
 
     pool = CURATED_SHORTS_TOPICS.get(key, CURATED_SHORTS_TOPICS["healthcare"])
@@ -1170,7 +1421,13 @@ def make_shorts_thumbnail(
     bw = badge_font.getlength(badge_text)
     bx0 = (SHORTS_WIDTH - bw) // 2 - 30
     by0 = 220
-    draw.rounded_rectangle((bx0, by0, bx0 + bw + 60, by0 + 80), radius=18, fill=COLOR_GOLD, outline=COLOR_WHITE, width=3)
+    draw.rounded_rectangle(
+        (bx0, by0, bx0 + bw + 60, by0 + 80),
+        radius=18,
+        fill=COLOR_GOLD,
+        outline=COLOR_WHITE,
+        width=3,
+    )
     draw.text((bx0 + 30, by0 + 16), badge_text, font=badge_font, fill=COLOR_BLACK)
 
     # Topic Banner Box
@@ -1182,14 +1439,21 @@ def make_shorts_thumbnail(
         tw = topic_font.getlength(t_clean)
     tx = (SHORTS_WIDTH - tw) // 2
     ty = by0 + 110
-    draw.text((tx, ty), t_clean, font=topic_font, fill=COLOR_WHITE, stroke_width=4, stroke_fill=COLOR_BLACK)
+    draw.text(
+        (tx, ty),
+        t_clean,
+        font=topic_font,
+        fill=COLOR_WHITE,
+        stroke_width=4,
+        stroke_fill=COLOR_BLACK,
+    )
 
     # Wojak Character (Shocked / Smug)
     try:
         spec = spec_from_country_and_context(
             country=top_country,
             setting="hospital",
-            scenario=topic_title,
+            scenario=topic,
             expression=expression,
         )
         char_img = draw_wojak(spec)
@@ -1198,7 +1462,8 @@ def make_shorts_thumbnail(
         cy = SHORTS_HEIGHT - 1040
         canvas.paste(char, (cx, cy), char)
     except Exception:
-        pass
+        # Character is decorative; keep the thumbnail, but never fail silently again.
+        logger.warning("Shorts thumbnail: Wojak character failed to render", exc_info=True)
 
     canvas.save(str(out_path), "PNG")
     return out_path
@@ -1215,10 +1480,17 @@ def render_wojak_shorts_video(
     output_dir: Path | str | None = None,
     config: Any = None,
     state_manager: Any = None,
+    subtitle_mode: str = "kinetic",
+    words_per_burst: int = WORDS_PER_BURST,
+    font_size: int = KINETIC_FONT_SIZE,
+    render_method: str = "ffmpeg",
 ) -> LongformResult:
     """Build and render a complete YouTube Shorts (9:16) Wojak country comparison video.
 
-    Streams raw RGB24 frames directly to FFmpeg `pipe:0` for fast sub-30s encoding.
+    Features:
+    - Rapid kinetic subtitles (words_per_burst=2, 84pt font, glowing borders)
+    - Stylized Top Country Header Badges with real national flags
+    - Pure-PIL streaming directly to FFmpeg pipe:0 or Remotion overlay compositing
     """
     start_time = time.monotonic()
     run_id = uuid4().hex[:8]
@@ -1230,15 +1502,30 @@ def render_wojak_shorts_video(
     video_out = out_base / f"shorts_wojak_{run_id}.mp4"
     thumb_out = out_base / f"shorts_wojak_{run_id}_thumb.png"
 
+    # Check Remotion availability if requested
+    use_remotion = False
+    if render_method in ("remotion", "auto"):
+        try:
+            from autoshorts.media.remotion_overlay import is_remotion_ready
+
+            if is_remotion_ready():
+                use_remotion = render_method == "remotion"
+        except Exception:
+            use_remotion = False
+
     # 1. Build script segments
     segments = build_wojak_shorts_script(topic, segment_count=segment_count)
     total_duration = DISCLAIMER_DURATION + sum(s.duration for s in segments)
 
     logger.info(
-        "Rendering Wojak Shorts (9:16) for topic %r: %d segments, %.1fs duration",
+        "Rendering Wojak Shorts (9:16) for topic %r: %d segments, %.1fs duration, subtitles=%s (burst=%d, font=%dpt), method=%s",
         topic,
         len(segments),
         total_duration,
+        subtitle_mode,
+        words_per_burst,
+        font_size,
+        "remotion" if use_remotion else "ffmpeg",
     )
 
     # 2. Assemble Master Audio Track
@@ -1251,6 +1538,7 @@ def render_wojak_shorts_video(
 
     # 3. Stream Raw RGB24 Frames to FFmpeg pipe:0
     ffmpeg_bin = get_ffmpeg_path()
+    pipe_target = work_dir / "base_video.mp4" if use_remotion else video_out
     cmd = [
         ffmpeg_bin,
         "-y",
@@ -1288,7 +1576,7 @@ def render_wojak_shorts_video(
         "-shortest",
         "-movflags",
         "+faststart",
-        str(video_out),
+        str(pipe_target),
     ]
 
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1296,6 +1584,8 @@ def render_wojak_shorts_video(
 
     stderr_chunks: list[bytes] = []
     writer_errors: list[BaseException] = []
+
+    effective_subtitles = "none" if use_remotion else subtitle_mode
 
     def _drain_stderr() -> None:
         try:
@@ -1314,7 +1604,7 @@ def render_wojak_shorts_video(
 
             # B. Scenes 1 to N: Country Meme Segments (4.25s each)
             for seg in segments:
-                # Load optional photo
+                # Load optional photo, or generate background once per segment
                 bg_img: Image.Image | None = None
                 if seg.photo_path and Path(seg.photo_path).is_file():
                     try:
@@ -1322,25 +1612,57 @@ def render_wojak_shorts_video(
                             bg_img = p_img.convert("RGB")
                     except Exception:
                         bg_img = None
+                if bg_img is None:
+                    bg_img = generate_procedural_background(
+                        seg.country, width=SHORTS_WIDTH, height=SHORTS_HEIGHT - HEADER_HEIGHT
+                    )
+
+                # Pre-render character once per segment for maximum performance
+                try:
+                    spec = spec_from_country_and_context(
+                        country=seg.country,
+                        setting="hospital",
+                        scenario=seg.caption,
+                        expression=seg.expression,
+                    )
+                    char_img = draw_wojak(spec)
+                except Exception:
+                    spec = spec_from_country_and_context(
+                        country="generic",
+                        setting="hospital",
+                        scenario="",
+                        expression="neutral",
+                    )
+                    char_img = draw_wojak(spec)
+
+                target_h = min(CHARACTER_HEIGHT, SHORTS_HEIGHT - HEADER_HEIGHT)
+                target_w = max(1, round(char_img.width * (target_h / char_img.height)))
+                char_img = char_img.convert("RGBA").resize(
+                    (target_w, target_h), Image.Resampling.BILINEAR
+                )
 
                 n_seg_frames = int(round(seg.duration * FPS))
-                step_frames = 4  # Refresh camera push every 4 frames (7.5 fps motion rate) for speed + smoothness
                 f_idx = 0
                 while f_idx < n_seg_frames:
+                    t_seg = f_idx / FPS
                     prog = f_idx / max(1, n_seg_frames - 1)
                     seg_frame = render_shorts_country_frame(
                         country=seg.country,
                         caption=seg.caption,
                         flag=seg.flag,
                         background_img=bg_img,
+                        character_img=char_img,
                         expression=seg.expression,
                         progress=prog,
+                        t_seg=t_seg,
+                        duration=seg.duration,
+                        subtitle_mode=effective_subtitles,
+                        words_per_burst=words_per_burst,
+                        font_size=font_size,
                     )
                     raw_bytes = seg_frame.tobytes()
-                    repeat = min(step_frames, n_seg_frames - f_idx)
-                    for _ in range(repeat):
-                        proc.stdin.write(raw_bytes)  # type: ignore[union-attr]
-                    f_idx += repeat
+                    proc.stdin.write(raw_bytes)  # type: ignore[union-attr]
+                    f_idx += 1
 
         except (BrokenPipeError, OSError, ValueError):
             pass
@@ -1362,15 +1684,74 @@ def render_wojak_shorts_video(
     drainer.join(timeout=10.0)
 
     if writer_errors:
-        video_out.unlink(missing_ok=True)
+        pipe_target.unlink(missing_ok=True)
         raise writer_errors[0]
     if rc != 0:
         err_msg = b"".join(stderr_chunks).decode("utf-8", "replace")
-        video_out.unlink(missing_ok=True)
+        pipe_target.unlink(missing_ok=True)
         raise RuntimeError(f"FFmpeg encoding failed: {err_msg[-600:]}")
 
-    # 4. Generate Thumbnail
-    make_shorts_thumbnail(topic, top_country=segments[0].country if segments else "USA", out_path=thumb_out)
+    # 4. Optional Remotion Overlay Compositing
+    if use_remotion:
+        try:
+            from autoshorts.media.remotion_overlay import render_caption_overlay
+
+            plan_path = work_dir / "remotion_plan.json"
+            track_path = work_dir / "remotion_track.webm"
+            build_shorts_remotion_plan(
+                segments=segments,
+                output_plan_path=plan_path,
+                disclaimer_duration=DISCLAIMER_DURATION,
+                words_per_burst=words_per_burst,
+                font_size=font_size,
+                fps=FPS,
+            )
+            render_caption_overlay(plan_path, track_path)
+
+            # Composite transparent Remotion overlay onto base video
+            comp_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(pipe_target),
+                "-c:v",
+                "libvpx-vp9",
+                "-i",
+                str(track_path),
+                "-filter_complex",
+                "[0:v][1:v]overlay=0:0[v]",
+                "-map",
+                "[v]",
+                "-map",
+                "0:a",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(video_out),
+            ]
+            subprocess.run(comp_cmd, check=True, timeout=120)
+            pipe_target.unlink(missing_ok=True)
+        except Exception as r_err:
+            logger.warning("Remotion overlay compositing failed (%s); using base video", r_err)
+            if pipe_target != video_out and pipe_target.is_file():
+                pipe_target.replace(video_out)
+
+    # 5. Generate Thumbnail
+    make_shorts_thumbnail(
+        topic, top_country=segments[0].country if segments else "USA", out_path=thumb_out
+    )
 
     elapsed = time.monotonic() - start_time
     logger.info("Wojak Shorts rendered successfully in %.2fs -> %s", elapsed, video_out)

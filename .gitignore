@@ -36,10 +36,15 @@ inbox/
 logs/
 *.log
 
-# Models & Weights
+# Models & Weights (local SD checkpoints/LoRAs under models/ are ~650 MB and must never be committed)
 *.gguf
 *.bin
+*.safetensors
+*.ckpt
+*.pt
+*.pth
 data/models/
+models/
 
 # Playwright Profiles & Cache
 edge_profile/
@@ -76,9 +81,11 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Local Windows Scripts (allow start.bat to be tracked)
+# Local Windows Scripts (launchers must be tracked so a fresh clone can run them)
 *.bat
 !start.bat
+!run.bat
+!install.bat
 
 
 # Remotion caption overlay (npm install output and render artifacts)
