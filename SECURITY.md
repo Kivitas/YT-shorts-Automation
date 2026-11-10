@@ -16,7 +16,7 @@ AutoShorts & Faceless AI Studio receives active security updates on the main bra
 If you discover a security vulnerability or potential credential leak within AutoShorts, please do **not** file a public issue.
 
 Instead, please send a responsible disclosure report to the project maintainer:
-- **Email**: `stavic78.94@gmail.com`
+- **Email**: `kivitas.dev@gmail.com`
 
 Please include:
 1. Clear description of the vulnerability.
